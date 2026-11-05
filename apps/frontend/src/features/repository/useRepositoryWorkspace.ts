@@ -13,6 +13,7 @@ import {
   DEFAULT_REPOSITORY_REFRESH_SETTINGS,
   LOCAL_POLLING_INTERVALS,
   normalizeRepositoryRefreshSettings,
+  shouldFetchOnNavigation,
   type RepositoryRefreshSettings,
 } from './repositoryRefreshSettings'
 import { repositoryCacheKey } from './repositoryPaths'
@@ -24,7 +25,6 @@ const STARTUP_REPOSITORY_KEY = 'branchline.startupRepository.v1'
 const AUTO_FETCH_SETTINGS_KEY = 'branchline.autoFetchSettings.v1'
 const NOTICE_DURATION = 5 * 1000
 const SNAPSHOT_CACHE_LIMIT = 12
-const NAVIGATION_FETCH_INTERVAL = 60 * 1000
 
 export type AutoFetchSettings = RepositoryRefreshSettings
 
@@ -199,11 +199,12 @@ export function useRepositoryWorkspace() {
   }, [cacheSnapshot])
 
   // Remote refs are refreshed after the snapshot is painted, so navigation never waits for the network.
+  // 打开/切换仓库触发的后台 Fetch 同样受「自动 Fetch」设置约束：关闭后不再抓取。
   const startBackgroundFetch = useCallback((path: string) => {
     if (fetchInProgress.current) return false
     const key = repositoryCacheKey(path)
     const now = Date.now()
-    if ((navigationFetchedAt.current.get(key) ?? 0) + NAVIGATION_FETCH_INTERVAL > now) return false
+    if (!shouldFetchOnNavigation(autoFetchSettings, navigationFetchedAt.current.get(key), now)) return false
     const sequence = navigationSequence.current
     navigationFetchedAt.current.set(key, now)
     fetchInProgress.current = true
@@ -222,7 +223,7 @@ export function useRepositoryWorkspace() {
         setFetching(false)
       })
     return true
-  }, [applyRefreshedSnapshot])
+  }, [applyRefreshedSnapshot, autoFetchSettings])
 
   const navigateToRepository = useCallback(async (path: string, notice: (snapshot: RepositorySnapshot) => string) => {
     const sequence = ++navigationSequence.current
