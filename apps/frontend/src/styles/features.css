@@ -1458,3 +1458,70 @@
 .tag-row-actions .tag-row-risk { flex: 1 1 240px; }
 
 .structure-detail-card dd .tag-row-risk { color: var(--warning); }
+
+/* ---------------------------------------------------------------- 三栏冲突合并视图（w2-7）
+   ThreePaneMergeView / OperationPanel 三栏模式专用，类名统一 tp- 前缀。
+   追加在文件末尾：与其他并行轨道改动 features.css 早段区域时不产生合并冲突。 */
+
+.tp-workspace-wide .conflict-editor { min-width: 0; }
+
+.tp-merge-grid { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(360px, 1.7fr) minmax(200px, 1fr); gap: 8px; min-height: 0; flex: 1; }
+
+.tp-merge-grid.tp-merge-with-base { grid-template-columns: minmax(160px, 0.8fr) minmax(200px, 1fr) minmax(360px, 1.6fr) minmax(200px, 1fr); }
+
+.tp-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); overflow: hidden; }
+
+.tp-pane:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.tp-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); background: var(--panel-3); font-size: 11px; }
+
+.tp-pane-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tp-pane-current .tp-pane-head strong { color: #40c8ae; }
+
+.tp-pane-incoming .tp-pane-head strong { color: #40a6ff; }
+
+.tp-pane-base .tp-pane-head strong { color: var(--muted); }
+
+.tp-pane-body { flex: 1; min-height: 0; overflow: auto; padding: 6px 0; color: var(--text); font-family: var(--font-code); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.tp-pane-empty { display: grid; gap: 6px; place-content: center; align-content: center; height: 100%; padding: 18px; color: var(--muted); font-family: inherit; text-align: center; }
+
+.tp-side-plain { display: block; padding: 0 10px; color: var(--muted); }
+
+.tp-side-block { display: block; width: 100%; padding: 2px 10px; border: 0; border-left: 3px solid transparent; background: transparent; color: var(--text); font: inherit; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+
+.tp-pane-current .tp-side-block { background: color-mix(in srgb, #40c8ae 14%, transparent); border-left-color: color-mix(in srgb, #40c8ae 60%, transparent); }
+
+.tp-pane-incoming .tp-side-block { background: color-mix(in srgb, #40a6ff 14%, transparent); border-left-color: color-mix(in srgb, #40a6ff 60%, transparent); }
+
+.tp-side-block:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+
+.tp-side-block:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.tp-side-block-active { box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+
+.tp-pane-base-body { color: var(--muted); background: color-mix(in srgb, var(--panel-3) 60%, transparent); }
+
+.tp-pane-result { border: 0; background: transparent; overflow: visible; }
+
+.tp-pane-result .conflict-result.tp-result-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+.tp-pane-result .tp-result-inner .conflict-code-editor { flex: 1; min-height: 0; }
+
+.tp-mode-switch { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-3); }
+
+.tp-mode-switch button { padding: 3px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+
+.tp-mode-switch button:hover { color: var(--text); }
+
+.tp-mode-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.tp-mode-switch button.active { color: var(--accent-text); background: var(--accent-dim); font-weight: 600; }
+
+.tp-batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); background: color-mix(in srgb, var(--panel-3) 55%, transparent); }
+
+@media (max-width: 1100px) {
+  .tp-merge-grid, .tp-merge-grid.tp-merge-with-base { grid-template-columns: minmax(160px, 1fr) minmax(260px, 1.6fr) minmax(160px, 1fr); }
+  .tp-pane-base { display: none; }
+}
