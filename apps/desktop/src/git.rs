@@ -2128,6 +2128,36 @@ pub fn cherry_pick_repository_commit_with_mainline(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PullStrategy {
+    FastForwardOnly,
+    Merge,
+    Rebase,
+}
+
+/// 按 Git 自身的配置优先级（仓库本地覆盖全局）读取生效值，与设置界面写入的
+/// `pull.rebase` / `pull.ff` 取值域保持一致，语义对齐 `load_git_user_config`。
+fn effective_git_config_value(root: &Path, key: &str) -> String {
+    git_output(root, &["config", "--get", key])
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// 解析设置里保存的拉取策略；未配置时回落到 Git 默认的 merge 行为。
+fn resolve_pull_strategy(root: &Path) -> PullStrategy {
+    if effective_git_config_value(root, "pull.ff") == "only" {
+        return PullStrategy::FastForwardOnly;
+    }
+    if matches!(
+        effective_git_config_value(root, "pull.rebase").as_str(),
+        "true" | "merges" | "interactive"
+    ) {
+        return PullStrategy::Rebase;
+    }
+    PullStrategy::Merge
+}
+
 pub fn pull_repository_branch(repository_path: &str, branch: &str) -> Result<(), String> {
     let root = repository_root(repository_path)?;
     let branch = branch.trim();
@@ -2198,12 +2228,33 @@ pub fn pull_repository_branch(repository_path: &str, branch: &str) -> Result<(),
                 return Err("检测到本地修改，但 Git 未能创建自动 Stash；为避免覆盖文件，拉取已取消。请手动处理 Submodule 或特殊工作区变更后重试。".into());
             }
         }
-        let merge_result = git_output_owned(
-            &root,
-            &["merge".into(), "--ff-only".into(), "--".into(), upstream],
-        );
+        let strategy = resolve_pull_strategy(&root);
+        let pull_args = match strategy {
+            PullStrategy::FastForwardOnly => vec![
+                "merge".into(),
+                "--ff-only".into(),
+                "--".into(),
+                upstream.clone(),
+            ],
+            PullStrategy::Merge => vec![
+                "merge".into(),
+                "--no-edit".into(),
+                "--".into(),
+                upstream.clone(),
+            ],
+            PullStrategy::Rebase => vec!["rebase".into(), "--".into(), upstream.clone()],
+        };
+        let merge_result = git_output_owned(&root, &pull_args);
         if let Err(error) = merge_result {
             if auto_stashed {
+                // merge/rebase 冲突会留下进行中状态，此时工作区尚未稳定，
+                // 直接 stash pop 会把本地改动叠在未解决的冲突上；
+                // 统一保留自动 Stash，并明确告知用户恢复方式，绝不丢弃改动。
+                if repository_operation(&root).is_some() {
+                    return Err(format!(
+                        "{error}\n拉取未完成且存在进行中的 Git 操作；本地修改已保留在自动 Stash（stash@{{0}}）。请先完成或中止该操作，再执行 `git stash pop` 手动恢复。"
+                    ));
+                }
                 return match git_output_owned(
                     &root,
                     &[
@@ -2256,6 +2307,17 @@ pub fn pull_repository_branch(repository_path: &str, branch: &str) -> Result<(),
 }
 
 pub fn push_repository(repository_path: &str) -> Result<(), String> {
+    push_repository_inner(repository_path, false)
+}
+
+/// 以 `--force-with-lease` 强推当前分支：覆盖远端同名分支，
+/// 但若远端自上次 fetch 后又被他人推进（lease 过期），Git 会拒绝推送，
+/// 从而避免静默覆盖协作者的提交。调用方（前端）必须先做危险操作二次确认。
+pub fn push_repository_with_lease(repository_path: &str) -> Result<(), String> {
+    push_repository_inner(repository_path, true)
+}
+
+fn push_repository_inner(repository_path: &str, force_with_lease: bool) -> Result<(), String> {
     let root = repository_root(repository_path)?;
     let branch = git_output(&root, &["branch", "--show-current"])?
         .trim()
@@ -2281,16 +2343,15 @@ pub fn push_repository(repository_path: &str) -> Result<(), String> {
         {
             return Err("当前仓库没有 origin 远程仓库".into());
         }
-        return git_output_owned(
-            &root,
-            &[
-                "push".into(),
-                "--set-upstream".into(),
-                "origin".into(),
-                branch,
-            ],
-        )
-        .map(|_| ());
+        let mut args = vec!["push".into(), "--set-upstream".into()];
+        if force_with_lease {
+            args.push("--force-with-lease".into());
+        }
+        args.extend(["origin".into(), branch]);
+        return git_output_owned(&root, &args).map(|_| ());
+    }
+    if force_with_lease {
+        return git_output(&root, &["push", "--force-with-lease"]).map(|_| ());
     }
     git_output(&root, &["push"]).map(|_| ())
 }
@@ -5163,6 +5224,11 @@ mod tests {
         git_output(&remote.0, &["init", "--bare"]).expect("init bare remote");
         let remote_path = remote.0.to_string_lossy().to_string();
         git_output(&repository.0, &["remote", "add", "origin", &remote_path]).expect("add origin");
+        // 钉住拉取策略为仅快进，保证本用例语义不受开发机全局 git 配置影响。
+        git_output(&repository.0, &["config", "pull.rebase", "false"])
+            .expect("pin pull strategy to ff-only");
+        git_output(&repository.0, &["config", "pull.ff", "only"])
+            .expect("pin pull fast-forward to only");
         git_output(&repository.0, &["push", "-u", "origin", &base_branch])
             .expect("push base branch");
         assert!(read_repository(&path)
@@ -5635,5 +5701,370 @@ mod tests {
         assert_eq!(porcelain_file_type("A "), "A");
         assert_eq!(porcelain_file_type(" D"), "D");
         assert_eq!(porcelain_file_type(" M"), "M");
+    }
+
+    /// 并行测试里仅靠纳秒时间戳仍可能撞名（撞名后 Drop 会互删临时目录），
+    /// 叠加进程内自增序号保证本轨道新建的 remote/peer 目录唯一。
+    static TEST_DIRECTORY_SEQUENCE: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    fn unique_tag() -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("{}-{nanos}-{sequence}", std::process::id())
+    }
+
+    /// 建一个本地 bare 仓库作为 origin，并挂到被测仓库上。
+    fn linked_bare_remote(repository: &TestRepository, label: &str) -> (TestRepository, String) {
+        let remote = TestRepository(
+            std::env::temp_dir().join(format!("branchline-{label}-remote-{}", unique_tag())),
+        );
+        fs::create_dir_all(&remote.0).expect("create bare remote directory");
+        git_output(&remote.0, &["init", "--bare"]).expect("init bare remote");
+        let remote_path = remote.0.to_string_lossy().to_string();
+        git_output(&repository.0, &["remote", "add", "origin", &remote_path]).expect("add origin");
+        (remote, remote_path)
+    }
+
+    /// 从 bare origin 克隆一个协作者仓库，用于制造真实的远端新提交。
+    fn clone_peer(remote_path: &str, label: &str) -> TestRepository {
+        let peer = TestRepository(
+            std::env::temp_dir().join(format!("branchline-{label}-peer-{}", unique_tag())),
+        );
+        let peer_path = peer.0.to_string_lossy().to_string();
+        git_output(&std::env::temp_dir(), &["clone", remote_path, &peer_path]).expect("clone peer");
+        git_output(&peer.0, &["config", "user.name", "Branchline Peer"]).expect("peer user name");
+        git_output(&peer.0, &["config", "user.email", "peer@example.com"])
+            .expect("peer user email");
+        peer
+    }
+
+    #[test]
+    fn honors_ff_only_pull_strategy_and_rejects_diverged_branch() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["config", "pull.ff", "only"]).expect("set ff-only pull");
+        git_output(&repository.0, &["config", "pull.rebase", "false"])
+            .expect("disable rebase pull");
+
+        let (remote, remote_path) = linked_bare_remote(&repository, "ffonly");
+        git_output(&repository.0, &["push", "-u", "origin", &base_branch])
+            .expect("push base branch");
+        let peer = clone_peer(&remote_path, "ffonly");
+        fs::write(peer.0.join("remote.txt"), "remote\n").expect("write remote file");
+        git_output(&peer.0, &["add", "remote.txt"]).expect("add remote file");
+        git_output(&peer.0, &["commit", "-m", "远程更新"]).expect("commit remote file");
+        git_output(&peer.0, &["push"]).expect("push remote update");
+
+        fs::write(repository.0.join("local.txt"), "local\n").expect("write local file");
+        git_output(&repository.0, &["add", "local.txt"]).expect("add local file");
+        git_output(&repository.0, &["commit", "-m", "本地提交"]).expect("commit local file");
+
+        let head_before =
+            git_output(&repository.0, &["rev-parse", "HEAD"]).expect("read head before pull");
+        let remote_before = git_output(&remote.0, &["rev-parse", &base_branch])
+            .expect("read remote head before pull");
+        let stash_before = parse_stashes(&repository.0).len();
+        let error = pull_repository_branch(&path, &base_branch)
+            .expect_err("ff-only strategy must reject a diverged branch");
+        assert!(!error.is_empty(), "ff-only rejection must carry a message");
+        let head_after =
+            git_output(&repository.0, &["rev-parse", "HEAD"]).expect("read head after pull");
+        assert_eq!(
+            head_before.trim(),
+            head_after.trim(),
+            "ff-only pull must move nothing"
+        );
+        assert!(
+            repository_operation(&repository.0).is_none(),
+            "a rejected ff-only pull must not leave an operation behind"
+        );
+        assert_eq!(
+            parse_stashes(&repository.0).len(),
+            stash_before,
+            "a clean diverged tree must not be stashed"
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("local.txt")).expect("local commit intact"),
+            "local\n"
+        );
+        let remote_after = git_output(&remote.0, &["rev-parse", &base_branch])
+            .expect("read remote head after pull");
+        assert_eq!(
+            remote_before.trim(),
+            remote_after.trim(),
+            "a rejected ff-only pull must leave the remote untouched"
+        );
+    }
+
+    #[test]
+    fn honors_merge_pull_strategy_for_a_diverged_branch() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["config", "pull.rebase", "false"])
+            .expect("disable rebase pull");
+        git_output(&repository.0, &["config", "pull.ff", "false"]).expect("allow merge commits");
+
+        let (_remote, remote_path) = linked_bare_remote(&repository, "mergepull");
+        git_output(&repository.0, &["push", "-u", "origin", &base_branch])
+            .expect("push base branch");
+        let peer = clone_peer(&remote_path, "mergepull");
+        fs::write(peer.0.join("remote.txt"), "remote\n").expect("write remote file");
+        git_output(&peer.0, &["add", "remote.txt"]).expect("add remote file");
+        git_output(&peer.0, &["commit", "-m", "远程更新"]).expect("commit remote file");
+        git_output(&peer.0, &["push"]).expect("push remote update");
+
+        fs::write(repository.0.join("local.txt"), "local\n").expect("write local file");
+        git_output(&repository.0, &["add", "local.txt"]).expect("add local file");
+        git_output(&repository.0, &["commit", "-m", "本地提交"]).expect("commit local file");
+
+        pull_repository_branch(&path, &base_branch).expect("merge pull on diverged branch");
+
+        let parents = git_output(&repository.0, &["rev-list", "--parents", "-n", "1", "HEAD"])
+            .expect("read merged parents");
+        assert_eq!(
+            parents.split_whitespace().count(),
+            3,
+            "merge strategy must create a merge commit"
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("remote.txt")).expect("remote file pulled"),
+            "remote\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("local.txt")).expect("local commit kept"),
+            "local\n"
+        );
+        let history = git_output(&repository.0, &["log", "--pretty=%s"]).expect("read history");
+        assert!(
+            history.contains("远程更新"),
+            "remote commit must stay in history"
+        );
+        assert!(
+            history.contains("本地提交"),
+            "local commit must stay in history"
+        );
+    }
+
+    #[test]
+    fn restores_local_changes_after_successful_rebase_pull() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["config", "pull.rebase", "true"]).expect("set rebase pull");
+        git_output(&repository.0, &["config", "pull.ff", "true"])
+            .expect("keep pull.ff unset-as-only");
+        fs::write(repository.0.join("README.md"), "line1\nline2\nline3\n")
+            .expect("seed multi line readme");
+        git_output(&repository.0, &["add", "README.md"]).expect("stage readme seed");
+        git_output(&repository.0, &["commit", "-m", "整理 README"]).expect("commit readme seed");
+
+        let (_remote, remote_path) = linked_bare_remote(&repository, "rebase-stash");
+        git_output(&repository.0, &["push", "-u", "origin", &base_branch])
+            .expect("push base branch");
+        let peer = clone_peer(&remote_path, "rebase-stash");
+        fs::write(peer.0.join("README.md"), "line1-remote\nline2\nline3\n")
+            .expect("peer edits first line");
+        git_output(&peer.0, &["add", "README.md"]).expect("stage peer edit");
+        git_output(&peer.0, &["commit", "-m", "远程改首行"]).expect("commit peer edit");
+        git_output(&peer.0, &["push"]).expect("push peer edit");
+
+        // 本地已提交改动（造成分叉）+ README 未提交改动（与远端同文件，触发自动 Stash）。
+        fs::write(repository.0.join("notes.txt"), "notes\n").expect("write local notes");
+        git_output(&repository.0, &["add", "notes.txt"]).expect("stage local notes");
+        git_output(&repository.0, &["commit", "-m", "本地提交"]).expect("commit local notes");
+        fs::write(
+            repository.0.join("README.md"),
+            "line1\nline2\nline3-local\n",
+        )
+        .expect("local uncommitted edit");
+
+        let stash_before = parse_stashes(&repository.0).len();
+        pull_repository_branch(&path, &base_branch)
+            .expect("rebase pull must restore clean local edits");
+
+        let readme =
+            fs::read_to_string(repository.0.join("README.md")).expect("read restored file");
+        assert!(
+            readme.contains("line1-remote"),
+            "remote change must be pulled"
+        );
+        assert!(
+            readme.contains("line3-local"),
+            "auto stashed local change must be restored"
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("notes.txt")).expect("local commit survives"),
+            "notes\n"
+        );
+        assert_eq!(
+            parse_stashes(&repository.0).len(),
+            stash_before,
+            "auto stash must be popped"
+        );
+        let parents = git_output(&repository.0, &["rev-list", "--parents", "-n", "1", "HEAD"])
+            .expect("read rebased head parents");
+        assert_eq!(
+            parents.split_whitespace().count(),
+            2,
+            "rebase must not create a merge commit"
+        );
+    }
+
+    #[test]
+    fn keeps_auto_stash_when_rebase_pull_conflicts() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["config", "pull.rebase", "true"]).expect("set rebase pull");
+        git_output(&repository.0, &["config", "pull.ff", "true"])
+            .expect("keep pull.ff unset-as-only");
+
+        let (_remote, remote_path) = linked_bare_remote(&repository, "rebase-conflict");
+        git_output(&repository.0, &["push", "-u", "origin", &base_branch])
+            .expect("push base branch");
+        let peer = clone_peer(&remote_path, "rebase-conflict");
+        fs::write(peer.0.join("README.md"), "line1-remote\n").expect("peer rewrites line1");
+        git_output(&peer.0, &["add", "README.md"]).expect("stage peer rewrite");
+        git_output(&peer.0, &["commit", "-m", "远程改首行"]).expect("commit peer rewrite");
+        git_output(&peer.0, &["push"]).expect("push peer rewrite");
+
+        fs::write(repository.0.join("README.md"), "line1-local\n").expect("local rewrite");
+        git_output(&repository.0, &["add", "README.md"]).expect("stage local rewrite");
+        git_output(&repository.0, &["commit", "-m", "本地改首行"]).expect("commit local rewrite");
+        // 同一文件的未提交改动，与远端变更重叠 → 必须触发自动 Stash 保护。
+        fs::write(repository.0.join("README.md"), "line1-local\nextra-local\n")
+            .expect("write overlapping uncommitted edit");
+
+        let stash_before = parse_stashes(&repository.0).len();
+        let error = pull_repository_branch(&path, &base_branch)
+            .expect_err("conflicting rebase must surface the failure");
+        assert!(
+            error.contains("自动 Stash"),
+            "the failure must tell the user the auto stash was preserved: {error}"
+        );
+        assert!(
+            error.contains("stash@{0}"),
+            "the failure must point at the retained stash entry: {error}"
+        );
+        assert_eq!(
+            parse_stashes(&repository.0).len(),
+            stash_before + 1,
+            "the user's local changes must remain in the stash"
+        );
+        let operation = repository_operation(&repository.0).expect("rebase stays in progress");
+        assert_eq!(
+            operation.kind, "rebase",
+            "the conflict must be resumable as a rebase"
+        );
+        let stashed_diff = git_output(&repository.0, &["stash", "show", "-p", "stash@{0}"])
+            .expect("read preserved auto stash diff");
+        assert!(
+            stashed_diff.contains("extra-local"),
+            "the user's uncommitted change must survive inside the stash"
+        );
+    }
+
+    #[test]
+    fn pushes_rewritten_history_with_force_with_lease() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        let (remote, _remote_path) = linked_bare_remote(&repository, "lease-ok");
+        git_output(&repository.0, &["push", "-u", "origin", &base_branch])
+            .expect("push base branch");
+
+        fs::write(repository.0.join("a.txt"), "v1\n").expect("write a.txt");
+        git_output(&repository.0, &["add", "a.txt"]).expect("stage a.txt");
+        git_output(&repository.0, &["commit", "-m", "功能提交"]).expect("commit feature");
+        push_repository(&path).expect("push feature commit");
+
+        // 改写已推送的历史：普通推送会被拒绝，force-with-lease 应成功。
+        git_output(
+            &repository.0,
+            &["commit", "--amend", "-m", "改写后的功能提交"],
+        )
+        .expect("amend pushed commit");
+        push_repository(&path).expect_err("plain push must refuse non-fast-forward");
+        push_repository_with_lease(&path).expect("force-with-lease push accepted");
+
+        let local_head =
+            git_output(&repository.0, &["rev-parse", "HEAD"]).expect("read local head");
+        let remote_head =
+            git_output(&remote.0, &["rev-parse", &base_branch]).expect("read remote head");
+        assert_eq!(
+            local_head.trim(),
+            remote_head.trim(),
+            "remote must adopt the rewritten head"
+        );
+        let remote_message = git_output(&remote.0, &["show", "-s", "--format=%s", &base_branch])
+            .expect("read remote message");
+        assert!(
+            remote_message.contains("改写后的功能提交"),
+            "rewritten message must be on remote"
+        );
+    }
+
+    #[test]
+    fn force_with_lease_push_rejects_stale_remote_state() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        let (remote, remote_path) = linked_bare_remote(&repository, "lease-stale");
+        git_output(&repository.0, &["push", "-u", "origin", &base_branch])
+            .expect("push base branch");
+
+        fs::write(repository.0.join("mine.txt"), "mine\n").expect("write mine.txt");
+        git_output(&repository.0, &["add", "mine.txt"]).expect("stage mine.txt");
+        git_output(&repository.0, &["commit", "-m", "本地工作"]).expect("commit local work");
+        push_repository(&path).expect("push local work");
+
+        // 协作者推进了远端，而本地 remote-tracking 仍停留在旧值 → lease 过期。
+        let peer = clone_peer(&remote_path, "lease-stale");
+        fs::write(peer.0.join("theirs.txt"), "theirs\n").expect("write theirs.txt");
+        git_output(&peer.0, &["add", "theirs.txt"]).expect("stage theirs.txt");
+        git_output(&peer.0, &["commit", "-m", "协作者提交"]).expect("commit collaborator work");
+        git_output(&peer.0, &["push"]).expect("push collaborator work");
+
+        // 本地改写历史后强推：lease 校验必须拒绝，绝不覆盖协作者提交。
+        git_output(&repository.0, &["commit", "--amend", "-m", "改写本地工作"])
+            .expect("amend local commit");
+        let error = push_repository_with_lease(&path)
+            .expect_err("a stale lease must refuse the forced push");
+        assert!(
+            !error.is_empty(),
+            "stale lease rejection must carry a message"
+        );
+        let peer_head = git_output(&peer.0, &["rev-parse", "HEAD"]).expect("read peer head");
+        let remote_head =
+            git_output(&remote.0, &["rev-parse", &base_branch]).expect("read remote head");
+        assert_eq!(
+            peer_head.trim(),
+            remote_head.trim(),
+            "remote must keep the collaborator commit after a refused forced push"
+        );
     }
 }
