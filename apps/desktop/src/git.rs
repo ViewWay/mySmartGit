@@ -3291,6 +3291,78 @@ fn write_conflict_result(root: &Path, file_path: &str, content: &str) -> Result<
         .map_err(|error| format!("写入合并结果失败：{error}"))
 }
 
+/// 冲突文件在索引里的分侧记录：stage 号 ->（模式，对象号）。
+/// stage 1/2/3 分别是基线、当前侧、对方侧；增删改冲突时对应侧会缺失。
+/// 这是"某一侧是否存在"的唯一可靠口径：二进制侧的文本读不出来，但索引记录仍在。
+fn conflict_index_stages(root: &Path, file_path: &str) -> HashMap<usize, (String, String)> {
+    git_output_owned(
+        root,
+        &[
+            "ls-files".into(),
+            "-u".into(),
+            "-z".into(),
+            "--".into(),
+            file_path.to_string(),
+        ],
+    )
+    .unwrap_or_default()
+    .split('\0')
+    .filter_map(|entry| {
+        // -z 输出形如 `mode hash stage\tpath`，用 -z 是为了让带空格/中文的路径不被引用转义。
+        let metadata = entry.split_once('\t').map(|(head, _)| head)?;
+        let mut fields = metadata.split_whitespace();
+        let mode = fields.next()?.to_string();
+        let hash = fields.next()?.to_string();
+        let stage = fields.next()?.parse::<usize>().ok()?;
+        Some((stage, (mode, hash)))
+    })
+    .collect()
+}
+
+fn conflict_stages_are_gitlink(stages: &HashMap<usize, (String, String)>) -> bool {
+    stages.values().any(|(mode, _)| mode == "160000")
+}
+
+/// 工作区文件的当前内容与"是否二进制"判定，与 load_conflict_file 共用一套口径，
+/// 避免前端按钮可用性与后端实际能否按文本写入出现两套判断。
+fn conflict_worktree_text(root: &Path, file_path: &str) -> (String, bool) {
+    let target = match repository_file_target(root, file_path) {
+        Ok(target) => target,
+        Err(_) => return (String::new(), false),
+    };
+    match std::fs::read(&target) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(value) if !value.contains('\0') => (value, false),
+            Ok(_) => (String::new(), true),
+            Err(_) => (String::new(), true),
+        },
+        Err(_) => (String::new(), false),
+    }
+}
+
+/// 把解决结果真正纳入暂存区。Git 的 `checkout --ours/--theirs` 只改工作区、
+/// 不会消解索引里的 unmerged 记录，必须补一次 `git add`。
+fn stage_conflict_resolution(root: &Path, file_path: &str) -> Result<(), String> {
+    git_output_owned(
+        root,
+        &["add".into(), "--".into(), file_path.to_string()],
+    )
+    .map(|_| ())
+    .map_err(|error| format!("解决结果落暂存失败：{error}"))
+}
+
+/// 去掉冲突段里的基线区（diff3 的 `|||||||` 段在"当前侧"之后，
+/// zdiff3 的在"对方侧"之后），只留下该侧真正的改动内容。
+fn strip_conflict_base_section<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    let base_marker = lines
+        .iter()
+        .position(|line| *line == "|||||||" || line.starts_with("||||||| "));
+    match base_marker {
+        Some(index) => lines[..index].to_vec(),
+        None => lines.to_vec(),
+    }
+}
+
 pub fn resolve_conflict_block(
     repository_path: &str,
     file_path: &str,
@@ -3346,8 +3418,8 @@ pub fn resolve_conflict_block(
     let Some(&(start, separator, end)) = blocks.get(block_index) else {
         return Err(format!("未找到第 {} 个冲突块", block_index + 1));
     };
-    let current = lines[start + 1..separator].join("\n");
-    let incoming = lines[separator + 1..end].join("\n");
+    let current = strip_conflict_base_section(&lines[start + 1..separator]).join("\n");
+    let incoming = strip_conflict_base_section(&lines[separator + 1..end]).join("\n");
     let replacement = match strategy {
         "current" => current,
         "incoming" => incoming,
@@ -3384,29 +3456,10 @@ pub fn load_conflict_file(
     let (base, base_binary) = conflict_stage_text(&root, 1, &file_path);
     let (current, current_binary) = conflict_stage_text(&root, 2, &file_path);
     let (incoming, incoming_binary) = conflict_stage_text(&root, 3, &file_path);
-    let target = repository_file_target(&root, &file_path)?;
-    let (result, result_binary) = match std::fs::read(&target) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(value) if !value.contains('\0') => (value, false),
-            Ok(_) => (String::new(), true),
-            Err(_) => (String::new(), true),
-        },
-        Err(_) => (String::new(), false),
-    };
+    let (result, result_binary) = conflict_worktree_text(&root, &file_path);
     let operation = repository_operation(&root);
     let rebase = operation.as_ref().is_some_and(|item| item.kind == "rebase");
-    let gitlink = git_output_owned(
-        &root,
-        &[
-            "ls-files".into(),
-            "-u".into(),
-            "--".into(),
-            file_path.clone(),
-        ],
-    )
-    .unwrap_or_default()
-    .lines()
-    .any(|line| line.starts_with("160000 "));
+    let gitlink = conflict_stages_are_gitlink(&conflict_index_stages(&root, &file_path));
     Ok(ConflictFileContent {
         path: file_path,
         base,
@@ -3443,30 +3496,78 @@ pub fn resolve_conflict_file(
         return Err(format!("文件当前没有未解决冲突：{file_path}"));
     }
     let target = repository_file_target(&root, &file_path)?;
-    let gitlink = unresolved_gitlink_paths(&root)?.contains(&file_path);
+    let stages = conflict_index_stages(&root, &file_path);
+    let gitlink = conflict_stages_are_gitlink(&stages);
+    // 统一语义：一次策略调用之后，文件要么"解决完成并已落暂存"，
+    // 要么明确保持未解决（结果里还剩冲突标记，属于阶段性保存）。
     match strategy {
         "current" | "incoming" => {
-            let side = if strategy == "current" {
-                "ours"
-            } else {
-                "theirs"
-            };
-            git_output_owned(
-                &root,
-                &[
-                    "checkout".into(),
-                    format!("--{side}"),
-                    "--".into(),
-                    file_path.clone(),
-                ],
-            )?;
+            let stage = if strategy == "current" { 2 } else { 3 };
+            let side_name = if strategy == "current" { "当前" } else { "对方" };
             if gitlink {
-                git_output_owned(&root, &["add".into(), "--".into(), file_path.clone()])?;
+                // gitlink 不能用 `checkout --ours/--theirs` + `add`：那条路径不会移动子模块的
+                // 工作区指针，随后 `git add` 记录的是子模块当前 HEAD，会静默选到另一侧。
+                // 这里直接把索引里该侧的对象号写回，选侧结果与记录内容必然一致。
+                let (_, hash) = stages.get(&stage).cloned().ok_or_else(|| {
+                    format!("{side_name}侧没有子模块引用记录，无法采用；请改用“删除文件”或手动记录子模块提交")
+                })?;
+                git_output_owned(
+                    &root,
+                    &[
+                        "update-index".into(),
+                        "--add".into(),
+                        "--cacheinfo".into(),
+                        "160000".into(),
+                        hash,
+                        file_path.clone(),
+                    ],
+                )?;
+                // 子模块工作区尽力同步到已记录的引用；对象没取到也不影响本次解决结果。
+                let _ = git_output_owned(
+                    &root,
+                    &[
+                        "submodule".into(),
+                        "update".into(),
+                        "--checkout".into(),
+                        "--".into(),
+                        file_path.clone(),
+                    ],
+                );
+            } else {
+                let side = if strategy == "current" {
+                    "ours"
+                } else {
+                    "theirs"
+                };
+                if let Err(error) = git_output_owned(
+                    &root,
+                    &[
+                        "checkout".into(),
+                        format!("--{side}"),
+                        "--".into(),
+                        file_path.clone(),
+                    ],
+                ) {
+                    // 增删改类冲突里被删的那一侧没有 stage 记录，git 会直接报错，
+                    // 这里补一句可执行的建议，而不是让用户面对裸文案。
+                    return Err(format!(
+                        "无法采用{side_name}版本：{error}；该侧已被删除时请改用“删除文件”"
+                    ));
+                }
+                // checkout 只改工作区，索引里的 unmerged 记录还在：
+                // 文本与二进制都必须补 add，二进制没有冲突标记、按整侧采用正是它的正确解法。
+                stage_conflict_resolution(&root, &file_path)?;
             }
         }
         "both" => {
-            let (current, _) = conflict_stage_text(&root, 2, &file_path);
-            let (incoming, _) = conflict_stage_text(&root, 3, &file_path);
+            if gitlink {
+                return Err("Gitlink / 子模块引用不能“保留双方”，请选择一侧".into());
+            }
+            let (current, current_binary) = conflict_stage_text(&root, 2, &file_path);
+            let (incoming, incoming_binary) = conflict_stage_text(&root, 3, &file_path);
+            if current_binary || incoming_binary {
+                return Err("二进制文件不能“保留双方”，请选择一侧或使用外部合并工具".into());
+            }
             let mut combined = current.unwrap_or_default();
             if let Some(incoming) = incoming.filter(|value| !value.is_empty()) {
                 if !combined.is_empty() && !combined.ends_with('\n') {
@@ -3476,10 +3577,26 @@ pub fn resolve_conflict_file(
             }
             std::fs::write(&target, combined.as_bytes())
                 .map_err(|error| format!("写入合并结果失败：{error}"))?;
+            if !has_conflict_markers(&combined) {
+                stage_conflict_resolution(&root, &file_path)?;
+            }
         }
         "result" => {
             let content = content.ok_or_else(|| "缺少待保存的合并结果".to_string())?;
+            if gitlink {
+                return Err("Gitlink / 子模块引用不能按文本保存结果，请选择一侧".into());
+            }
+            let (_, worktree_binary) = conflict_worktree_text(&root, &file_path);
+            if worktree_binary {
+                return Err("二进制文件不能按文本保存合并结果，请选择一侧或使用外部合并工具".into());
+            }
             write_conflict_result(&root, &file_path, content)?;
+            // 这是"标记已解决"真正落暂存的地方：结果里已经没有冲突标记才算解决完成。
+            // 仍带标记时只是阶段性保存，必须保持 unmerged，否则会被误当成已解决提交进去。
+            if has_conflict_markers(content) {
+                return Ok(());
+            }
+            stage_conflict_resolution(&root, &file_path)?;
         }
         "delete" => {
             git_output_owned(&root, &["rm".into(), "-f".into(), "--".into(), file_path])?;
@@ -3504,11 +3621,15 @@ pub fn launch_conflict_mergetool(repository_path: &str, file_path: &str) -> Resu
     {
         return Err("尚未配置 merge.tool，请先在 Git 配置中选择外部合并工具".into());
     }
+    // 两个配置项必须各自带一个 -c：缺 -c 时 git 会把 `mergetool.trustExitCode=true`
+    // 当成子命令名解析，直接报"不是 git 命令"，外部合并工具永远起不来。
+    // trustExitCode=true 还让 git mergetool 在工具正常退出后自行把结果落暂存。
     git_output_owned(
         &root,
         &[
             "-c".into(),
             "mergetool.prompt=false".into(),
+            "-c".into(),
             "mergetool.trustExitCode=true".into(),
             "mergetool".into(),
             "--no-prompt".into(),
@@ -3887,12 +4008,18 @@ mod tests {
     }
 
     fn test_repository() -> TestRepository {
+        // 这台机器上 SystemTime 只有微秒级粒度：并发用例可能拿到完全相同的
+        // pid+时间戳，于是 git init 会撞进同一个目录（报 hooks/*.sample: File exists）。
+        // 加一个进程内自增序号，保证每个用例独占临时目录。
+        static REPOSITORY_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let sequence = REPOSITORY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "branchline-git-test-{}-{unique}",
+            "branchline-git-test-{}-{unique}-{sequence}",
             std::process::id()
         ));
         fs::create_dir_all(&path).expect("create test repository");
@@ -5546,9 +5673,21 @@ mod tests {
         .expect("save partial conflict result");
 
         assert_eq!(unresolved_paths(&repository.0), vec!["README.md"]);
-        let staged = git_output(&repository.0, &["diff", "--cached", "--name-only"])
-            .expect("read staged files");
-        assert!(!staged.lines().any(|line| line == "README.md"));
+        // 阶段性保存不能碰索引：`--diff-filter=U` 仍要报出这个 unmerged 记录，
+        // 且三个 stage 都还在。注意 `git diff --cached --name-only` 不带 filter 时
+        // unmerged 文件同样会出现，用它判断"是否已落暂存"是错的。
+        let unmerged =
+            git_output(&repository.0, &["diff", "--cached", "--name-only", "--diff-filter=U"])
+                .expect("read unmerged index entries");
+        assert!(unmerged.lines().any(|line| line == "README.md"));
+        assert_eq!(
+            git_output(&repository.0, &["ls-files", "-u", "--", "README.md"])
+                .expect("read unmerged stages")
+                .lines()
+                .count(),
+            3,
+            "a result with conflict markers must stay unmerged in the index"
+        );
     }
 
     #[test]
@@ -5573,6 +5712,331 @@ mod tests {
             unresolved_paths(&repository.0).is_empty(),
             "the mergetool should stage the file it resolved"
         );
+    }
+
+    #[test]
+    fn choosing_a_side_or_keeping_both_records_the_resolution_in_the_index() {
+        let (repository, path) = conflicted_repository();
+
+        // git checkout --ours 只改工作区，索引里的 unmerged 记录必须靠 git add 消掉。
+        resolve_conflict_file(&path, "README.md", "current", None).expect("choose current side");
+        assert!(
+            unresolved_paths(&repository.0).is_empty(),
+            "选侧之后必须真正落暂存，否则继续合并仍会被判定为未解决"
+        );
+        assert!(
+            git_output(
+                &repository.0,
+                &["diff", "--cached", "--name-only", "--diff-filter=U"],
+            )
+            .expect("read unmerged index entries")
+            .lines()
+            .all(|line| line != "README.md")
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("README.md")).expect("read chosen file"),
+            "main\n"
+        );
+        continue_repository_operation(&path).expect("continue merge after choosing a side");
+        assert!(read_repository(&path)
+            .expect("read finished merge")
+            .operation
+            .is_none());
+
+        // 回到合并前重新造一次冲突，验证"采用对方"落暂存的就是对方侧内容。
+        git_output(&repository.0, &["reset", "--hard", "HEAD~1"]).expect("reset before the merge");
+        git_output(&repository.0, &["merge", "--no-edit", "--", "feat/conflict"])
+            .expect_err("merge should conflict again");
+        assert_eq!(unresolved_paths(&repository.0), vec!["README.md"]);
+        resolve_conflict_file(&path, "README.md", "incoming", None).expect("choose their side");
+        assert!(unresolved_paths(&repository.0).is_empty());
+        assert_eq!(
+            git_output(&repository.0, &["show", ":README.md"]).expect("read staged blob"),
+            "feature\n"
+        );
+
+        git_output(&repository.0, &["merge", "--abort"]).expect("abort to test keeping both");
+        git_output(&repository.0, &["merge", "--no-edit", "--", "feat/conflict"])
+            .expect_err("merge should conflict once more");
+        resolve_conflict_file(&path, "README.md", "both", None).expect("keep both sides");
+        assert!(
+            unresolved_paths(&repository.0).is_empty(),
+            "拼接结果已无冲突标记，应该落暂存"
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("README.md")).expect("read combined file"),
+            "main\nfeature\n"
+        );
+    }
+
+    #[test]
+    fn saving_a_clean_result_after_a_partial_save_stages_the_file() {
+        let (repository, path) = conflicted_repository();
+
+        resolve_conflict_file(
+            &path,
+            "README.md",
+            "result",
+            Some("<<<<<<< HEAD\nmain\n=======\nfeature\n>>>>>>> feat\n"),
+        )
+        .expect("save partial result");
+        assert_eq!(unresolved_paths(&repository.0), vec!["README.md"]);
+
+        resolve_conflict_file(&path, "README.md", "result", Some("main + feature\n"))
+            .expect("标记已解决");
+        assert!(
+            unresolved_paths(&repository.0).is_empty(),
+            "干净的保存结果就是解决完成，必须落暂存"
+        );
+        assert_eq!(
+            git_output(&repository.0, &["show", ":README.md"]).expect("read staged blob"),
+            "main + feature\n"
+        );
+    }
+
+    #[test]
+    fn side_choice_reports_the_missing_side_instead_of_a_bare_git_error() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+
+        // 一侧删除、一侧修改：被删的那一侧没有 stage 记录，选侧应当给出可执行的建议。
+        git_output(&repository.0, &["switch", "-c", "feat/removes"])
+            .expect("create removing branch");
+        fs::remove_file(repository.0.join("README.md")).expect("delete readme");
+        git_output(&repository.0, &["commit", "-am", "删除说明文件"])
+            .expect("commit deletion");
+        git_output(&repository.0, &["switch", &base_branch]).expect("switch base branch");
+        fs::write(repository.0.join("README.md"), "main\n").expect("modify readme");
+        git_output(&repository.0, &["commit", "-am", "修改说明文件"])
+            .expect("commit modification");
+        merge_repository_reference(&path, "feat/removes").expect_err("merge should conflict");
+        assert_eq!(unresolved_paths(&repository.0), vec!["README.md"]);
+
+        let error = resolve_conflict_file(&path, "README.md", "incoming", None)
+            .expect_err("deleted side cannot be chosen");
+        assert!(error.contains("无法采用对方版本"), "{error}");
+        assert!(error.contains("删除文件"), "{error}");
+        assert_eq!(unresolved_paths(&repository.0), vec!["README.md"]);
+
+        resolve_conflict_file(&path, "README.md", "delete", None).expect("delete the conflicted file");
+        assert!(unresolved_paths(&repository.0).is_empty());
+    }
+
+    fn conflicted_binary_repository() -> (TestRepository, String) {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        fs::write(repository.0.join("image.bin"), b"BASE\x00\x00".as_slice()).expect("base binary");
+        git_output(&repository.0, &["add", "image.bin"]).expect("add base binary");
+        git_output(&repository.0, &["commit", "-m", "加入二进制文件"])
+            .expect("commit base binary");
+
+        git_output(&repository.0, &["switch", "-c", "feat/binary"]).expect("create binary branch");
+        fs::write(repository.0.join("image.bin"), b"THEIRS\x00\x00".as_slice())
+            .expect("their binary");
+        git_output(&repository.0, &["commit", "-am", "对方二进制改动"])
+            .expect("commit their binary");
+        git_output(&repository.0, &["switch", &base_branch]).expect("switch base branch");
+        fs::write(repository.0.join("image.bin"), b"OURS\x00\x00".as_slice()).expect("our binary");
+        git_output(&repository.0, &["commit", "-am", "当前二进制改动"])
+            .expect("commit our binary");
+        merge_repository_reference(&path, "feat/binary").expect_err("binary merge should conflict");
+        (repository, path)
+    }
+
+    #[test]
+    fn binary_conflict_is_resolved_by_choosing_a_side_only() {
+        let (repository, path) = conflicted_binary_repository();
+        assert_eq!(unresolved_paths(&repository.0), vec!["image.bin"]);
+
+        let conflict = load_conflict_file(&path, "image.bin").expect("load binary conflict");
+        assert!(conflict.binary, "二进制冲突要标记 binary");
+        // 二进制侧读不出文本，但整侧采用依然可用：不能因此把选侧判成不可用。
+        assert!(conflict.current.is_none() && conflict.incoming.is_none());
+
+        // 文本类策略会写坏二进制文件：必须先拒绝，而且一点都不能改。
+        let result_error =
+            resolve_conflict_file(&path, "image.bin", "result", Some("hand written\n"))
+                .expect_err("二进制不允许按文本保存结果");
+        assert!(result_error.contains("二进制"), "{result_error}");
+        let both_error = resolve_conflict_file(&path, "image.bin", "both", None)
+            .expect_err("二进制不允许保留双方");
+        assert!(both_error.contains("二进制"), "{both_error}");
+        assert_eq!(unresolved_paths(&repository.0), vec!["image.bin"]);
+        assert_eq!(
+            fs::read(repository.0.join("image.bin")).expect("binary untouched"),
+            b"OURS\x00\x00".as_slice()
+        );
+
+        resolve_conflict_file(&path, "image.bin", "current", None)
+            .expect("二进制按当前侧解决");
+        assert!(unresolved_paths(&repository.0).is_empty());
+        assert_eq!(
+            fs::read(repository.0.join("image.bin")).expect("read resolved binary"),
+            b"OURS\x00\x00".as_slice()
+        );
+        continue_repository_operation(&path).expect("continue merge after binary resolution");
+    }
+
+    #[test]
+    fn gitlink_conflict_records_the_reference_of_the_chosen_side() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let submodule = TestRepository(std::env::temp_dir().join(format!(
+            "branchline-gitlink-conflict-{}-{unique}-{sequence}",
+            std::process::id()
+        )));
+        fs::create_dir_all(&submodule.0).expect("create submodule directory");
+        git_output(&submodule.0, &["init"]).expect("init submodule");
+        git_output(&submodule.0, &["config", "user.name", "Branchline Test"]).expect("submodule user");
+        git_output(&submodule.0, &["config", "user.email", "branchline@example.com"])
+            .expect("submodule email");
+        fs::write(submodule.0.join("plan.md"), "base\n").expect("write submodule base");
+        git_output(&submodule.0, &["add", "plan.md"]).expect("stage submodule base");
+        git_output(&submodule.0, &["commit", "-m", "子模组基线"])
+            .expect("commit submodule base");
+        let initial = git_output(&submodule.0, &["rev-parse", "HEAD"])
+            .expect("read submodule base hash")
+            .trim()
+            .to_string();
+        let submodule_path = submodule.0.to_string_lossy().to_string();
+        git_output(
+            &repository.0,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &submodule_path,
+                "apps/planning",
+            ],
+        )
+        .expect("add submodule");
+        let checkout = repository.0.join("apps/planning");
+        git_output(&checkout, &["checkout", &initial]).expect("checkout initial submodule commit");
+        git_output(&repository.0, &["add", ".gitmodules", "apps/planning"])
+            .expect("stage initial submodule");
+        git_output(&repository.0, &["commit", "-m", "加入子模组"])
+            .expect("commit initial submodule");
+
+        git_output(&repository.0, &["switch", "-c", "feat/gitlink"]).expect("create gitlink branch");
+        fs::write(submodule.0.join("theirs.md"), "theirs\n").expect("write their submodule file");
+        git_output(&submodule.0, &["add", "theirs.md"]).expect("stage their submodule file");
+        git_output(&submodule.0, &["commit", "-m", "对方子模组提交"])
+            .expect("commit their submodule change");
+        let their_pointer = git_output(&submodule.0, &["rev-parse", "HEAD"])
+            .expect("read their submodule pointer")
+            .trim()
+            .to_string();
+        git_output(&checkout, &["fetch", "origin"]).expect("fetch their submodule pointer");
+        git_output(&checkout, &["checkout", &their_pointer]).expect("checkout their pointer");
+        git_output(&repository.0, &["add", "apps/planning"]).expect("stage their pointer");
+        git_output(&repository.0, &["commit", "-m", "对方更新子模组"])
+            .expect("commit their pointer");
+
+        git_output(&repository.0, &["switch", &base_branch]).expect("switch base branch");
+        // 子模组里的"当前侧"提交必须与"对方侧"分叉（同以 initial 为父），
+        // 否则 gitlink 是快进关系，Git 会自行解出结果、不会产生引用冲突。
+        git_output(&submodule.0, &["switch", "-c", "ours-side", &initial])
+            .expect("create divergent submodule side");
+        fs::write(submodule.0.join("ours.md"), "ours\n").expect("write our submodule file");
+        git_output(&submodule.0, &["add", "ours.md"]).expect("stage our submodule file");
+        git_output(&submodule.0, &["commit", "-m", "当前子模组提交"])
+            .expect("commit our submodule change");
+        let our_pointer = git_output(&submodule.0, &["rev-parse", "HEAD"])
+            .expect("read our submodule pointer")
+            .trim()
+            .to_string();
+        git_output(&checkout, &["fetch", "origin"]).expect("fetch our submodule pointer");
+        git_output(&checkout, &["checkout", &our_pointer]).expect("checkout our pointer");
+        git_output(&repository.0, &["add", "apps/planning"]).expect("stage our pointer");
+        git_output(&repository.0, &["commit", "-m", "当前更新子模组"])
+            .expect("commit our pointer");
+
+        // 这里绕开 merge_repository_reference：它在发现只剩 gitlink 冲突时会按产品策略
+        // 自动用当前引用解掉（见 merge_automatically_stages_gitlink_conflicts_... 用例），
+        // 而本用例要验证的是用户手动选侧时索引里记录的到底是哪一侧。
+        git_output(&repository.0, &["merge", "--no-edit", "--", "feat/gitlink"])
+            .expect_err("gitlink merge should conflict");
+        assert_eq!(unresolved_paths(&repository.0), vec!["apps/planning"]);
+        assert_ne!(their_pointer, our_pointer);
+        let conflict = load_conflict_file(&path, "apps/planning").expect("load gitlink conflict");
+        assert!(conflict.gitlink, "子模组引用冲突要标记 gitlink");
+
+        // 文本类策略对 gitlink 无意义，必须在改动任何东西之前拒绝掉。
+        let both_error = resolve_conflict_file(&path, "apps/planning", "both", None)
+            .expect_err("gitlink cannot keep both sides");
+        assert!(both_error.contains("子模块引用"), "{both_error}");
+        let result_error = resolve_conflict_file(&path, "apps/planning", "result", Some("x\n"))
+            .expect_err("gitlink cannot hold a text result");
+        assert!(result_error.contains("子模块引用"), "{result_error}");
+        assert_eq!(unresolved_paths(&repository.0), vec!["apps/planning"]);
+
+        // 旧实现 checkout --theirs 不会移动子模组工作区指针，随后的 git add 会把"当前侧"
+        // 当成"对方侧"记录进去；现在按索引里的对象号写回，记录的必然是所选一侧。
+        resolve_conflict_file(&path, "apps/planning", "incoming", None)
+            .expect("choose their submodule reference");
+        assert!(unresolved_paths(&repository.0).is_empty());
+        let stage = git_output(&repository.0, &["ls-files", "--stage", "--", "apps/planning"])
+            .expect("read staged gitlink");
+        assert_eq!(stage.trim(), format!("160000 {their_pointer} 0\tapps/planning"));
+
+        git_output(&repository.0, &["merge", "--abort"]).expect("abort to test the other side");
+        git_output(&repository.0, &["merge", "--no-edit", "--", "feat/gitlink"])
+            .expect_err("gitlink merge should conflict again");
+        resolve_conflict_file(&path, "apps/planning", "current", None)
+            .expect("choose our submodule reference");
+        let stage = git_output(&repository.0, &["ls-files", "--stage", "--", "apps/planning"])
+            .expect("read staged gitlink");
+        assert_eq!(stage.trim(), format!("160000 {our_pointer} 0\tapps/planning"));
+    }
+
+    #[test]
+    fn block_resolution_drops_the_diff3_and_zdiff3_base_sections() {
+        let (repository, path) = conflicted_repository();
+        git_output(&repository.0, &["merge", "--abort"]).expect("abort diff3 merge");
+        git_output(&repository.0, &["config", "merge.conflictStyle", "zdiff3"])
+            .expect("switch to zdiff3");
+        merge_repository_reference(&path, "feat/conflict").expect_err("zdiff3 merge should conflict");
+        let conflict = load_conflict_file(&path, "README.md").expect("load zdiff3 conflict");
+        assert!(
+            conflict.result.contains("|||||||"),
+            "zdiff3 结果应带基线段：{}",
+            conflict.result
+        );
+
+        let resolved = resolve_conflict_block(&path, "README.md", 0, "current")
+            .expect("resolve zdiff3 block with current side");
+        assert_eq!(resolved.replace("\r\n", "\n"), "main\n");
+        assert!(!resolved.contains("first"), "基线内容不该被当成当前侧保留");
+
+        git_output(&repository.0, &["merge", "--abort"]).expect("abort zdiff3 merge");
+        git_output(&repository.0, &["config", "merge.conflictStyle", "diff3"])
+            .expect("switch to diff3");
+        merge_repository_reference(&path, "feat/conflict").expect_err("diff3 merge should conflict");
+        let resolved = resolve_conflict_block(&path, "README.md", 0, "incoming")
+            .expect("resolve diff3 block with incoming side");
+        assert_eq!(resolved.replace("\r\n", "\n"), "feature\n");
+
+        // 基线段处理完仍然只剩一个块，块级解决是阶段性动作，不该顺手落暂存。
+        assert_eq!(unresolved_paths(&repository.0), vec!["README.md"]);
     }
 
     #[test]
