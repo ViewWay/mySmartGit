@@ -22,7 +22,7 @@ import {
 } from '../../repository'
 import { DiffPanel } from '../diff/DiffPanel'
 import { useResizablePane } from '../../components/useResizablePane'
-import { initialCommitMessage, templateMessage } from './commitMessage'
+import { commitButtonState, draftAfterAction, initialCommitMessage, templateMessage } from './commitMessage'
 import { isBooleanRecord, usePersistentState } from '../../persistentState'
 import { stageSelectionKey, type StageSelection } from './stagingSelection'
 
@@ -135,16 +135,20 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
   const run = async (action: () => Promise<RepositorySnapshot>, success: string, operationLabel?: string) => {
     setBusy(true)
     if (operationLabel) onOperationChange?.(operationLabel)
+    let succeeded = false
     try {
       const snapshot = await action()
       onSnapshot(snapshot)
       onNotice(success)
+      succeeded = true
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
       if (operationLabel) onOperationChange?.(null)
-      applyConfiguredTemplate()
+      // 仅操作成功后重新套用模板；失败时保留用户草稿，避免刚写下的提交信息被模板冲掉。
+      const content = repository?.commitTemplate?.content ?? ''
+      setFullMessage((draft) => draftAfterAction({ succeeded, currentDraft: draft, templateContent: content }))
     }
   }
   const updateStaging = async (paths: string[], mode: 'stage' | 'unstage', force = false) => {
@@ -285,6 +289,8 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
     <div className="stage-file-actions"><button className="stage-file-action force-stage" onClick={() => forceStageConflict(file)} disabled={busy} title="强制暂存冲突文件" aria-label="强制暂存冲突文件"><Plus size={14}/></button></div>
   </div>
 
+  const commitButton = commitButtonState({ stagedCount: stagedFiles.length, busy, amend })
+
   const workspaceStyle = { '--staging-control-width': `${stagingWidth.value}px` } as CSSProperties
   const resizingClass = filesHeight.resizing ? 'pane-resizing-vertical' : stagingWidth.resizing ? 'pane-resizing' : ''
   return <section className={`workspace-page staging-page ${resizingClass}`}>
@@ -305,7 +311,7 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
           </div>
         </div>
         <span className={`workspace-resizer workspace-resizer-row ${filesHeight.resizing ? 'active' : ''}`} role="separator" aria-label="拖动调整文件列表和提交面板高度" onPointerDown={filesHeight.beginResize}/>
-        <div className="commit-compose"><div className="template-row"><span title={repository?.commitTemplate?.path}><FileText size={14}/> {repository?.commitTemplate ? `模板：${fileName(repository.commitTemplate.path)}` : '未配置 commit.template'}</span><div className="template-row-actions"><button type="button" className="template-icon-button" onClick={applyConfiguredTemplate} disabled={!repository?.commitTemplate} title="重新应用模板" aria-label="重新应用模板"><RefreshCw size={14}/></button><button type="button" className="template-icon-button" onClick={() => { setTemplateDraft(repository?.commitTemplate?.content ?? ''); setTemplateEditorOpen(true) }} title="编辑模板" aria-label="编辑模板"><Pencil size={14}/></button></div></div><textarea className="commit-full-message" value={fullMessage} onChange={(event) => setFullMessage(event.target.value)} aria-label="完整提交信息" placeholder="输入完整提交信息" spellCheck={false}/><div className="commit-options"><label><input type="checkbox" checked={amend} onChange={(event) => setAmend(event.target.checked)}/> Amend</label><label><input type="checkbox" checked={sign} onChange={(event) => setSign(event.target.checked)}/> 签名</label></div><Button variant="primary" onClick={commit} disabled={!stagedFiles.length || busy}><GitCommitHorizontal size={16}/> {busy ? '处理中…' : `提交 ${stagedFiles.length} 个文件`} <span>⌘↵</span></Button></div>
+        <div className="commit-compose"><div className="template-row"><span title={repository?.commitTemplate?.path}><FileText size={14}/> {repository?.commitTemplate ? `模板：${fileName(repository.commitTemplate.path)}` : '未配置 commit.template'}</span><div className="template-row-actions"><button type="button" className="template-icon-button" onClick={applyConfiguredTemplate} disabled={!repository?.commitTemplate} title="重新应用模板" aria-label="重新应用模板"><RefreshCw size={14}/></button><button type="button" className="template-icon-button" onClick={() => { setTemplateDraft(repository?.commitTemplate?.content ?? ''); setTemplateEditorOpen(true) }} title="编辑模板" aria-label="编辑模板"><Pencil size={14}/></button></div></div><textarea className="commit-full-message" value={fullMessage} onChange={(event) => setFullMessage(event.target.value)} aria-label="完整提交信息" placeholder="输入完整提交信息" spellCheck={false}/><div className="commit-options"><label><input type="checkbox" checked={amend} onChange={(event) => setAmend(event.target.checked)}/> Amend</label><label><input type="checkbox" checked={sign} onChange={(event) => setSign(event.target.checked)}/> 签名</label></div><Button variant="primary" onClick={commit} disabled={commitButton.disabled}><GitCommitHorizontal size={16}/> {commitButton.label} <span>⌘↵</span></Button></div>
       </div>
       <span className={`workspace-resizer workspace-resizer-column ${stagingWidth.resizing ? 'active' : ''}`} role="separator" aria-label="拖动调整文件面板和 Diff 宽度" onPointerDown={stagingWidth.beginResize}/>
       <div className="staging-preview-pane">{selectedDiffEntry ? <DiffPanel files={[selectedDiffEntry.file]} repositoryPath={repository?.path} loadRows={loadStagingRows} viewKey={stageSelectionKey(selectedFile)} reloadKey={String(diffRevision)} wide={widePreview} onWideChange={setWidePreview} hideFileList actionScope={selectedDiffEntry.scope} actionsBusy={busy} onStagePatch={(_path, patch, description) => void applySelectedPatch('stage', patch, description)} onRestorePatch={(_path, patch, description) => void applySelectedPatch('restore', patch, description)} onUnstagePatch={(_path, patch, description) => void applySelectedPatch('unstage', patch, description)} onOpenLineHistory={(path, line, _side, row) => { if (row.kind === 'add') onNotice('未提交的新增或修改行尚无提交历史，请查询对应旧版本行或提交后再查看'); else onOpenLineHistory(path, row.old ?? line) }}/>: <div className="drawer-preview-empty"><FileCode2 size={30}/><strong>选择文件查看变更</strong><span>点击左侧文件即可查看完整内容、统一 Diff 或并排 Diff。</span></div>}</div>
