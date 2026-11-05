@@ -92,6 +92,14 @@ export type ConflictFileContent = {
   incomingLabel: string
   binary: boolean
   gitlink: boolean
+  /**
+   * 索引里是否存在"当前侧"的 stage 2 记录（追加字段，不改变上面任何字段的语义）。
+   * 二进制与 gitlink 的 current 读不出文本、只能为 null，用 null 判可用性会误杀选侧操作；
+   * 后端补上该字段后，前端就能精确区分"该侧不存在（增删改冲突）"。
+   */
+  currentAvailable?: boolean
+  /** 索引里是否存在"对方侧"的 stage 3 记录（追加字段，语义同上）。 */
+  incomingAvailable?: boolean
 }
 
 export type RebasePreview = {
