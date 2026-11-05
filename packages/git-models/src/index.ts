@@ -237,3 +237,50 @@ export type MergeQueueSnapshot = {
   conflicts: string[]
   candidates: MergeCandidate[]
 }
+
+// ---------------------------------------------------------------------------------------------
+// 远程与标签管理（与 apps/desktop/src/models.rs 的 git_remote 结构体一一对应）
+// URL 已由 Rust 侧脱敏：内嵌凭据会变成 [redacted]，凭据不会进入前端与日志。
+// ---------------------------------------------------------------------------------------------
+
+export type RepositoryRemoteDetail = {
+  name: string
+  fetchUrls: string[]
+  /** 单独配置的 push 地址；为空表示沿用 fetch 地址。 */
+  pushUrls: string[]
+  fetchRefspecs: string[]
+  pushRefspecs: string[]
+  headBranch: string | null
+  cachedBranchCount: number
+  /** 上游指向该远程的本地分支。 */
+  trackingBranches: string[]
+  credentialsRedacted: boolean
+}
+
+export type RepositoryTagDetail = {
+  name: string
+  kind: 'annotated' | 'lightweight'
+  target: string
+  /** 注释/签名标签自身的对象哈希；轻量标签为空串。 */
+  tagObject: string
+  tagger: string
+  taggerEmail: string
+  date: string
+  subject: string
+  signed: boolean
+  /** 指向的提交是否已被任一本地分支包含。 */
+  onBranch: boolean
+}
+
+/** 远程 / 分支 / 标签写操作的统一返回；executed=false 表示仓库未被改动，等待二次确认。 */
+export type RemoteOperationReport = {
+  action: string
+  executed: boolean
+  requiresConfirmation: boolean
+  summary: string
+  warnings: string[]
+  affected: string[]
+  remotes: RepositoryRemoteDetail[]
+  tags: RepositoryTagDetail[]
+  snapshot?: RepositorySnapshot | null
+}

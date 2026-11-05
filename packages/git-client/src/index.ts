@@ -1,4 +1,4 @@
-import type { BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositorySnapshot } from '@branchline/git-models'
+import type { BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, RemoteOperationReport, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositoryRemoteDetail, RepositorySnapshot, RepositoryTagDetail } from '@branchline/git-models'
 
 export type {
   RepositoryDetails,
@@ -11,6 +11,7 @@ export type {
   GitUserConfig,
   MergeCandidate,
   MergeQueueSnapshot,
+  RemoteOperationReport,
   RepositoryCommit,
   RepositoryBranchTracking,
   RepositoryCommitStats,
@@ -18,11 +19,13 @@ export type {
   RepositoryDiffLine,
   RepositoryFile,
   RepositoryComparison,
+  RepositoryRemoteDetail,
   RepositorySnapshot,
   RepositoryOperationState,
   RepositoryOperationStep,
   RepositoryStash,
   RepositorySubmodule,
+  RepositoryTagDetail,
   RepositoryWorktree,
   RebasePreview,
 } from '@branchline/git-models'
@@ -334,4 +337,62 @@ export async function loadRepositoryStashFiles(repositoryPath: string, reference
 
 export async function loadRepositoryStashFileDiff(repositoryPath: string, reference: string, filePath: string, showWhitespace = true) {
   return invoke<RepositoryDiffLine[]>('load_stash_file_diff', { repositoryPath, reference, filePath, showWhitespace })
+}
+
+// ---------------------------------------------------------------------------------------------
+// 远程仓库 / 分支上游 / 标签管理。
+// 破坏性动作的调用约定：先以 confirm=false 取回预览（report.executed=false），
+// 用 report.summary + report.warnings 让用户二次确认后，再以 confirm=true 重新调用。
+// ---------------------------------------------------------------------------------------------
+
+export async function loadRepositoryRemotes(repositoryPath: string) {
+  return invoke<RepositoryRemoteDetail[]>('load_repository_remotes', { repositoryPath })
+}
+
+export async function loadRepositoryTagDetails(repositoryPath: string) {
+  return invoke<RepositoryTagDetail[]>('load_repository_tag_details', { repositoryPath })
+}
+
+export async function addRepositoryRemote(repositoryPath: string, name: string, url: string, fetch: boolean) {
+  return invoke<RemoteOperationReport>('add_repository_remote', { repositoryPath, name, url, fetch })
+}
+
+export async function removeRepositoryRemote(repositoryPath: string, name: string, confirm: boolean) {
+  return invoke<RemoteOperationReport>('remove_repository_remote', { repositoryPath, name, confirm })
+}
+
+export async function renameRepositoryRemote(repositoryPath: string, oldName: string, newName: string, confirm: boolean) {
+  return invoke<RemoteOperationReport>('rename_repository_remote', { repositoryPath, oldName, newName, confirm })
+}
+
+export async function setRepositoryRemoteUrl(repositoryPath: string, name: string, url: string, push: boolean, confirm: boolean) {
+  return invoke<RemoteOperationReport>('set_repository_remote_url', { repositoryPath, name, url, push, confirm })
+}
+
+export async function renameRepositoryBranch(repositoryPath: string, oldName: string, newName: string, confirm: boolean) {
+  return invoke<RemoteOperationReport>('rename_repository_branch', { repositoryPath, oldName, newName, confirm })
+}
+
+export async function setRepositoryBranchUpstream(repositoryPath: string, branch: string, upstream: string | null) {
+  return invoke<RemoteOperationReport>('set_repository_branch_upstream', { repositoryPath, branch, upstream })
+}
+
+export async function createRepositoryAnnotatedTag(repositoryPath: string, tag: string, commit: string, message: string, force = false, confirm = false) {
+  return invoke<RemoteOperationReport>('create_repository_annotated_tag', { repositoryPath, tag, commit, message, force, confirm })
+}
+
+export async function createRepositorySignedTag(repositoryPath: string, tag: string, commit: string, message: string, signingKey?: string | null, force = false, confirm = false) {
+  return invoke<RemoteOperationReport>('create_repository_signed_tag', { repositoryPath, tag, commit, message, signingKey: signingKey ?? null, force, confirm })
+}
+
+export async function deleteRepositoryTag(repositoryPath: string, tag: string, confirm: boolean) {
+  return invoke<RemoteOperationReport>('delete_repository_tag', { repositoryPath, tag, confirm })
+}
+
+export async function deleteRepositoryRemoteTag(repositoryPath: string, remote: string, tag: string, confirm: boolean) {
+  return invoke<RemoteOperationReport>('delete_repository_remote_tag', { repositoryPath, remote, tag, confirm })
+}
+
+export async function pushRepositoryTags(repositoryPath: string, remote: string, tags: string[], force = false, confirm = false) {
+  return invoke<RemoteOperationReport>('push_repository_tags', { repositoryPath, remote, tags, force, confirm })
 }

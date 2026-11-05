@@ -15,6 +15,7 @@ import { GitConfigDialog } from './features/settings/GitConfigDialog'
 import { CommandLogPanel } from './features/settings/CommandLogPanel'
 import { MergeQueuePanel } from './features/merge/MergeQueuePanel'
 import { RepositoryStructurePanel, type StructureView } from './features/repository/RepositoryStructurePanel'
+import { RemotePanel } from './features/remote/RemotePanel'
 import { RepositoryStructureTree } from './features/repository/RepositoryStructureTree'
 import { RepositoryManagerPage } from './features/repository/RepositoryManagerPage'
 import type { FavoriteRepository } from './features/repository/repositorySwitcher'
@@ -47,6 +48,7 @@ import {
   ChevronUp,
   CircleDot,
   Clock3,
+  Cloud,
   CloudDownload,
   CloudUpload,
   Code2,
@@ -110,7 +112,7 @@ type Commit = {
   deletions: number
 }
 
-type WorkspaceView = 'history' | 'changes' | 'stash' | 'compare' | 'merge' | 'operation' | StructureView
+type WorkspaceView = 'history' | 'changes' | 'stash' | 'compare' | 'merge' | 'operation' | 'remotes' | StructureView
 type TimeFilter = 'all' | 'day' | 'week' | 'month'
 type SearchNavigationAction = { sequence: number; direction: 1 | -1 }
 type SearchSummary = HistorySearchSummary
@@ -288,7 +290,7 @@ function Sidebar({ repository, structureRepository, parentRepository, recentRepo
       <div className="nav-section quick-nav"><button className={`nav-row ${activeView === 'history' ? 'active' : ''}`} onClick={() => onSelectView('history')}><LayoutGrid size={15}/><span>提交图谱</span><span className="key">⌘1</span></button><button className={`nav-row ${activeView === 'changes' ? 'active' : ''}`} onClick={() => onSelectView('changes')}><FileDiff size={15}/><span>暂存与提交</span><span className="nav-badge">{repository.files.length}</span></button><button className={`nav-row ${activeView === 'stash' ? 'active' : ''}`} onClick={() => onSelectView('stash')}><Archive size={15}/><span>Stash 管理</span></button></div>
       <BranchTree branches={repository.branches} remoteBranches={repository.remoteBranches} branchTracking={repository.branchTracking} worktreeBranches={Object.fromEntries(repository.worktrees.filter((worktree) => worktree.branch && worktree.path.replace(/[\\/]+$/, '').toLocaleLowerCase() !== repository.path.replace(/[\\/]+$/, '').toLocaleLowerCase()).map((worktree) => [worktree.branch as string, worktree.path]))} currentBranch={repository.branch} onCreateBranch={onCreateBranch} onDeletePrefix={onDeleteBranchPrefix} onJumpBranch={onJumpBranch} onSwitchBranch={onSwitchBranch} onPullBranch={onPullBranch} onMergeBranch={onMergeBranch} onDeleteBranch={onDeleteBranch} onCopyBranch={onCopyBranch}/>
       <RepositoryStructureTree repository={structureRepository ?? repository} activePath={repository.path} selection={structureSelection} onSelect={onSelectStructure} onOpenPath={(path, kind) => { if (kind === 'submodule') onOpenSubmodulePath(path); else onOpenRepositoryPath(path) }}/>
-      <div className="nav-section structure-tags-section"><button className={`nav-row ${activeView === 'tags' ? 'active' : ''}`} onClick={() => onSelectView('tags')}><Tag size={15}/><span>标签</span><span className="nav-badge muted">{repository.tags.length}</span></button></div>
+      <div className="nav-section structure-tags-section"><button className={`nav-row ${activeView === 'remotes' ? 'active' : ''}`} onClick={() => onSelectView('remotes')}><Cloud size={15}/><span>远程管理</span><span className="nav-badge muted">{repository.remoteBranches.length}</span></button><button className={`nav-row ${activeView === 'tags' ? 'active' : ''}`} onClick={() => onSelectView('tags')}><Tag size={15}/><span>标签</span><span className="nav-badge muted">{repository.tags.length}</span></button></div>
     </> : <div className="sidebar-empty-state"><FolderOpen size={24}/><strong>尚未打开仓库</strong><span>打开本地 Git 仓库后，这里会显示分支、Worktree 和 Submodule。</span><button onClick={onOpenRepository} disabled={openingRepository}>{openingRepository ? '正在打开…' : '打开仓库'}</button></div>}</nav>
     <div className="sidebar-footer"><button className="profile" onClick={onOpenGitConfig} title="打开本地 Git 配置"><AppMark className="app-brand-mark"/><div><strong>Branchline</strong><span>本地 Git 配置</span></div><Settings2 size={15}/></button><button className="sidebar-command-log" onClick={onOpenCommandLog} title="查看执行命令日志"><TerminalSquare size={14}/><span>执行命令日志</span></button></div>
   </aside>
@@ -1335,6 +1337,9 @@ export default function App() {
             setWorkspaceView('history')
           }
         }} onNotice={setRepositoryNotice}/>}
+        {workspaceView === 'remotes' && (
+          <RemotePanel repository={repository} onSnapshot={handleSnapshot} onNotice={setRepositoryNotice}/>
+        )}
         {(workspaceView === 'structure' || workspaceView === 'tags') && (
           <RepositoryStructurePanel
             repository={structureRepository ?? repository}

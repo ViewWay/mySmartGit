@@ -1,5 +1,6 @@
 mod commands;
 mod git;
+mod git_remote;
 mod models;
 mod repository_management;
 
@@ -78,6 +79,19 @@ pub fn run() {
             commands::drop_repository_stash,
             commands::load_stash_files,
             commands::load_stash_file_diff,
+            commands::load_repository_remotes,
+            commands::load_repository_tag_details,
+            commands::add_repository_remote,
+            commands::remove_repository_remote,
+            commands::rename_repository_remote,
+            commands::set_repository_remote_url,
+            commands::rename_repository_branch,
+            commands::set_repository_branch_upstream,
+            commands::create_repository_annotated_tag,
+            commands::create_repository_signed_tag,
+            commands::delete_repository_tag,
+            commands::delete_repository_remote_tag,
+            commands::push_repository_tags,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");
