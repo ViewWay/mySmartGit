@@ -1418,3 +1418,43 @@
 .operation-page .conflict-editor-toolbar .icon-tool-button { width: 24px; height: 24px; border-color: var(--line); border-radius: 5px; color: var(--muted); background: var(--panel-2); }
 
 .operation-page .conflict-editor-toolbar .icon-tool-button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+/* ---------------------------------------------------------------- 远程与标签管理
+   RemotePanel / TagManagementPanel 专用。追加在文件末尾：同层后置规则优先，
+   与其他并行轨道改动 features.css 早段区域时不会产生合并冲突。 */
+
+/* 分支行是 div（非 button），这里补齐 button 版选择器里已有的排版。 */
+.remote-panel-workspace .tag-row > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+
+.remote-panel-workspace .tag-row small { overflow: hidden; color: var(--faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+.remote-panel-workspace .tag-row { cursor: default; }
+
+/* 上游选择与远程选择在网格里限宽，避免长分支名把操作按钮挤出可视区。 */
+.upstream-select, .tag-remote-select { width: 190px; min-width: 0; }
+
+.upstream-select .compact-select-trigger, .tag-remote-select .compact-select-trigger { width: 100%; justify-content: space-between; }
+
+.branch-upstream-actions { display: flex; align-items: center; gap: 6px; }
+
+/* 行内改名输入框：不套 .branch-name-input，需要自带边框与等宽字体。 */
+.branch-rename-input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel-2); font-family: var(--font-code); font-size: 11px; }
+
+.branch-rename-input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* 标签操作行紧贴其标签行：去掉 .structure-actions 的整块上边距，改用行内缩进对齐标签名。 */
+.structure-actions.tag-row-actions { margin-top: 0; padding: 0 12px 9px 51px; border-bottom: 1px solid var(--line-soft); }
+
+.tag-row-actions .button-secondary, .tag-row-actions .button-danger { min-height: 28px; }
+
+/* 包装 div 接管分隔线：标签行自身的下边框会把它和操作行切开。 */
+.structure-list > div > .tag-row { border-bottom: 0; }
+
+.structure-list > div:last-child > .tag-row-actions { border-bottom: 0; }
+
+/* 风险与凭据提示：次要文字色，允许换行完整读出警告。 */
+.tag-row-risk { overflow-wrap: anywhere; color: var(--muted); font-size: 10px; line-height: 1.45; text-align: left; white-space: normal; }
+
+.tag-row-actions .tag-row-risk { flex: 1 1 240px; }
+
+.structure-detail-card dd .tag-row-risk { color: var(--warning); }

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Box, Check, ChevronRight, FolderGit2, GitFork, Lock, LockOpen, Plus, RefreshCw, RotateCcw, Tag, Trash2 } from 'lucide-react'
+import { Box, Check, FolderGit2, GitFork, Lock, LockOpen, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import {
   createRepositoryWorktree,
   deinitializeRepositorySubmodule,
@@ -12,6 +12,7 @@ import {
   type RepositorySnapshot,
 } from '../../repository'
 import { CreateWorktreeDialog } from './CreateWorktreeDialog'
+import { TagManagementPanel } from '../remote/TagManagementPanel'
 import { submoduleAbsolutePath, type RepositoryStructureSelection } from './repositoryTree'
 import { Button } from '../../components/Button'
 import { useConfirmDialog } from '../../components/ConfirmDialog'
@@ -43,12 +44,9 @@ export function RepositoryStructurePanel({ repository, activePath, view, query =
   if (!repository) return <section className="workspace-empty"><FolderGit2 size={34}/><strong>仓库结构</strong><span>请先打开本地仓库。</span></section>
 
   const normalizedQuery = query.trim().toLocaleLowerCase()
-  const visibleTags = repository.tags.filter((tag) => !normalizedQuery || tag.toLocaleLowerCase().includes(normalizedQuery))
-
-  if (view === 'tags') return <section className="structure-panel workspace-page">
-    <div className="workspace-page-heading"><div><span className="eyebrow">仓库结构</span><h2>标签</h2><p>按创建时间查看当前仓库中的标签。</p></div></div>
-    <div className="structure-list">{visibleTags.map((tag) => <button className="tag-row" key={tag} onClick={() => onOpenTag(tag)} title={`定位到标签 ${tag} 指向的提交`}><span className="structure-icon"><Tag size={15}/></span><span><strong>{tag}</strong></span><ChevronRight size={15}/></button>)}{repository.tags.length === 0 && <div className="workspace-hint"><Tag size={26}/><strong>没有标签</strong></div>}{repository.tags.length > 0 && visibleTags.length === 0 && <div className="workspace-hint"><Tag size={26}/><strong>没有匹配的标签</strong><span>试试其他标签名称。</span></div>}</div>
-  </section>
+  // 标签页已升级为完整的管理面板（明细 + 注释/签名标签 + 推送与删除），
+  // 仍然沿用同一入口与同一套仓库快照/通知回调，不改动其他视图。
+  if (view === 'tags') return <TagManagementPanel repository={repository} query={normalizedQuery} onOpenTag={onOpenTag} onSnapshot={onSnapshot} onNotice={onNotice}/>
 
   const run = async (key: string, action: () => Promise<RepositorySnapshot>, notice: string) => {
     setBusy(key)

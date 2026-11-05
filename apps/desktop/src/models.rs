@@ -261,3 +261,74 @@ pub struct RepositorySnapshot {
     pub undo_commit_message: Option<String>,
     pub operation: Option<RepositoryOperationState>,
 }
+
+// ---------------------------------------------------------------------------------------------
+// 远程与标签管理（git_remote.rs）
+// 以下结构体只由 src/git_remote.rs 生产；URL 一律脱敏后再序列化，凭据不进入返回值。
+// ---------------------------------------------------------------------------------------------
+
+/// 单个远程仓库的完整视图：fetch/push 地址、引用规格、HEAD 与本地跟踪关系。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryRemoteDetail {
+    pub name: String,
+    /// 已脱敏（userinfo 与查询串替换为 [redacted]）的 fetch 地址，可能有多条。
+    pub fetch_urls: Vec<String>,
+    /// 已脱敏的 push 地址；为空表示沿用 fetch 地址。
+    pub push_urls: Vec<String>,
+    pub fetch_refspecs: Vec<String>,
+    pub push_refspecs: Vec<String>,
+    /// refs/remotes/<name>/HEAD 指向的远端分支（简称）。
+    pub head_branch: Option<String>,
+    /// 本地已缓存的该远程分支数量。
+    pub cached_branch_count: usize,
+    /// 上游指向该远程的本地分支。
+    pub tracking_branches: Vec<String>,
+    /// 原始配置里是否内嵌了凭据；为真时上面的 URL 已被脱敏。
+    pub credentials_redacted: bool,
+}
+
+/// 标签明细：区分轻量标签、注释标签与签名标签。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryTagDetail {
+    pub name: String,
+    /// "annotated" | "lightweight"
+    pub kind: String,
+    /// 标签对象指向的提交（短哈希）。轻量标签即标签自身指向的提交。
+    pub target: String,
+    /// 标签对象短哈希；轻量标签为空。
+    pub tag_object: String,
+    /// 注释标签的打标签人；轻量标签为空。
+    pub tagger: String,
+    pub tagger_email: String,
+    /// 注释标签为打标签时间，轻量标签为提交时间（ISO8601）。
+    pub date: String,
+    /// 注释标签的标签说明首行；轻量标签为提交标题。
+    pub subject: String,
+    /// 标签对象内是否含 PGP/x509 签名块。
+    pub signed: bool,
+    /// 指向的提交是否已被任一本地分支包含；false 时删除可能使对象孤立。
+    pub on_branch: bool,
+}
+
+/// 远程/分支/标签写操作的统一返回：既能表达「已执行」，也能表达「等待二次确认」。
+/// executed=false 时 Rust 层没有对仓库做任何改动。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteOperationReport {
+    /// 稳定的动作标识，前端据此选择确认文案。
+    pub action: String,
+    pub executed: bool,
+    /// 为真表示这是一次预览，需要用户确认后携带 confirm=true 再调用一次。
+    pub requires_confirmation: bool,
+    pub summary: String,
+    /// 破坏性影响说明（会丢什么、会改什么配置）。
+    pub warnings: Vec<String>,
+    /// 受影响的具体对象（分支名、标签名、引用名）。
+    pub affected: Vec<String>,
+    pub remotes: Vec<RepositoryRemoteDetail>,
+    pub tags: Vec<RepositoryTagDetail>,
+    /// 仅在 executed=true 时回填，供前端直接刷新主界面；读取失败不影响操作本身。
+    pub snapshot: Option<RepositorySnapshot>,
+}

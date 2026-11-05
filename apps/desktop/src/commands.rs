@@ -881,3 +881,197 @@ pub async fn load_stash_file_diff(
     .await
     .map_err(|error| task_error("读取 Stash Diff", error))?
 }
+
+// ---------------------------------------------------------------------------------------------
+// 远程仓库 / 分支上游 / 标签管理：实现位于 src/git_remote.rs，本文件只做 Tauri 包装。
+// 破坏性操作的 confirm 由前端二次确认后传 true，Rust 层不会自作主张执行。
+// ---------------------------------------------------------------------------------------------
+
+use crate::git_remote;
+use crate::models::{RemoteOperationReport, RepositoryRemoteDetail, RepositoryTagDetail};
+
+#[tauri::command]
+pub async fn load_repository_remotes(
+    repository_path: String,
+) -> Result<Vec<RepositoryRemoteDetail>, String> {
+    tauri::async_runtime::spawn_blocking(move || git_remote::list_repository_remotes(&repository_path))
+        .await
+        .map_err(|error| task_error("读取远程列表", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_tag_details(
+    repository_path: String,
+) -> Result<Vec<RepositoryTagDetail>, String> {
+    tauri::async_runtime::spawn_blocking(move || git_remote::list_repository_tag_details(&repository_path))
+        .await
+        .map_err(|error| task_error("读取标签详情", error))?
+}
+
+#[tauri::command]
+pub async fn add_repository_remote(
+    repository_path: String,
+    name: String,
+    url: String,
+    fetch: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::add_repository_remote(&repository_path, &name, &url, fetch)
+    })
+    .await
+    .map_err(|error| task_error("添加远程仓库", error))?
+}
+
+#[tauri::command]
+pub async fn remove_repository_remote(
+    repository_path: String,
+    name: String,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::remove_repository_remote(&repository_path, &name, confirm)
+    })
+    .await
+    .map_err(|error| task_error("删除远程仓库", error))?
+}
+
+#[tauri::command]
+pub async fn rename_repository_remote(
+    repository_path: String,
+    old_name: String,
+    new_name: String,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::rename_repository_remote(&repository_path, &old_name, &new_name, confirm)
+    })
+    .await
+    .map_err(|error| task_error("重命名远程仓库", error))?
+}
+
+#[tauri::command]
+pub async fn set_repository_remote_url(
+    repository_path: String,
+    name: String,
+    url: String,
+    push: bool,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::set_repository_remote_url(&repository_path, &name, &url, push, confirm)
+    })
+    .await
+    .map_err(|error| task_error("设置远程地址", error))?
+}
+
+#[tauri::command]
+pub async fn rename_repository_branch(
+    repository_path: String,
+    old_name: String,
+    new_name: String,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::rename_repository_branch(&repository_path, &old_name, &new_name, confirm)
+    })
+    .await
+    .map_err(|error| task_error("重命名分支", error))?
+}
+
+#[tauri::command]
+pub async fn set_repository_branch_upstream(
+    repository_path: String,
+    branch: String,
+    upstream: Option<String>,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::set_repository_branch_upstream(&repository_path, &branch, upstream.as_deref())
+    })
+    .await
+    .map_err(|error| task_error("设置上游跟踪分支", error))?
+}
+
+#[tauri::command]
+pub async fn create_repository_annotated_tag(
+    repository_path: String,
+    tag: String,
+    commit: String,
+    message: String,
+    force: bool,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::create_repository_annotated_tag(
+            &repository_path, &tag, &commit, &message, force, confirm,
+        )
+    })
+    .await
+    .map_err(|error| task_error("创建注释标签", error))?
+}
+
+#[tauri::command]
+pub async fn create_repository_signed_tag(
+    repository_path: String,
+    tag: String,
+    commit: String,
+    message: String,
+    signing_key: Option<String>,
+    force: bool,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::create_repository_signed_tag(
+            &repository_path,
+            &tag,
+            &commit,
+            &message,
+            signing_key.as_deref(),
+            force,
+            confirm,
+        )
+    })
+    .await
+    .map_err(|error| task_error("创建签名标签", error))?
+}
+
+#[tauri::command]
+pub async fn delete_repository_tag(
+    repository_path: String,
+    tag: String,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::delete_repository_tag(&repository_path, &tag, confirm)
+    })
+    .await
+    .map_err(|error| task_error("删除标签", error))?
+}
+
+#[tauri::command]
+pub async fn delete_repository_remote_tag(
+    repository_path: String,
+    remote: String,
+    tag: String,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::delete_repository_remote_tag(&repository_path, &remote, &tag, confirm)
+    })
+    .await
+    .map_err(|error| task_error("删除远端标签", error))?
+}
+
+#[tauri::command]
+pub async fn push_repository_tags(
+    repository_path: String,
+    remote: String,
+    tags: Vec<String>,
+    force: bool,
+    confirm: bool,
+) -> Result<RemoteOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::push_repository_tags(&repository_path, &remote, &tags, force, confirm)
+    })
+    .await
+    .map_err(|error| task_error("推送标签", error))?
+}
