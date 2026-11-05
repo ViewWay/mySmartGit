@@ -1,5 +1,6 @@
 mod commands;
 mod git;
+mod git_recovery;
 mod models;
 mod repository_management;
 
@@ -78,6 +79,18 @@ pub fn run() {
             commands::drop_repository_stash,
             commands::load_stash_files,
             commands::load_stash_file_diff,
+            // W1-5 恢复与问题定位（Reflog / Bisect / Reset 模式）
+            commands::load_reflog_entries,
+            commands::load_revision_files,
+            commands::load_revision_file_diff,
+            commands::checkout_reflog_entry,
+            commands::create_branch_from_reflog_entry,
+            commands::reset_repository_with_mode,
+            commands::start_repository_bisect,
+            commands::load_repository_bisect_status,
+            commands::mark_repository_bisect,
+            commands::advance_repository_bisect,
+            commands::reset_repository_bisect,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");

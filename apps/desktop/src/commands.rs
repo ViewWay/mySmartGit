@@ -881,3 +881,140 @@ pub async fn load_stash_file_diff(
     .await
     .map_err(|error| task_error("读取 Stash Diff", error))?
 }
+
+// ---------------------------------------------------------------------------
+// W1-5 恢复与问题定位：Reflog / Bisect / Reset 模式
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn load_reflog_entries(
+    repository_path: String,
+    branch: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::models::ReflogEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::load_reflog_entries(&repository_path, branch.as_deref(), limit)
+    })
+    .await
+    .map_err(|error| task_error("读取 Reflog", error))?
+}
+
+#[tauri::command]
+pub async fn load_revision_files(
+    repository_path: String,
+    reference: String,
+) -> Result<Vec<RepositoryFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::load_revision_files(&repository_path, &reference)
+    })
+    .await
+    .map_err(|error| task_error("读取历史对象文件", error))?
+}
+
+#[tauri::command]
+pub async fn load_revision_file_diff(
+    repository_path: String,
+    reference: String,
+    file_path: String,
+    show_whitespace: bool,
+) -> Result<Vec<DiffLine>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::load_revision_file_diff(&repository_path, &reference, &file_path, show_whitespace)
+    })
+    .await
+    .map_err(|error| task_error("读取历史对象差异", error))?
+}
+
+#[tauri::command]
+pub async fn checkout_reflog_entry(repository_path: String, reference: String) -> Result<RepositorySnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::checkout_reflog_entry(&repository_path, &reference)?;
+        git::read_repository(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("按 Reflog 检出", error))?
+}
+
+#[tauri::command]
+pub async fn create_branch_from_reflog_entry(
+    repository_path: String,
+    reference: String,
+    branch: String,
+) -> Result<RepositorySnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::create_branch_from_reflog_entry(&repository_path, &reference, &branch)?;
+        git::read_repository(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("从 Reflog 创建分支", error))?
+}
+
+#[tauri::command]
+pub async fn reset_repository_with_mode(
+    repository_path: String,
+    commit: String,
+    mode: String,
+    confirm_hard: bool,
+) -> Result<RepositorySnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::reset_repository_with_mode(&repository_path, &commit, &mode, confirm_hard)?;
+        git::read_repository(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("回退提交", error))?
+}
+
+#[tauri::command]
+pub async fn start_repository_bisect(
+    repository_path: String,
+    bad: String,
+    good: String,
+    new_term: Option<String>,
+    old_term: Option<String>,
+) -> Result<crate::models::BisectStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::start_repository_bisect(
+            &repository_path,
+            &bad,
+            &good,
+            new_term.as_deref(),
+            old_term.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| task_error("启动 Bisect", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_bisect_status(repository_path: String) -> Result<crate::models::BisectStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::git_recovery::load_bisect_status(&repository_path))
+        .await
+        .map_err(|error| task_error("读取 Bisect 状态", error))?
+}
+
+#[tauri::command]
+pub async fn mark_repository_bisect(
+    repository_path: String,
+    verdict: String,
+) -> Result<crate::models::BisectStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::git_recovery::mark_repository_bisect(&repository_path, &verdict))
+        .await
+        .map_err(|error| task_error("记录 Bisect 结论", error))?
+}
+
+#[tauri::command]
+pub async fn advance_repository_bisect(repository_path: String) -> Result<crate::models::BisectStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::git_recovery::advance_repository_bisect(&repository_path))
+        .await
+        .map_err(|error| task_error("推进 Bisect", error))?
+}
+
+#[tauri::command]
+pub async fn reset_repository_bisect(repository_path: String) -> Result<RepositorySnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::reset_repository_bisect(&repository_path)?;
+        git::read_repository(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("退出 Bisect", error))?
+}

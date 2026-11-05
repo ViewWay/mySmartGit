@@ -261,3 +261,71 @@ pub struct RepositorySnapshot {
     pub undo_commit_message: Option<String>,
     pub operation: Option<RepositoryOperationState>,
 }
+
+// ---------------------------------------------------------------------------
+// 恢复与问题定位（W1-5）：Reflog / Bisect / Reset 模式
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflogEntry {
+    /// HEAD@{3} 形式的选择器
+    pub selector: String,
+    /// 带时间的原始选择器（git reflog --date=iso-strict 输出）
+    pub dated_selector: String,
+    /// 选择器花括号内的记录时间
+    pub entry_time: String,
+    /// 动作类别：commit / checkout / reset / merge / rebase ...
+    pub action: String,
+    /// 完整动作说明（%gs），如 "reset: moving to HEAD~1"
+    pub subject: String,
+    /// 该条目的新值（完整 Hash）
+    pub commit_hash: String,
+    pub short_hash: String,
+    /// 旧值：由 reflog 链推导（最早条目为全 0）
+    pub old_hash: String,
+    /// 新值指向提交的标题；指向非提交对象时为空
+    pub commit_title: String,
+    pub author: String,
+    pub commit_time: String,
+    pub is_head: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BisectCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub title: String,
+    pub author: String,
+    pub commit_time: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BisectStep {
+    /// 结论动词：good / bad / skip / start（自定义术语时为其映射）
+    pub verdict: String,
+    pub hash: String,
+    pub short_hash: String,
+    pub title: String,
+    pub author: String,
+    pub commit_time: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BisectStatus {
+    pub active: bool,
+    pub message: String,
+    pub original_branch: Option<String>,
+    pub current_commit: Option<BisectCommit>,
+    pub bad_commit: Option<BisectCommit>,
+    pub good_commits: Vec<BisectCommit>,
+    pub tested: Vec<BisectStep>,
+    pub remaining_count: usize,
+    pub steps_estimate: usize,
+    pub done: bool,
+    pub bad_term: String,
+    pub good_term: String,
+}

@@ -1,4 +1,4 @@
-import type { BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositorySnapshot } from '@branchline/git-models'
+import type { BisectStatus, BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, ReflogEntry, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositorySnapshot } from '@branchline/git-models'
 
 export type {
   RepositoryDetails,
@@ -25,6 +25,11 @@ export type {
   RepositorySubmodule,
   RepositoryWorktree,
   RebasePreview,
+  ReflogEntry,
+  BisectCommit,
+  BisectStep,
+  BisectStatus,
+  RepositoryResetMode,
 } from '@branchline/git-models'
 
 export async function loadGitUserConfig() {
@@ -334,4 +339,52 @@ export async function loadRepositoryStashFiles(repositoryPath: string, reference
 
 export async function loadRepositoryStashFileDiff(repositoryPath: string, reference: string, filePath: string, showWhitespace = true) {
   return invoke<RepositoryDiffLine[]>('load_stash_file_diff', { repositoryPath, reference, filePath, showWhitespace })
+}
+
+// ---------------------------------------------------------------------------
+// W1-5 恢复与问题定位（Reflog / Bisect / Reset 模式）
+// ---------------------------------------------------------------------------
+
+export async function loadReflogEntries(repositoryPath: string, branch?: string, limit?: number) {
+  return invoke<ReflogEntry[]>('load_reflog_entries', { repositoryPath, branch: branch ?? null, limit: limit ?? null })
+}
+
+export async function loadRevisionFiles(repositoryPath: string, reference: string) {
+  return invoke<RepositoryFile[]>('load_revision_files', { repositoryPath, reference })
+}
+
+export async function loadRevisionFileDiff(repositoryPath: string, reference: string, filePath: string, showWhitespace = true) {
+  return invoke<RepositoryDiffLine[]>('load_revision_file_diff', { repositoryPath, reference, filePath, showWhitespace })
+}
+
+export async function checkoutReflogEntry(repositoryPath: string, reference: string) {
+  return invoke<RepositorySnapshot>('checkout_reflog_entry', { repositoryPath, reference })
+}
+
+export async function createBranchFromReflogEntry(repositoryPath: string, reference: string, branch: string) {
+  return invoke<RepositorySnapshot>('create_branch_from_reflog_entry', { repositoryPath, reference, branch })
+}
+
+export async function resetRepositoryWithMode(repositoryPath: string, commit: string, mode: 'soft' | 'mixed' | 'hard', confirmHard: boolean) {
+  return invoke<RepositorySnapshot>('reset_repository_with_mode', { repositoryPath, commit, mode, confirmHard })
+}
+
+export async function startRepositoryBisect(repositoryPath: string, bad: string, good: string, newTerm?: string, oldTerm?: string) {
+  return invoke<BisectStatus>('start_repository_bisect', { repositoryPath, bad, good, newTerm: newTerm ?? null, oldTerm: oldTerm ?? null })
+}
+
+export async function loadRepositoryBisectStatus(repositoryPath: string) {
+  return invoke<BisectStatus>('load_repository_bisect_status', { repositoryPath })
+}
+
+export async function markRepositoryBisect(repositoryPath: string, verdict: 'bad' | 'good' | 'skip') {
+  return invoke<BisectStatus>('mark_repository_bisect', { repositoryPath, verdict })
+}
+
+export async function advanceRepositoryBisect(repositoryPath: string) {
+  return invoke<BisectStatus>('advance_repository_bisect', { repositoryPath })
+}
+
+export async function resetRepositoryBisect(repositoryPath: string) {
+  return invoke<RepositorySnapshot>('reset_repository_bisect', { repositoryPath })
 }

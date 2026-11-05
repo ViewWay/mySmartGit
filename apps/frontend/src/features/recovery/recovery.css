@@ -1,0 +1,86 @@
+/* W1-5 恢复与问题定位面板样式（仅作用于 features/recovery，不改动全局样式表）。 */
+
+.recovery-page { display: flex; flex-direction: column; gap: 10px; }
+.recovery-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--line); }
+.recovery-tabs button { display: flex; align-items: center; gap: 6px; padding: 7px 11px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 12px; cursor: pointer; }
+.recovery-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.recovery-tabs .tab-spacer { flex: 1; }
+.recovery-lock { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 10px; }
+
+/* Reflog */
+.reflog-panel { min-height: 0; display: grid; grid-template-rows: 34px minmax(0, 1fr); gap: 8px; }
+.reflog-toolbar { display: flex; align-items: center; gap: 8px; }
+.reflog-toolbar label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+.reflog-toolbar select { height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font-size: 11px; }
+.reflog-toolbar small { margin-left: auto; color: var(--faint); font-size: 10px; }
+.reflog-workspace { min-height: 0; display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 10px; }
+.reflog-list { min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.reflog-list article { min-height: 58px; padding: 6px 8px; display: grid; grid-template-rows: auto auto; gap: 2px; border-bottom: 1px solid var(--line-soft); }
+.reflog-list article:hover { background: var(--panel-2); }
+.reflog-list article.active { background: var(--accent-dim); box-shadow: inset 2px 0 var(--accent); }
+.reflog-entry-meta { display: flex; justify-content: space-between; padding-left: 37px; color: var(--faint); font-size: 10px; }
+.reflog-entry-meta em { font-style: normal; color: var(--accent); }
+.reflog-detail { min-height: 0; overflow: auto; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px; }
+.reflog-detail-heading { display: flex; justify-content: space-between; gap: 10px; }
+.reflog-detail-heading strong { font-size: 12px; }
+.reflog-detail-heading span { display: grid; gap: 3px; min-width: 0; }
+.reflog-detail-heading small { color: var(--faint); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reflog-restore-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.reflog-restore-actions input { height: 27px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font-size: 11px; min-width: 150px; }
+.reflog-file-hint { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.reflog-file-hint code { color: var(--text); }
+.reflog-file-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 5px; }
+.reflog-file-list button { display: flex; justify-content: space-between; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel-2); font-size: 11px; cursor: pointer; overflow: hidden; }
+.reflog-file-list button:hover { border-color: var(--accent); }
+.reflog-file-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reflog-file-list small { color: var(--faint); }
+.reflog-diff-overlay { min-height: 260px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+
+/* Bisect */
+.bisect-panel { min-height: 0; display: grid; gap: 12px; }
+.bisect-start-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.bisect-start-fields label, .bisect-terms label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+.bisect-start-fields input, .bisect-terms input { height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font-size: 12px; }
+.bisect-terms { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.bisect-start-fields > button { justify-self: start; }
+.bisect-hint { color: var(--faint); font-size: 10px; }
+.bisect-status-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.bisect-status-head h2 { margin: 1px 0 0; font-size: 14px; }
+.bisect-counters { display: flex; gap: 12px; }
+.bisect-counters span { display: grid; justify-items: center; gap: 2px; color: var(--faint); font-size: 9px; }
+.bisect-counters strong { color: var(--text); font-size: 16px; }
+.bisect-current { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.bisect-current-card { display: flex; gap: 9px; align-items: center; min-width: 0; }
+.bisect-current-card div { display: grid; gap: 2px; min-width: 0; }
+.bisect-current-card strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bisect-current-card small { color: var(--faint); font-size: 10px; }
+.bisect-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bisect-boundaries { display: flex; flex-wrap: wrap; gap: 8px; }
+.bisect-boundaries div { display: flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); font-size: 10px; color: var(--muted); }
+.bisect-boundaries code { color: var(--text); }
+.bisect-tested-list { min-height: 0; overflow: auto; display: grid; align-content: start; gap: 4px; }
+.bisect-step { display: flex; gap: 9px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--line-soft); }
+.bisect-step div { display: grid; gap: 2px; min-width: 0; }
+.bisect-step strong { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bisect-step small { color: var(--faint); font-size: 9px; }
+.bisect-verdict { font-style: normal; font-size: 10px; padding: 1px 7px; border-radius: 9px; }
+.bisect-verdict.good { color: var(--accent); background: var(--accent-dim); }
+.bisect-verdict.bad { color: var(--danger); background: rgba(235, 92, 92, .12); }
+.bisect-verdict.skip { color: var(--faint); background: var(--panel-3); }
+.bisect-result { display: flex; gap: 8px; align-items: center; padding: 9px 10px; border: 1px solid var(--danger); border-radius: 8px; }
+.bisect-result span { display: grid; gap: 2px; }
+.bisect-result small { color: var(--muted); }
+
+/* Reset 对话框 */
+.recovery-reset-body { display: grid; gap: 12px; padding: 14px 18px; min-height: 0; overflow: auto; }
+.recovery-reset-commit { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+.recovery-reset-commit input { height: 31px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font-size: 12px; }
+.recovery-reset-modes { display: grid; gap: 7px; }
+.recovery-reset-modes label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.recovery-reset-modes label.active { border-color: var(--accent); background: var(--accent-dim); }
+.recovery-reset-modes div { display: grid; gap: 2px; }
+.recovery-reset-modes strong { font-size: 12px; }
+.recovery-reset-modes small { color: var(--muted); font-size: 10px; }
+.recovery-reset-danger { display: flex; gap: 7px; align-items: flex-start; color: var(--danger); font-size: 11px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 8px; }
+.recovery-reset-danger input { margin-top: 2px; accent-color: var(--danger); }
+.recovery-reset-note { display: flex; gap: 6px; align-items: center; color: var(--faint); font-size: 10px; }
