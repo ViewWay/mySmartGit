@@ -3,3 +3,5 @@ dist/
 apps/desktop/target/
 .DS_Store
 *.log
+
+.worktrees/
