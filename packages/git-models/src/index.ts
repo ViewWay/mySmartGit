@@ -284,3 +284,56 @@ export type RemoteOperationReport = {
   tags: RepositoryTagDetail[]
   snapshot?: RepositorySnapshot | null
 }
+
+// ---------------------------------------------------------------------------
+// W1-5 恢复与问题定位：Reflog / Bisect / Reset 模式
+// ---------------------------------------------------------------------------
+
+export type ReflogEntry = {
+  selector: string
+  datedSelector: string
+  entryTime: string
+  action: string
+  subject: string
+  commitHash: string
+  shortHash: string
+  oldHash: string
+  commitTitle: string
+  author: string
+  commitTime: string
+  isHead: boolean
+}
+
+export type BisectCommit = {
+  hash: string
+  shortHash: string
+  title: string
+  author: string
+  commitTime: string
+}
+
+export type BisectStep = {
+  verdict: string
+  hash: string
+  shortHash: string
+  title: string
+  author: string
+  commitTime: string
+}
+
+export type BisectStatus = {
+  active: boolean
+  message: string
+  originalBranch?: string
+  currentCommit?: BisectCommit
+  badCommit?: BisectCommit
+  goodCommits: BisectCommit[]
+  tested: BisectStep[]
+  remainingCount: number
+  stepsEstimate: number
+  done: boolean
+  badTerm: string
+  goodTerm: string
+}
+
+export type RepositoryResetMode = 'soft' | 'mixed' | 'hard'
