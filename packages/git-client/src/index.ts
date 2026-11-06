@@ -1051,3 +1051,100 @@ export async function setCredentialHelper(
 export async function getCredentialHelpers(repositoryPath?: string | null) {
   return invoke<string[]>('get_credential_helpers', { repositoryPath: repositoryPath ?? null })
 }
+
+// ---------------------------------------------------------------------------
+// W4-2 内置终端与自定义命令流水线
+// ---------------------------------------------------------------------------
+
+/** 在仓库根目录启动真实 PTY 会话；默认 shell 由后端按平台选择。 */
+export async function startTerminalSession(
+  repositoryPath: string,
+  shell: string | null = null,
+  cols = 80,
+  rows = 24,
+) {
+  return invoke<import('@branchline/git-models').TerminalSessionInfo>(
+    'start_terminal_session',
+    { repositoryPath, shell, cols, rows },
+  )
+}
+
+/** 读取 fromOffset 之后的增量输出；缓冲区截断时返回保留的尾部。 */
+export async function readTerminalOutput(sessionId: string, fromOffset: number) {
+  return invoke<import('@branchline/git-models').TerminalOutput>('read_terminal_output', {
+    sessionId,
+    fromOffset,
+  })
+}
+
+/** 写入终端输入（单次上限 64 KiB）；数据按原样发送，不经 shell。 */
+export async function writeTerminal(sessionId: string, data: string) {
+  return invoke<void>('write_terminal', { sessionId, data })
+}
+
+/** 把 PTY 窗口调整为 cols x rows（两者都必须 >= 1）。 */
+export async function resizeTerminal(sessionId: string, cols: number, rows: number) {
+  return invoke<void>('resize_terminal', { sessionId, cols, rows })
+}
+
+/** 关闭会话并终止子进程；返回会话是否仍然存在。 */
+export async function closeTerminalSession(sessionId: string) {
+  return invoke<boolean>('close_terminal_session', { sessionId })
+}
+
+/** 列出当前进程内所有终端会话。 */
+export async function listTerminalSessions() {
+  return invoke<import('@branchline/git-models').TerminalSessionInfo[]>(
+    'list_terminal_sessions',
+    {},
+  )
+}
+
+/** 读取 <branchline home>/commands.json；文件不存在时返回空列表。 */
+export async function loadPipelineCommands() {
+  return invoke<import('@branchline/git-models').PipelineCommands>(
+    'load_pipeline_commands',
+    {},
+  )
+}
+
+/** 校验并保存命令列表（0600 JSON），返回后端归一化后的结果。 */
+export async function savePipelineCommands(
+  commands: import('@branchline/git-models').PipelineCommands,
+) {
+  return invoke<import('@branchline/git-models').PipelineCommands>(
+    'save_pipeline_commands',
+    { commands },
+  )
+}
+
+/**
+ * 执行指定命令。timeoutSeconds 会被钳制到 1..600（默认 120）；
+ * runId 可选，前端预生成后可调用 cancelPipelineCommand 取消进行中的运行。
+ */
+export async function runPipelineCommand(
+  repositoryPath: string,
+  commandId: string,
+  timeoutSeconds: number | null = null,
+  runId: string | null = null,
+) {
+  return invoke<import('@branchline/git-models').CommandRunReport>('run_pipeline_command', {
+    repositoryPath,
+    commandId,
+    timeoutSeconds,
+    runId,
+  })
+}
+
+/** 请求取消进行中的运行；runId 已结束或不存在时返回 false。 */
+export async function cancelPipelineCommand(runId: string) {
+  return invoke<boolean>('cancel_pipeline_command', { runId })
+}
+
+export type {
+  CommandRunReport,
+  PipelineCommand,
+  PipelineCommands,
+  TerminalOutput,
+  TerminalSessionInfo,
+} from '@branchline/git-models'
