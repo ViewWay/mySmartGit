@@ -4,6 +4,7 @@ mod git_media;
 mod git_tree;
 mod git_remote;
 mod git_recovery;
+mod git_history_edit;
 mod git_search;
 mod git_submodule;
 mod models;
@@ -135,6 +136,13 @@ pub fn run() {
             commands::list_repository_submodule_details,
             commands::load_submodule_pointer_diff,
             commands::clone_repository_with_options,
+            // W3-1 交互式历史编辑
+            commands::load_history_edit_sequence,
+            commands::preview_history_edit_impact,
+            commands::apply_history_edit_sequence,
+            commands::reword_history_commit,
+            commands::drop_history_commit,
+            commands::cherry_pick_history_commits,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");

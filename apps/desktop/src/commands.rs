@@ -1557,3 +1557,79 @@ pub async fn clone_repository_with_options(
     .await
     .map_err(|error| task_error("克隆仓库", error))?
 }
+
+#[tauri::command]
+pub async fn load_history_edit_sequence(
+    repository_path: String,
+    base_ref: String,
+) -> Result<crate::models::HistoryEditSequence, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_history_edit::load_history_edit_sequence(&repository_path, &base_ref)
+    })
+    .await
+    .map_err(|error| task_error("读取历史编辑序列", error))?
+}
+
+#[tauri::command]
+pub async fn preview_history_edit_impact(
+    repository_path: String,
+    base_ref: String,
+    actions: Vec<crate::models::HistoryEditActionInput>,
+) -> Result<crate::models::HistoryEditImpact, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_history_edit::preview_history_edit_impact(&repository_path, &base_ref, actions)
+    })
+    .await
+    .map_err(|error| task_error("预览历史编辑影响", error))?
+}
+
+#[tauri::command]
+pub async fn apply_history_edit_sequence(
+    repository_path: String,
+    base_ref: String,
+    actions: Vec<crate::models::HistoryEditActionInput>,
+) -> Result<crate::models::HistoryEditReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_history_edit::apply_history_edit_sequence(&repository_path, &base_ref, actions)
+    })
+    .await
+    .map_err(|error| task_error("应用历史编辑", error))?
+}
+
+#[tauri::command]
+pub async fn reword_history_commit(
+    repository_path: String,
+    commit: String,
+    message: String,
+) -> Result<crate::models::HistoryEditReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_history_edit::reword_history_commit(&repository_path, &commit, &message)
+    })
+    .await
+    .map_err(|error| task_error("改写提交消息", error))?
+}
+
+#[tauri::command]
+pub async fn drop_history_commit(
+    repository_path: String,
+    commit: String,
+) -> Result<crate::models::HistoryEditReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_history_edit::drop_history_commit(&repository_path, &commit)
+    })
+    .await
+    .map_err(|error| task_error("删除提交", error))?
+}
+
+#[tauri::command]
+pub async fn cherry_pick_history_commits(
+    repository_path: String,
+    commits: Vec<String>,
+    mainline: Option<usize>,
+) -> Result<crate::models::CherryPickBatchReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_history_edit::cherry_pick_history_commits(&repository_path, commits, mainline)
+    })
+    .await
+    .map_err(|error| task_error("批量拣选提交", error))?
+}
