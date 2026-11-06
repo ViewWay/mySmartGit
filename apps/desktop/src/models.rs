@@ -400,3 +400,287 @@ pub struct BisectStatus {
     pub bad_term: String,
     pub good_term: String,
 }
+
+// ---------------------------------------------------------------------------
+// W2-9 深度搜索与仓库全文替换（apps/desktop/src/git_search.rs）
+//
+// 这一批结构体只服务于搜索/替换轨道：输入结构需要反序列化，因此这里显式写全路径
+// `serde::Deserialize`，不修改文件顶部的 `use` 行，避免与其他并行轨道产生合并冲突。
+// 所有输出结构都带 `truncated`/`notice`：超限必须是显式提示，绝不静默丢弃结果。
+// ---------------------------------------------------------------------------
+
+/// 历史深度搜索的目标域；与 Git 的提交筛选参数一一对应，互斥选择。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommitSearchTarget {
+    /// `git log --grep=<值>`：提交信息（含正文）。
+    CommitMessage,
+    /// `git log --author=<值>`：作者名与邮箱。
+    CommitAuthor,
+    /// 按提交 Hash 精确定位（4-40 位十六进制），走 rev-parse 校验路径。
+    CommitHash,
+    /// `git log -S<值>`：pickaxe 语义，只命中该字符串出现次数发生增减的提交。
+    DiffPickaxe,
+    /// `git log -G<值>`：逐行正则语义，命中差异文本中出现过该模式的提交。
+    DiffRegex,
+}
+
+/// 全量历史搜索输入：不受提交图谱 2000 条上限约束，由后端流式扫描。
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CommitSearchQuery {
+    /// 搜索文本；regex=true 时交给 Git 自身的正则引擎（BRE/ERE），不进 shell。
+    pub pattern: String,
+    pub target: CommitSearchTarget,
+    /// true 为区分大小写（Git 默认语义）；false 时追加 `-i`。
+    pub case_sensitive: bool,
+    /// 追加 `--word-regexp`，整词匹配。
+    pub whole_word: bool,
+    /// true 追加 `-E`（扩展正则）；false 追加 `-F`（固定字符串）。
+    pub regex: bool,
+    /// 限定分支/范围（如 `main`、`main..feature`）；为空表示 `--all`。
+    pub revisions: Vec<String>,
+    /// pathspec 白名单（限定搜索的文件范围）。
+    pub paths: Vec<String>,
+    /// pathspec 排除（转成 `:(exclude)…` 交给 Git）。
+    pub exclude_paths: Vec<String>,
+    /// 单次扫描的提交上限（防御性截断）；为空使用默认上限。
+    pub max_commits: Option<usize>,
+    pub page_size: usize,
+    pub offset: usize,
+}
+
+impl Default for CommitSearchQuery {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            target: CommitSearchTarget::CommitMessage,
+            case_sensitive: true,
+            whole_word: false,
+            regex: false,
+            revisions: Vec::new(),
+            paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            max_commits: None,
+            page_size: 100,
+            offset: 0,
+        }
+    }
+}
+
+/// 历史搜索命中提交的最小展示单元（只带元数据，不带文件内容）。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSearchItem {
+    pub hash: String,
+    pub short_hash: String,
+    pub title: String,
+    /// 完整提交信息，按字节预算截断。
+    pub message: String,
+    pub author: String,
+    pub email: String,
+    /// 作者时间（ISO8601）。
+    pub date: String,
+    /// 引用装饰（分支/标签），由 `%D` 解析，可能为空。
+    pub refs: Vec<String>,
+}
+
+/// 分页结果：`search_id` 指向后端的一次扫描索引，翻页不再重跑重查询。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSearchPage {
+    pub search_id: String,
+    pub target: CommitSearchTarget,
+    pub pattern: String,
+    /// 命中总数（截断时为已索引条数）。
+    pub total: usize,
+    pub offset: usize,
+    pub page_size: usize,
+    pub has_more: bool,
+    /// 扫描被上限截断：必须向用户显示「结果被截断」。
+    pub truncated: bool,
+    /// 被新任务/切换仓库取消：前端据此丢弃过期结果。
+    pub cancelled: bool,
+    pub items: Vec<CommitSearchItem>,
+    pub notice: Option<String>,
+}
+
+/// 仓库全文搜索输入（工作区或指定 rev）。
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TextSearchQuery {
+    pub pattern: String,
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    /// true 追加 `-E`；false 追加 `-F`（固定字符串）。
+    pub regex: bool,
+    /// 为空表示工作区（已跟踪、受 .gitignore 约束）；否则搜索该 rev 的树。
+    pub revision: Option<String>,
+    pub includes: Vec<String>,
+    pub exclude_paths: Vec<String>,
+    /// 每条命中的上下文行数（0 表示不读取上下文）。
+    pub context_lines: usize,
+    /// 命中行数上限（防御性截断）；为空使用默认上限。
+    pub max_matches: Option<usize>,
+    pub page_size: usize,
+    pub offset: usize,
+}
+
+impl Default for TextSearchQuery {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            case_sensitive: true,
+            whole_word: false,
+            regex: false,
+            revision: None,
+            includes: Vec::new(),
+            exclude_paths: Vec::new(),
+            context_lines: 2,
+            max_matches: None,
+            page_size: 200,
+            offset: 0,
+        }
+    }
+}
+
+/// 「文件:行:内容」命中项，带上下文片段，可直接定位到行。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSearchMatch {
+    pub file_path: String,
+    pub line_number: usize,
+    /// 命中行内容（按字节预算截断）。
+    pub content: String,
+    /// 命中位于二进制/非 UTF-8 文件：内容不展示，但**必须出现在结果里**，不能静默丢弃。
+    pub binary: bool,
+    pub context_before: Vec<String>,
+    pub context_after: Vec<String>,
+    pub revision: Option<String>,
+}
+
+/// 全文搜索分页结果。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSearchPage {
+    pub search_id: String,
+    pub pattern: String,
+    pub revision: Option<String>,
+    pub total: usize,
+    pub matched_files: usize,
+    pub offset: usize,
+    pub page_size: usize,
+    pub has_more: bool,
+    pub truncated: bool,
+    pub cancelled: bool,
+    pub items: Vec<TextSearchMatch>,
+    pub notice: Option<String>,
+}
+
+/// 批量替换输入：替换只作用于工作区，绝不写入某个 rev。
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TextReplaceQuery {
+    pub pattern: String,
+    pub replacement: String,
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    pub regex: bool,
+    pub includes: Vec<String>,
+    pub exclude_paths: Vec<String>,
+    /// 文件数上限（防御性截断）；为空使用默认上限。
+    pub max_files: Option<usize>,
+}
+
+impl Default for TextReplaceQuery {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            replacement: String::new(),
+            case_sensitive: true,
+            whole_word: false,
+            regex: false,
+            includes: Vec::new(),
+            exclude_paths: Vec::new(),
+            max_files: None,
+        }
+    }
+}
+
+/// 预览中的单个受影响文件。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplacePreviewFile {
+    pub file_path: String,
+    pub occurrences: usize,
+    /// 前若干个命中行号，供 UI 抽样展示。
+    pub sample_lines: Vec<usize>,
+    pub size_bytes: usize,
+    /// 非空表示该文件被跳过（超限/二进制/位置校验失败），不会写盘。
+    pub skipped: Option<String>,
+}
+
+/// dry-run 预览结果：`requires_confirmation` 恒为 true，未确认时仓库未被改动。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplacePreview {
+    pub preview_id: String,
+    pub pattern: String,
+    pub replacement: String,
+    pub files: Vec<ReplacePreviewFile>,
+    pub file_count: usize,
+    pub total_occurrences: usize,
+    pub skipped_files: usize,
+    /// 预览范围是否被条数/字节上限截断（截断时禁止 apply，需缩小范围）。
+    pub truncated: bool,
+    pub requires_confirmation: bool,
+    pub estimated_bytes: usize,
+    pub notice: Option<String>,
+}
+
+/// 替换/撤销的执行结果。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceReport {
+    pub replace_id: String,
+    pub executed: bool,
+    pub files_changed: Vec<String>,
+    pub occurrences: usize,
+    pub warnings: Vec<String>,
+    /// 备份位置（相对 git 目录），用于用户自行核对。
+    pub backup_path: Option<String>,
+    pub backup_available: bool,
+    /// 撤销路径：已恢复的文件。
+    pub restored_files: Vec<String>,
+    /// 撤销时因外部修改而拒绝恢复的文件。
+    pub skipped: Vec<String>,
+    pub notice: Option<String>,
+}
+
+/// 一次可撤销的替换备份摘要。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceBackupSummary {
+    pub replace_id: String,
+    pub created_at_ms: u128,
+    pub file_count: usize,
+    pub occurrences: usize,
+    pub byte_size: usize,
+    pub pattern: String,
+    pub replacement: String,
+}
+
+/// 内置编辑器的文件内容载体；`checksum` 是保存时的乐观并发凭据。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryTextFile {
+    pub file_path: String,
+    pub revision: Option<String>,
+    pub content: String,
+    pub size_bytes: usize,
+    pub truncated: bool,
+    pub checksum: String,
+    pub line_count: usize,
+    pub binary: bool,
+    pub notice: Option<String>,
+}

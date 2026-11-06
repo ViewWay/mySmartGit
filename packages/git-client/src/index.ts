@@ -453,3 +453,110 @@ export async function advanceRepositoryBisect(repositoryPath: string) {
 export async function resetRepositoryBisect(repositoryPath: string) {
   return invoke<RepositorySnapshot>('reset_repository_bisect', { repositoryPath })
 }
+
+// ---------------------------------------------------------------------------
+// W2-9 历史深度搜索与仓库全文搜索/替换
+//
+// import 放在追加区块内而不是改头部那行，是为了让本轨道的 diff 只落在文件末尾：
+// 并行轨道都在动这个文件，改同一条 import 行必然产生冲突。ESM 的 import 声明
+// 允许出现在模块顶层的任意位置并被提升，行为与写在文件头完全一致。
+import type {
+  CommitSearchPage,
+  CommitSearchQuery,
+  ReplaceBackupSummary,
+  ReplacePreview,
+  ReplaceReport,
+  RepositoryTextFile,
+  TextReplaceQuery,
+  TextSearchPage,
+  TextSearchQuery,
+} from '@branchline/git-models'
+
+export type {
+  CommitSearchItem,
+  CommitSearchPage,
+  CommitSearchQuery,
+  CommitSearchTarget,
+  ReplaceBackupSummary,
+  ReplacePreview,
+  ReplacePreviewFile,
+  ReplaceReport,
+  RepositoryTextFile,
+  TextReplaceQuery,
+  TextSearchMatch,
+  TextSearchPage,
+  TextSearchQuery,
+} from '@branchline/git-models'
+
+/**
+ * 历史深度搜索。命令参数是 `(repositoryPath, query)` 两个具名实参：
+ * `query` 整体交给 Rust 侧的 `CommitSearchQuery`（`#[serde(default)]`，可省略字段）。
+ */
+export async function searchCommits(repositoryPath: string, query: CommitSearchQuery) {
+  return invoke<CommitSearchPage>('search_commits', { repositoryPath, query })
+}
+
+/** 翻页：复用后端已建好的提交索引，不重跑重查询。 */
+export async function loadCommitSearchPage(repositoryPath: string, searchId: string, offset: number, pageSize: number) {
+  return invoke<CommitSearchPage>('load_commit_search_page', { repositoryPath, searchId, offset, pageSize })
+}
+
+export async function searchRepositoryText(repositoryPath: string, query: TextSearchQuery) {
+  return invoke<TextSearchPage>('search_repository_text', { repositoryPath, query })
+}
+
+export async function loadRepositoryTextPage(
+  repositoryPath: string,
+  searchId: string,
+  offset: number,
+  pageSize: number,
+  contextLines: number,
+) {
+  return invoke<TextSearchPage>('load_repository_text_page', { repositoryPath, searchId, offset, pageSize, contextLines })
+}
+
+/** dry-run 预览：仓库不会被改动，返回受影响文件与处数。 */
+export async function previewTextReplace(repositoryPath: string, query: TextReplaceQuery) {
+  return invoke<ReplacePreview>('preview_text_replace', { repositoryPath, query })
+}
+
+/** 写盘执行：必须携带预览标识且 confirm=true，否则后端直接拒绝。 */
+export async function applyTextReplace(repositoryPath: string, previewId: string, confirm: boolean) {
+  return invoke<ReplaceReport>('apply_text_replace', { repositoryPath, previewId, confirm })
+}
+
+export async function undoTextReplace(repositoryPath: string, replaceId: string) {
+  return invoke<ReplaceReport>('undo_text_replace', { repositoryPath, replaceId })
+}
+
+export async function listTextReplaceBackups(repositoryPath: string) {
+  return invoke<ReplaceBackupSummary[]>('list_text_replace_backups', { repositoryPath })
+}
+
+export async function loadRepositoryTextFile(
+  repositoryPath: string,
+  filePath: string,
+  maxBytes?: number | null,
+  revision?: string | null,
+) {
+  return invoke<RepositoryTextFile>('load_repository_text_file', {
+    repositoryPath,
+    filePath,
+    maxBytes: maxBytes ?? null,
+    revision: revision ?? null,
+  })
+}
+
+export async function saveRepositoryTextFile(
+  repositoryPath: string,
+  filePath: string,
+  content: string,
+  baseChecksum: string,
+) {
+  return invoke<RepositoryTextFile>('save_repository_text_file', { repositoryPath, filePath, content, baseChecksum })
+}
+
+/** 中止该仓库所有在跑的搜索/预览任务并清空其分页索引（切仓库、关窗口、发新搜索时调用）。 */
+export async function cancelRepositorySearch(repositoryPath: string) {
+  return invoke<number>('cancel_repository_search', { repositoryPath })
+}
