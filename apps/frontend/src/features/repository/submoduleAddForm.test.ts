@@ -186,7 +186,7 @@ describe('预览确认与克隆深度', () => {
       summary: '将收养目录里已有的仓库作为 Submodule：vendor/lib',
       warnings: ['收养不会删除目录内容'],
       affected: ['vendor/lib'],
-    }))
+    }), zhT)
     expect(text).toContain('收养')
     expect(text).toContain('· 收养不会删除目录内容')
     expect(text).toContain('受影响：vendor/lib')

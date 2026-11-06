@@ -113,26 +113,26 @@ export function validateSubmodulePath(rawPath: string, t: Translate): string | n
 }
 
 /** 段名校验：它同时是 `.gitmodules` 的 config 段名与 `.git/modules/<name>` 目录名。 */
-export function validateSubmoduleName(rawName: string): string | null {
+export function validateSubmoduleName(rawName: string, t: Translate): string | null {
   const name = rawName.trim()
   if (!name) return null // 留空表示与路径同名，由后端补默认值
-  if (name.length > MAX_NAME_LENGTH) return `Submodule 名称过长（上限 ${MAX_NAME_LENGTH} 字符）`
-  if (name.startsWith('-')) return 'Submodule 名称不能以 - 开头，否则会被 Git 当成命令选项'
-  if (/[/\\]/.test(name) || name.includes('..') || /\s/.test(name)) return 'Submodule 名称不能包含路径分隔符、.. 或空白'
+  if (name.length > MAX_NAME_LENGTH) return t('repository.submoduleForm.nameTooLong', { count: MAX_NAME_LENGTH })
+  if (name.startsWith('-')) return t('repository.submoduleForm.nameOptionLike')
+  if (/[/\\]/.test(name) || name.includes('..') || /\s/.test(name)) return t('repository.submoduleForm.nameSeparators')
   if (/[[\]"'~^:?*{]/.test(name) || name.startsWith('.') || name.endsWith('.') || name.endsWith('.lock')) {
-    return 'Submodule 名称不能包含 config 特殊字符'
+    return t('repository.submoduleForm.nameConfigCharacters')
   }
   return null
 }
 
-export function validateSubmoduleBranch(rawBranch: string): string | null {
+export function validateSubmoduleBranch(rawBranch: string, t: Translate): string | null {
   const branch = rawBranch.trim()
   if (!branch) return null // 留空表示跟随父仓库记录的提交
-  if (branch.startsWith('-')) return '跟踪分支不能以 - 开头，否则会被 Git 当成命令选项'
-  if (hasIllegalCharacter(branch)) return '跟踪分支不能包含空白或控制字符'
+  if (branch.startsWith('-')) return t('repository.submoduleForm.branchOptionLike')
+  if (hasIllegalCharacter(branch)) return t('repository.submoduleForm.branchIllegalCharacter')
   // Git 的分支规则细节（连续点、@{、末尾斜杠等）由后端 check-ref-format 裁决，这里只挡明显错误。
   if (/^[./]/.test(branch) || branch.includes('..') || branch.includes('@{') || /[/~^.]$/.test(branch) || branch.includes('//')) {
-    return '跟踪分支名称不符合 Git 规则'
+    return t('repository.submoduleForm.branchFormat')
   }
   return null
 }
