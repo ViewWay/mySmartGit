@@ -1633,3 +1633,107 @@ pub async fn cherry_pick_history_commits(
     .await
     .map_err(|error| task_error("批量拣选提交", error))?
 }
+
+// ---------------------------------------------------------------------------
+// W3-3 流式提交历史：游标分页（apps/desktop/src/git.rs）
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn start_repository_history_stream(
+    repository_path: String,
+    page_size: Option<usize>,
+) -> Result<crate::models::RepositoryHistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::start_repository_history_stream(&repository_path, page_size)
+    })
+    .await
+    .map_err(|error| task_error("开始提交图谱流", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_history_next_page(
+    session_id: String,
+    page_size: Option<usize>,
+) -> Result<crate::models::RepositoryHistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::load_repository_history_next_page(&session_id, page_size)
+    })
+    .await
+    .map_err(|error| task_error("续取提交图谱", error))?
+}
+
+#[tauri::command]
+pub async fn start_repository_file_history_stream(
+    repository_path: String,
+    file_path: String,
+    page_size: Option<usize>,
+) -> Result<crate::models::RepositoryHistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::start_repository_file_history_stream(&repository_path, &file_path, page_size)
+    })
+    .await
+    .map_err(|error| task_error("开始文件历史流", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_file_history_next_page(
+    session_id: String,
+    page_size: Option<usize>,
+) -> Result<crate::models::RepositoryHistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::load_repository_file_history_next_page(&session_id, page_size)
+    })
+    .await
+    .map_err(|error| task_error("续取文件历史", error))?
+}
+
+#[tauri::command]
+pub async fn start_repository_line_history_stream(
+    repository_path: String,
+    file_path: String,
+    line: usize,
+    revision: Option<String>,
+    page_size: Option<usize>,
+) -> Result<crate::models::RepositoryHistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::start_repository_line_history_stream(
+            &repository_path,
+            &file_path,
+            line,
+            revision.as_deref(),
+            page_size,
+        )
+    })
+    .await
+    .map_err(|error| task_error("开始行历史流", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_line_history_next_page(
+    session_id: String,
+    page_size: Option<usize>,
+) -> Result<crate::models::RepositoryHistoryPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::load_repository_line_history_next_page(&session_id, page_size)
+    })
+    .await
+    .map_err(|error| task_error("续取行历史", error))?
+}
+
+#[tauri::command]
+pub async fn cancel_repository_history_stream(session_id: String) -> Result<bool, String> {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        git::cancel_repository_history_stream(&session_id)
+    })
+    .await
+    .map_err(|error| task_error("取消历史流", error))?)
+}
+
+#[tauri::command]
+pub async fn cancel_repository_history(repository_path: String) -> Result<usize, String> {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        git::cancel_repository_history(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("取消仓库历史流", error))?)
+}

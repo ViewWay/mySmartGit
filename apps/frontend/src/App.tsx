@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { applyRepositoryStash, cherryPickRepositoryCommit, createRepositoryBranch, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, loadFileCommitDiff, loadImageFileDiff, loadRepository, loadRepositoryHistory, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
+import { applyRepositoryStash, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, createRepositoryBranch, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, loadFileCommitDiff, loadImageFileDiff, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
 import { ContextMenu } from './components/ContextMenu'
 import { Button } from './components/Button'
 import { CompactSelect } from './components/CompactSelect'
@@ -35,7 +35,7 @@ import { captureCommitAnchor, resolveCommitSelection, restoreCommitAnchor, type 
 import { trackedRemoteReference, visibleCommitReferences, type BranchTrackingMap } from './features/history/historyReferences'
 import { matchingCommitIds, nextSearchMatch, retainUnchangedSearchSummary, visibleHistoryCommits, type HistorySearchMode, type HistorySearchSummary } from './features/history/historySearch'
 import { createWorkingTreeCommit, resolveWorkingTreeParent, WORKING_TREE_COMMIT_ID } from './features/history/workingTreeCommit'
-import { DEFAULT_HISTORY_LOAD_LIMIT, nextHistoryLoadLimit } from './features/history/historyDepth'
+import { HISTORY_PAGE_SIZE, HISTORY_PREFETCH_ROWS } from './features/history/historyDepth'
 import { formatLocalDateTime } from './dateTime'
 import { isBooleanRecord, usePersistentState } from './persistentState'
 import { DEFAULT_HISTORY_COLUMN_WIDTHS, DEFAULT_HISTORY_VISIBLE_COLUMNS, isHistoryColumnWidths, isHistoryVisibleColumns } from './features/history/historyColumns'
@@ -125,6 +125,14 @@ type SearchNavigationAction = { sequence: number; direction: 1 | -1 }
 type SearchSummary = HistorySearchSummary
 type HistoryTarget = { path: string; tab: 'history' | 'blame' | 'line'; line?: number; revision?: string }
 type ActiveOperation = { key: 'fetch' | 'pull' | 'push' | 'commit' | 'stash' | 'revert' | 'cherry-pick' | 'merge' | 'history'; label: string; detail: string }
+
+// 流式历史只能尾部追加：快照里的前 N 条 + 流会话续取的更早提交，按 fullHash 去重，
+// 保持“整列是全量 log 序列的前缀”，提交图谱的跨页 lane 才不会被重排。
+function mergeHistoryStreamCommits(base: Commit[], extra: Commit[]) {
+  if (!extra.length) return base
+  const known = new Set(base.map((commit) => commit.fullHash ?? commit.id))
+  return [...base, ...extra.filter((commit) => !known.has(commit.fullHash ?? commit.id))]
+}
 
 const isTheme = (value: unknown): value is 'dark' | 'light' => value === 'dark' || value === 'light'
 const isSidebarWidth = (value: unknown): value is number => typeof value === 'number' && value >= 200 && value <= 360
@@ -330,7 +338,7 @@ function commitDay(commit: Commit) {
   }
 }
 
-function CommitList({ commits, selected, onSelect, query, searchMode, searchAction, onSearchSummaryChange, branchFilter, timeFilter, currentBranch, remoteBranches, branchTracking, tags, stashReferences, inspectorCollapsed, onToggleInspector, onMergeCommit, onCherryPickCommit, onResetCommit, onRevertCommit, onRebaseCommit, onTagCommit, onCompareCommit, onCopyCommit, onApplyStash, onPopStash, onDropStash }: { commits: Commit[]; selected: string; onSelect: (id: string) => void; query: string; searchMode: HistorySearchMode; searchAction: SearchNavigationAction; onSearchSummaryChange: (summary: SearchSummary) => void; branchFilter: string[]; timeFilter: TimeFilter; currentBranch: string; remoteBranches: string[]; branchTracking: BranchTrackingMap; tags: string[]; stashReferences: Record<string, string>; inspectorCollapsed: boolean; onToggleInspector: () => void; onMergeCommit: (commit: Commit) => void; onCherryPickCommit: (commit: Commit) => void; onResetCommit: (commit: Commit) => void; onRevertCommit: (commit: Commit) => void; onRebaseCommit: (commit: Commit) => void; onTagCommit: (commit: Commit) => void; onCompareCommit: (commit: Commit) => void; onCopyCommit: (commit: Commit, mode: 'hash' | 'details') => void; onApplyStash: (reference: string) => void; onPopStash: (reference: string) => void; onDropStash: (reference: string) => void }) {
+function CommitList({ commits, selected, onSelect, query, searchMode, searchAction, onSearchSummaryChange, branchFilter, timeFilter, currentBranch, remoteBranches, branchTracking, tags, stashReferences, inspectorCollapsed, onToggleInspector, onMergeCommit, onCherryPickCommit, onResetCommit, onRevertCommit, onRebaseCommit, onTagCommit, onCompareCommit, onCopyCommit, onApplyStash, onPopStash, onDropStash, historyStream, onLoadMoreHistory }: { commits: Commit[]; selected: string; onSelect: (id: string) => void; query: string; searchMode: HistorySearchMode; searchAction: SearchNavigationAction; onSearchSummaryChange: (summary: SearchSummary) => void; branchFilter: string[]; timeFilter: TimeFilter; currentBranch: string; remoteBranches: string[]; branchTracking: BranchTrackingMap; tags: string[]; stashReferences: Record<string, string>; inspectorCollapsed: boolean; onToggleInspector: () => void; onMergeCommit: (commit: Commit) => void; onCherryPickCommit: (commit: Commit) => void; onResetCommit: (commit: Commit) => void; onRevertCommit: (commit: Commit) => void; onRebaseCommit: (commit: Commit) => void; onTagCommit: (commit: Commit) => void; onCompareCommit: (commit: Commit) => void; onCopyCommit: (commit: Commit, mode: 'hash' | 'details') => void; onApplyStash: (reference: string) => void; onPopStash: (reference: string) => void; onDropStash: (reference: string) => void; historyStream?: { hasMore: boolean; loading: boolean }; onLoadMoreHistory?: () => void }) {
   const [widths, setWidths] = usePersistentState('branchline.historyColumnWidths.v1', DEFAULT_HISTORY_COLUMN_WIDTHS, isHistoryColumnWidths)
   const [visibleColumns, setVisibleColumns] = usePersistentState('branchline.historyVisibleColumns.v1', DEFAULT_HISTORY_VISIBLE_COLUMNS, isHistoryVisibleColumns)
   const [columnMenuOpen, setColumnMenuOpen] = useState(false)
@@ -375,6 +383,14 @@ function CommitList({ commits, selected, onSelect, query, searchMode, searchActi
     const end = Math.min(filtered.length, Math.ceil((scrollTop + listHeight) / COMMIT_ROW_HEIGHT) + overscan)
     return { start, end }
   }, [filtered.length, listHeight, scrollTop])
+  // 滚动到已加载末尾前预取下一页。只对“全量历史”视图生效：带查询/时间/提交人过滤时
+  // 尾部并不代表历史尽头，继续拉取会一边过滤一边无限读完整仓。
+  useEffect(() => {
+    if (!historyStream?.hasMore || historyStream.loading) return
+    if (!filtered.length || query.trim() || timeFilter !== 'all' || committerFilter.length > 0) return
+    if (virtualRange.end < filtered.length - HISTORY_PREFETCH_ROWS) return
+    onLoadMoreHistory?.()
+  }, [committerFilter.length, filtered.length, historyStream?.hasMore, historyStream?.loading, onLoadMoreHistory, query, timeFilter, virtualRange.end])
   const visibleCommits = filtered.slice(virtualRange.start, virtualRange.end)
   const searchMatchIndex = searchMatches.indexOf(selected)
   const searchMatchCount = searchMatches.length
@@ -503,6 +519,7 @@ function CommitList({ commits, selected, onSelect, query, searchMode, searchActi
       </button>
     })}
     {virtualRange.end < filtered.length && <div className="commit-list-spacer" style={{ height: (filtered.length - virtualRange.end) * COMMIT_ROW_HEIGHT }}/>} 
+    {historyStream?.loading && <div className="commit-list-footer">正在加载更早的提交…</div>}
     {filtered.length === 0 && <div className="empty-search">{commits.length ? <Search size={24}/> : <GitCommitHorizontal size={24}/>}<strong>{commits.length ? '没有匹配的提交' : '仓库暂无提交'}</strong><span>{commits.length ? '试试提交信息、Hash 或提交人' : '完成首次提交后，提交图谱会显示在这里。'}</span></div>}
     </div>
     {contextCommit && <ContextMenu x={contextCommit.x} y={contextCommit.y} onClose={() => setContextCommit(null)}>
@@ -682,13 +699,20 @@ export default function App() {
   const [historyConflictPath, setHistoryConflictPath] = useState<string | null>(null)
   const [commitStats, setCommitStats] = useState<Record<string, RepositoryCommitStats>>({})
   const [commitFiles, setCommitFiles] = useState<Record<string, RepositoryFile[]>>({})
-  const [historyLoadLimit, setHistoryLoadLimit] = useState(DEFAULT_HISTORY_LOAD_LIMIT)
+  const [historyStreamCommits, setHistoryStreamCommits] = useState<Commit[]>([])
+  const [historyStream, setHistoryStream] = useState<{ hasMore: boolean; loading: boolean }>({ hasMore: true, loading: false })
+  const [historyPageTick, setHistoryPageTick] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
   const autoFetchRef = useRef<HTMLDivElement>(null)
   const expandedRepositoryPath = useRef<string | null>(null)
   const structureRepositoryPath = useRef<string | null>(null)
   const previousCommits = useRef<Commit[]>([])
   const historyLoadInProgress = useRef(false)
+  const historyStreamSession = useRef<string | null>(null)
+  const historyStreamExtras = useRef<Commit[]>([])
+  const historyStreamHasMore = useRef(true)
+  const historyStreamLoading = useRef(false)
+  const historyStreamGeneration = useRef(0)
 
   useEffect(() => {
     if (!notificationOpen) return
@@ -703,40 +727,69 @@ export default function App() {
   const workingTreeCommit = useMemo(() => repository
     ? createWorkingTreeCommit(repository.files, resolveWorkingTreeParent(repository), repository.operation)
     : null, [repository])
-  const activeCommits = useMemo<Commit[]>(() => workingTreeCommit
-    ? [workingTreeCommit, ...(repository?.commits ?? [])]
-    : repository?.commits ?? [], [repository?.commits, workingTreeCommit])
+  const activeCommits = useMemo<Commit[]>(() => {
+    const history = mergeHistoryStreamCommits(repository?.commits ?? [], historyStreamCommits)
+    return workingTreeCommit ? [workingTreeCommit, ...history] : history
+  }, [repository?.commits, historyStreamCommits, workingTreeCommit])
   const unloadedBranchFilters = useMemo(
     () => unloadedHistoryBranches(activeCommits, branchFilter),
     [activeCommits, branchFilter],
   )
   const repositoryPath = repository?.path
-  useEffect(() => {
-    if (!repositoryPath || !unloadedBranchFilters.length || historyLoadInProgress.current) return
-    const nextLimit = nextHistoryLoadLimit(historyLoadLimit)
-    if (!nextLimit) return
-    historyLoadInProgress.current = true
-    setActiveOperation({ key: 'history', label: '正在扩大提交图谱…', detail: `正在读取 ${nextLimit.toLocaleString()} 条提交以定位 ${unloadedBranchFilters.join('、')}` })
-    let cancelled = false
-    loadRepositoryHistory(repositoryPath, nextLimit)
-      .then((snapshot) => {
-        if (cancelled) return
-        setHistoryLoadLimit(nextLimit)
-        applySnapshot(snapshot)
-      })
-      .catch((error) => {
-        if (!cancelled) setRepositoryNotice(error instanceof Error ? error.message : String(error))
-      })
-      .finally(() => {
-        if (cancelled) return
-        historyLoadInProgress.current = false
-        setActiveOperation((current) => current?.key === 'history' ? null : current)
-      })
-    return () => {
-      cancelled = true
-      historyLoadInProgress.current = false
+  const loadNextHistoryPage = useCallback(async () => {
+    if (!repositoryPath || historyStreamLoading.current || !historyStreamHasMore.current) return null
+    historyStreamLoading.current = true
+    const generation = historyStreamGeneration.current
+    setHistoryStream((current) => ({ ...current, loading: true }))
+    try {
+      const page = historyStreamSession.current
+        ? await loadRepositoryHistoryNextPage(historyStreamSession.current, HISTORY_PAGE_SIZE)
+        : await startRepositoryHistoryStream(repositoryPath, HISTORY_PAGE_SIZE)
+      if (generation !== historyStreamGeneration.current) {
+        void cancelRepositoryHistoryStream(page.sessionId)
+        return null
+      }
+      historyStreamSession.current = page.sessionId
+      historyStreamHasMore.current = page.hasMore
+      const known = new Set(historyStreamExtras.current.map((commit) => commit.fullHash ?? commit.id))
+      const appended = page.commits.filter((commit) => !known.has(commit.fullHash))
+      if (appended.length) {
+        historyStreamExtras.current = [...historyStreamExtras.current, ...appended]
+        setHistoryStreamCommits(historyStreamExtras.current)
+      }
+      setHistoryStream({ hasMore: page.hasMore, loading: false })
+      if (page.truncated && page.notice) setRepositoryNotice(page.notice)
+      return page
+    } catch (error) {
+      setHistoryStream((current) => ({ ...current, loading: false }))
+      setRepositoryNotice(error instanceof Error ? error.message : String(error))
+      return null
+    } finally {
+      historyStreamLoading.current = false
+      setHistoryPageTick((tick) => tick + 1)
     }
-  }, [applySnapshot, historyLoadLimit, repositoryPath, setRepositoryNotice, unloadedBranchFilters])
+  }, [repositoryPath, setRepositoryNotice])
+  // 切仓库或 HEAD 变化（提交/变基/切分支）时旧流的提交不再属于新前缀，必须整段失效。
+  useEffect(() => {
+    historyStreamGeneration.current += 1
+    const session = historyStreamSession.current
+    historyStreamSession.current = null
+    if (session) void cancelRepositoryHistoryStream(session)
+    historyStreamExtras.current = []
+    historyStreamHasMore.current = true
+    historyStreamLoading.current = false
+    setHistoryStreamCommits([])
+    setHistoryStream({ hasMore: true, loading: false })
+  }, [repositoryPath, repository?.commits[0]?.fullHash])
+  useEffect(() => {
+    if (!repositoryPath || !unloadedBranchFilters.length || historyLoadInProgress.current || !historyStreamHasMore.current) return
+    historyLoadInProgress.current = true
+    setActiveOperation({ key: 'history', label: '正在继续读取提交图谱…', detail: `正在读取更早的提交以定位 ${unloadedBranchFilters.join('、')}` })
+    void loadNextHistoryPage().finally(() => {
+      historyLoadInProgress.current = false
+      setActiveOperation((current) => current?.key === 'history' ? null : current)
+    })
+  }, [historyPageTick, loadNextHistoryPage, repositoryPath, unloadedBranchFilters])
   const currentBranchHead = useMemo(
     () => activeCommits.find((commit) => commit.status !== 'working' && commit.branches?.includes(repository?.branch ?? ''))
       ?? activeCommits.find((commit) => commit.status !== 'working')
@@ -1166,21 +1219,20 @@ export default function App() {
   const handleJumpBranch = async (branch: string) => {
     let commit = activeCommits.find((item) => item.branches?.includes(branch))
     if (!commit && repository && !historyLoadInProgress.current) {
-      const nextLimit = nextHistoryLoadLimit(historyLoadLimit)
-      if (nextLimit) {
-        historyLoadInProgress.current = true
-        setActiveOperation({ key: 'history', label: '正在扩大提交图谱…', detail: `正在读取 ${nextLimit.toLocaleString()} 条提交以定位 ${branch}` })
-        try {
-          const snapshot = await loadRepositoryHistory(repository.path, nextLimit)
-          setHistoryLoadLimit(nextLimit)
-          applySnapshot(snapshot)
-          commit = snapshot.commits.find((item) => item.branches?.includes(branch)) as Commit | undefined
-        } catch (error) {
-          setRepositoryNotice(error instanceof Error ? error.message : String(error))
-        } finally {
-          historyLoadInProgress.current = false
-          setActiveOperation((current) => current?.key === 'history' ? null : current)
+      historyLoadInProgress.current = true
+      setActiveOperation({ key: 'history', label: '正在定位分支…', detail: `正在读取更早的提交以定位 ${branch}` })
+      try {
+        let guard = 0
+        while (!commit && historyStreamHasMore.current && guard < 400) {
+          guard += 1
+          const page = await loadNextHistoryPage()
+          if (!page) break
+          commit = mergeHistoryStreamCommits(repository.commits, historyStreamExtras.current)
+            .find((item) => item.branches?.includes(branch))
         }
+      } finally {
+        historyLoadInProgress.current = false
+        setActiveOperation((current) => current?.key === 'history' ? null : current)
       }
     }
     if (!commit) {
@@ -1200,10 +1252,6 @@ export default function App() {
     })
   }
 
-  useEffect(() => {
-    setHistoryLoadLimit(DEFAULT_HISTORY_LOAD_LIMIT)
-    historyLoadInProgress.current = false
-  }, [repository?.path])
   const handleJumpTag = (tag: string) => {
     const commit = activeCommits.find((item) => item.branches?.includes(tag))
     if (!commit) {
@@ -1323,7 +1371,7 @@ export default function App() {
       </ContextMenu>}
       <div className={`workspace-grid ${wideDiff && diffFile !== null ? 'diff-wide' : ''} ${inspectorCollapsed ? 'inspector-collapsed' : ''}`} style={{ gridTemplateColumns: `minmax(0, 1fr) ${inspectorVisible ? 1 : 0}px ${inspectorVisible ? inspectorWidth : 0}px` }}>
         {workspaceView === 'history' && <section className="history-pane">
-          <CommitList key={repository.path} commits={activeCommits} selected={selected} onSelect={(id) => { setSelected(id); setInspectorCollapsed(false) }} query={query} searchMode={searchMode} searchAction={searchAction} onSearchSummaryChange={handleSearchSummaryChange} branchFilter={branchFilter} timeFilter={timeFilter} currentBranch={repository.branch} remoteBranches={repository.remoteBranches} branchTracking={repository.branchTracking} tags={repository.tags} stashReferences={stashReferences} inspectorCollapsed={inspectorCollapsed} onToggleInspector={() => setInspectorCollapsed((value) => !value)} onMergeCommit={(commit) => { const remote = commit.branches?.find((reference) => repository.remoteBranches.includes(reference) || repository.remoteBranches.includes(reference.replace(/^refs\/remotes\//, ''))); const normalized = remote?.replace(/^refs\/remotes\//, ''); void handleMergeReference(remote ?? commit.fullHash ?? commit.id, remote ? `分支 ${normalized}` : `提交 ${commit.id}`) }} onCherryPickCommit={(commit) => void handleCherryPickCommit(commit)} onResetCommit={(commit) => void handleResetCommit(commit)} onRevertCommit={(commit) => void handleRevertCommit(commit)} onRebaseCommit={(commit) => void handleRebaseCommit(commit)} onTagCommit={(commit) => void handleTagCommit(commit)} onCompareCommit={handleCompareCommit} onCopyCommit={(commit, mode) => void copyText(mode === 'hash' ? commit.fullHash ?? commit.id : formatCommitClipboard(commit), mode === 'hash' ? `已复制${commit.status === 'stash' ? ' Stash' : '提交'} Hash：${commit.id}` : `已复制${commit.status === 'stash' ? ' Stash' : `提交 ${commit.id}`} 的完整信息`)} onApplyStash={(reference) => void handleApplyStash(reference)} onPopStash={(reference) => void handlePopStash(reference)} onDropStash={(reference) => void handleDropStash(reference)}/>
+          <CommitList key={repository.path} commits={activeCommits} selected={selected} onSelect={(id) => { setSelected(id); setInspectorCollapsed(false) }} query={query} searchMode={searchMode} searchAction={searchAction} onSearchSummaryChange={handleSearchSummaryChange} branchFilter={branchFilter} timeFilter={timeFilter} currentBranch={repository.branch} remoteBranches={repository.remoteBranches} branchTracking={repository.branchTracking} tags={repository.tags} stashReferences={stashReferences} inspectorCollapsed={inspectorCollapsed} onToggleInspector={() => setInspectorCollapsed((value) => !value)} onMergeCommit={(commit) => { const remote = commit.branches?.find((reference) => repository.remoteBranches.includes(reference) || repository.remoteBranches.includes(reference.replace(/^refs\/remotes\//, ''))); const normalized = remote?.replace(/^refs\/remotes\//, ''); void handleMergeReference(remote ?? commit.fullHash ?? commit.id, remote ? `分支 ${normalized}` : `提交 ${commit.id}`) }} onCherryPickCommit={(commit) => void handleCherryPickCommit(commit)} onResetCommit={(commit) => void handleResetCommit(commit)} onRevertCommit={(commit) => void handleRevertCommit(commit)} onRebaseCommit={(commit) => void handleRebaseCommit(commit)} onTagCommit={(commit) => void handleTagCommit(commit)} onCompareCommit={handleCompareCommit} onCopyCommit={(commit, mode) => void copyText(mode === 'hash' ? commit.fullHash ?? commit.id : formatCommitClipboard(commit), mode === 'hash' ? `已复制${commit.status === 'stash' ? ' Stash' : '提交'} Hash：${commit.id}` : `已复制${commit.status === 'stash' ? ' Stash' : `提交 ${commit.id}`} 的完整信息`)} onApplyStash={(reference) => void handleApplyStash(reference)} onPopStash={(reference) => void handlePopStash(reference)} onDropStash={(reference) => void handleDropStash(reference)} historyStream={historyStream} onLoadMoreHistory={() => { void loadNextHistoryPage() }}/>
           {diffFile !== null && <div className="history-diff-overlay"><DiffPanel files={selectedCommitFiles} repositoryPath={repository.path} wide={wideDiff} onWideChange={setWideDiff} initialFile={diffFile} onActiveFileChange={setDiffFile} hideFileList loadRows={loadSelectedCommitDiff} loadImageDiff={selectedWorkingTree ? undefined : (filePath) => loadImageFileDiff(repository.path, selectedCommit.parents?.[0] ?? selectedCommit.parent ?? selectedStatsKey, selectedCommitBase.id, filePath)} onOpenFileExternally={(filePath) => { void openRevisionFileExternally(repository.path, selectedCommitBase.id, filePath).then(() => setRepositoryNotice(`已导出副本并用系统程序打开：${filePath}`)).catch((reason) => setRepositoryNotice(String(reason))) }} onOpenLineHistory={(path, line, side) => setHistoryTarget({ path, line, tab: 'line', revision: selectedWorkingTree ? (side === 'old' ? selectedCommit.parent : undefined) : side === 'old' ? (selectedCommit.parents?.[0] ?? selectedCommit.parent ?? selectedStatsKey) : selectedStatsKey })} onClose={() => { setDiffFile(null); setWideDiff(false) }}/></div>}
           {historyConflictPath && repository.operation && <div className="history-diff-overlay history-operation-overlay"><Suspense fallback={<section className="workspace-empty"><RefreshCw className="spin" size={28}/><strong>正在加载冲突编辑器</strong></section>}><OperationPanel repository={repository} onSnapshot={handleSnapshot} onNotice={setRepositoryNotice} initialPath={historyConflictPath} onReturnToChanges={() => { setHistoryConflictPath(null); setOperationPath(null) }} onClose={() => { setHistoryConflictPath(null); setOperationPath(null) }}/></Suspense></div>}
         </section>}

@@ -55,6 +55,14 @@
 
 .commit-list-spacer { width: 1px; flex: 0 0 auto; pointer-events: none; }
 
+.commit-list-footer { padding: 10px; color: var(--faint); font-size: 11px; text-align: center; }
+
+.history-load-more { margin: 8px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); background: var(--surface-raised); font-size: 11px; cursor: pointer; }
+
+.history-load-more:hover:not(:disabled) { background: var(--surface-hover); }
+
+.history-load-more:disabled { opacity: .6; cursor: default; }
+
 .history-diff-overlay { position: absolute; inset: 0; z-index: 12; background: var(--bg); animation: fadeIn .16s ease-out; }
 
 .history-diff-overlay .diff-panel { height: 100%; }

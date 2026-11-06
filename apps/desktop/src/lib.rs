@@ -143,6 +143,15 @@ pub fn run() {
             commands::reword_history_commit,
             commands::drop_history_commit,
             commands::cherry_pick_history_commits,
+            // W3-3 流式提交历史
+            commands::start_repository_history_stream,
+            commands::load_repository_history_next_page,
+            commands::start_repository_file_history_stream,
+            commands::load_repository_file_history_next_page,
+            commands::start_repository_line_history_stream,
+            commands::load_repository_line_history_next_page,
+            commands::cancel_repository_history_stream,
+            commands::cancel_repository_history,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");
