@@ -1,5 +1,7 @@
 mod commands;
 mod git;
+mod git_media;
+mod git_tree;
 mod git_remote;
 mod git_recovery;
 mod models;

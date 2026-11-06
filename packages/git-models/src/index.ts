@@ -337,3 +337,79 @@ export type BisectStatus = {
 }
 
 export type RepositoryResetMode = 'soft' | 'mixed' | 'hard'
+
+// ---------------------------------------------------------------------------
+// W2-8 图片/SVG 差异预览 与 提交文件树浏览（后端 git_media.rs / git_tree.rs）
+// ---------------------------------------------------------------------------
+
+/** 与 Rust `MediaBlob` 对齐；字节载荷只在不超阈值时存在。 */
+export type MediaBlob = {
+  path: string
+  reference: string
+  oid: string
+  mime: string
+  extension: string
+  previewKind: 'image' | 'svg' | 'other'
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  previewable: boolean
+  tooLarge: boolean
+  dataBase64: string | null
+  cached: boolean
+}
+
+export type ImageFileDiff = {
+  path: string
+  fromReference: string
+  toReference: string
+  before: MediaBlob | null
+  after: MediaBlob | null
+  identical: boolean
+  error: string | null
+}
+
+/** 嵌套树节点（小仓库一次成树）。 */
+export type CommitTreeNode = {
+  name: string
+  path: string
+  kind: 'tree' | 'blob' | 'commit' | 'symlink' | string
+  mode: string
+  oid: string
+  sizeBytes: number | null
+  children: CommitTreeNode[]
+}
+
+/** 单层目录的直接子项（大目录懒加载）。 */
+export type CommitTreeEntry = {
+  name: string
+  path: string
+  kind: 'tree' | 'blob' | 'commit' | 'symlink' | string
+  mode: string
+  oid: string
+  sizeBytes: number | null
+  hasChildren: boolean
+}
+
+export type CommitTree = {
+  reference: string
+  oid: string
+  /** 非 partial 时是条目总数；partial 时只是后端有界扫描读到的下界（一定 > maxEntries）。 */
+  nodeCount: number
+  // true 表示条目过多，只带了「精确的根层单层列表」，前端必须走懒加载。
+  partial: boolean
+  maxEntries: number
+  roots: CommitTreeNode[]
+}
+
+export type RevisionFilePreview = {
+  path: string
+  reference: string
+  oid: string
+  sizeBytes: number
+  kind: 'text' | 'image' | 'binary' | 'too_large' | string
+  text: string | null
+  truncated: boolean
+  media: MediaBlob | null
+  error: string | null
+}

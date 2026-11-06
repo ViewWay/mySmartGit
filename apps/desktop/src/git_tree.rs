@@ -1,0 +1,824 @@
+//! 提交文件树浏览：按某个 ref 列出该版本的完整文件树，并支持大目录懒加载。
+//!
+//! 与 git_media.rs 一样，本模块不往 git.rs 里塞函数，只通过 `crate::git` 的公开接口调用 Git，
+//! 并且一律以参数数组启动进程、绝不拼接 shell。
+//!
+//! 路径安全：`git ls-tree` 默认会把非 ASCII 路径转成 C 风格八进制引号（`"\344\270\255..."`），
+//! 加 `-z` 后输出的是原始 UTF-8 且以 NUL 分隔，因此本模块所有解析都走 `-z`，
+//! 并同时带 `-c core.quotepath=false` 作为防御（两者叠加时 `-z` 已经足够，quotepath 只为
+//! 任何意外回退到非 `-z` 的路径兜底）。懒加载用 `<dir>/` 形式（必须带结尾斜杠，
+//! 不带斜杠时 git 会把目录本身当成一条记录返回）。
+
+use crate::git;
+use crate::git_media;
+use crate::models::{CommitTree, CommitTreeEntry, CommitTreeNode, RevisionFilePreview};
+use std::io::Read;
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+/// 一次 ls-tree 允许读入的条目上限：超过就只给根层，前端切懒加载。
+pub const DEFAULT_MAX_TREE_ENTRIES: usize = 5_000;
+pub const ABSOLUTE_MAX_TREE_ENTRIES: usize = 50_000;
+/// 文本预览默认读取上限（字节）。
+pub const DEFAULT_TEXT_PREVIEW_BYTES: u64 = 256 * 1024;
+/// 单次懒加载返回的子项上限。
+pub const MAX_CHILDREN_PER_DIRECTORY: usize = 20_000;
+/// 单条 ls-tree 记录（含路径）的字节预算：超过仍未遇到 NUL 分隔符就判定输出异常并停手，
+/// 于是读缓冲的大小与仓库规模无关。
+const MAX_RECORD_BYTES: usize = 64 * 1024;
+const READ_CHUNK_BYTES: usize = 16 * 1024;
+
+type FlatEntry = (String, String, String, Option<u64>, String);
+
+/// 解析单条 `ls-tree -z` 记录：`<mode> <type> <oid>`（`-l` 时再多一个宽度 8 的尺寸）+ `\t` + path。
+fn parse_record(record: &[u8]) -> Option<FlatEntry> {
+    let text = String::from_utf8_lossy(record);
+    let (metadata, path) = text.split_once('\t')?;
+    let mut fields = metadata.split_whitespace();
+    let mode = fields.next()?.to_string();
+    let kind = fields.next()?.to_string();
+    let oid = fields.next()?.to_string();
+    let size = match fields.next() {
+        Some("-") | None => None,
+        Some(value) => value.parse::<u64>().ok(),
+    };
+    Some((mode, kind, oid, size, path.to_string()))
+}
+
+/// 由 `ls-tree -z (-l)` 的原始输出解析全部记录。
+/// 生产路径走有界的 `scan_ls_tree`；这里保留全量解析，是为了让单测能直接喂一段
+/// 原始 git 输出来锁住「记录格式」契约（含 `-l` 的尺寸补齐与 `-z` 的原始 UTF-8 路径）。
+#[allow(dead_code)] // 仅单测直接调用
+fn parse_ls_tree(raw: &[u8]) -> Vec<FlatEntry> {
+    raw.split(|byte: &u8| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .filter_map(parse_record)
+        .collect()
+}
+
+/// 一次有界扫描的结果。
+struct TreeScan {
+    /// 至多 `cap` 条记录。
+    records: Vec<FlatEntry>,
+    /// 实际解析到的记录条数；被上限截断时这是「至少这么多」的下界。
+    scanned: usize,
+    /// true 表示条目数超过 cap（或单条记录长得离谱），records 不是全量。
+    saturated: bool,
+}
+
+/// 流式执行 `git ls-tree -z -l`，最多保留 `cap` 条记录：
+/// 一旦超限就直接 kill 子进程并返回，所以 `git ls-tree -r -t` 面对几十万文件的仓库
+/// 也**不会**把整份输出搬进内存（旧实现用 `Command::output()` 全量缓冲，是本轨道最大的有界性缺口）。
+/// stderr 直接丢弃：这里只信任 `--end-of-options` 之后已通过校验的参数，
+/// 而管道化的 stderr 在提前终止的读取路径上有写满阻塞的风险。
+fn scan_ls_tree(
+    root: &Path,
+    reference: &str,
+    extra: &[&str],
+    target: Option<&str>,
+    cap: usize,
+) -> Result<TreeScan, String> {
+    // 走 -z 拿原始字节，避免八进制引号路径；参数数组，绝不 shell。
+    let mut args: Vec<String> = vec![
+        "-c".into(),
+        "core.quotepath=false".into(),
+        "ls-tree".into(),
+        "-z".into(),
+        "-l".into(),
+    ];
+    args.extend(extra.iter().map(|item| (*item).to_string()));
+    args.push("--end-of-options".into());
+    args.push(reference.to_string());
+    if let Some(directory) = target {
+        args.push(directory.to_string());
+    }
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(root)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().map_err(|error| format!("无法启动 Git：{error}"))?;
+    let mut stdout = child.stdout.take().ok_or_else(|| "无法读取 Git 输出".to_string())?;
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut cursor = 0usize;
+    let mut records: Vec<FlatEntry> = Vec::new();
+    let mut scanned = 0usize;
+    let mut saturated = false;
+    let mut chunk = vec![0u8; READ_CHUNK_BYTES];
+    'scan: loop {
+        // 先把缓冲区里已经完整（带 NUL 结尾）的记录吃掉。
+        loop {
+            let rest = &buffer[cursor..];
+            let Some(offset) = rest.iter().position(|byte| *byte == 0) else { break };
+            let record = &rest[..offset];
+            cursor += offset + 1;
+            if record.is_empty() {
+                continue;
+            }
+            let Some(entry) = parse_record(record) else { continue };
+            scanned += 1;
+            if records.len() >= cap {
+                saturated = true;
+                break 'scan;
+            }
+            records.push(entry);
+        }
+        if cursor > 0 {
+            buffer.drain(0..cursor);
+            cursor = 0;
+        }
+        // 剩下的尾巴长得超过一条记录的预算：输出不正常，停手降级。
+        if buffer.len() > MAX_RECORD_BYTES {
+            saturated = true;
+            break;
+        }
+        match stdout.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("读取 ls-tree 输出失败：{error}"));
+            }
+        }
+    }
+    // EOF 后可能还剩一条没有 NUL 结尾的记录（git 正常都会带，这里只做兜底）。
+    if !saturated && cursor < buffer.len() {
+        if let Some(entry) = parse_record(&buffer[cursor..]) {
+            scanned += 1;
+            if records.len() >= cap {
+                saturated = true;
+            } else {
+                records.push(entry);
+            }
+        }
+    }
+    // 提前停手时这里负责终止 git；读干净了它就是 no-op。
+    let _ = child.kill();
+    let status = child.wait().map_err(|error| format!("等待 Git 结束失败：{error}"))?;
+    if !saturated && !status.success() {
+        return Err(format!("Git 命令执行失败（退出码 {}）", status.code().unwrap_or(-1)));
+    }
+    Ok(TreeScan { records, scanned, saturated })
+}
+
+fn entry_kind(kind: &str, mode: &str) -> String {
+    if kind == "commit" || mode == "160000" {
+        return "commit".to_string(); // gitlink（子模组）
+    }
+    if kind == "blob" && mode == "120000" {
+        return "symlink".to_string();
+    }
+    kind.to_string()
+}
+
+fn name_of(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+/// ref 是否可解析；空仓库（unborn HEAD）时明确失败，交由调用方判定。
+fn reference_exists(root: &Path, reference: &str) -> bool {
+    git::git_output_owned(
+        root,
+        &["rev-parse".into(), "--verify".into(), "--end-of-options".into(), reference.to_string()],
+    )
+    .is_ok()
+}
+
+fn validated_reference(reference: &str) -> Result<String, String> {
+    git_media::validated_reference(reference)
+}
+
+fn validated_path(path: &str) -> Result<String, String> {
+    git_media::validated_path(path)
+}
+
+/// 目录参数：允许空串（仓库根），并要求以 `dir/` 形式交给 ls-tree。
+fn validated_directory(path: &str) -> Result<String, String> {
+    git_media::validated_directory_path(path)
+}
+
+/// 目录在前、同类型按名称不区分大小写——三处排序（成树、单层列表、懒加载）共用这一条规则，
+/// 免得同一个仓库在不同模式下顺序不一致。
+fn browse_order(left_kind: &str, left_name: &str, right_kind: &str, right_name: &str) -> std::cmp::Ordering {
+    (right_kind == "tree")
+        .cmp(&(left_kind == "tree"))
+        .then_with(|| left_name.to_lowercase().cmp(&right_name.to_lowercase()))
+}
+
+fn sort_children(children: &mut [CommitTreeNode]) {
+    children.sort_by(|left, right| browse_order(&left.kind, &left.name, &right.kind, &right.name));
+    children.iter_mut().for_each(|child| sort_children(&mut child.children));
+}
+
+/// 由 `ls-tree -r -t` 的扁平列表构建嵌套树。目录节点由子项路径反推，父子关系明确。
+fn build_nested(entries: Vec<FlatEntry>) -> Vec<CommitTreeNode> {
+    let mut roots: Vec<CommitTreeNode> = Vec::new();
+    for (mode, kind, oid, size, path) in entries {
+        let kind = entry_kind(&kind, &mode);
+        let segments: Vec<&str> = path.split('/').collect();
+        let mut level = &mut roots;
+        let mut walked = String::new();
+        // 中间段补出目录节点；叶子段带真实 oid/size。
+        for (depth, segment) in segments.iter().enumerate() {
+            let is_leaf = depth + 1 == segments.len();
+            if walked.is_empty() {
+                walked = segment.to_string();
+            } else {
+                walked = format!("{walked}/{segment}");
+            }
+            let existing = level.iter_mut().position(|node| node.path == walked);
+            if let Some(index) = existing {
+                let node = &mut level[index];
+                if is_leaf {
+                    node.kind = kind.clone();
+                    node.mode = mode.clone();
+                    node.oid = oid.clone();
+                    node.size_bytes = size;
+                }
+                level = &mut node.children;
+            } else {
+                let node = CommitTreeNode {
+                    name: (*segment).to_string(),
+                    path: walked.clone(),
+                    kind: if is_leaf { kind.clone() } else { "tree".to_string() },
+                    mode: if is_leaf { mode.clone() } else { "040000".to_string() },
+                    oid: if is_leaf { oid.clone() } else { String::new() },
+                    size_bytes: if is_leaf { size } else { None },
+                    children: Vec::new(),
+                };
+                level.push(node);
+                level = &mut level.last_mut().expect("just pushed").children;
+            }
+        }
+    }
+    sort_children(&mut roots);
+    roots
+}
+
+/// 某个目录的直接子项（非递归 ls-tree），带条目上限的有界读取。
+/// 结尾斜杠必须补上：不带斜杠时 git 会把目录自身当成一条记录返回。
+/// 第二个返回值表示该目录子项多于上限（前端仍可用，只是列表被截断）。
+fn direct_children(root: &Path, reference: &str, directory: &str) -> Result<(Vec<CommitTreeEntry>, bool), String> {
+    let target = (!directory.is_empty()).then(|| format!("{directory}/"));
+    let scan = scan_ls_tree(root, reference, &[], target.as_deref(), MAX_CHILDREN_PER_DIRECTORY)?;
+    let mut children: Vec<CommitTreeEntry> = scan
+        .records
+        .into_iter()
+        .map(|(mode, kind, oid, size, path)| {
+            let kind = entry_kind(&kind, &mode);
+            let has_children = kind == "tree";
+            CommitTreeEntry {
+                name: name_of(&path),
+                path,
+                kind,
+                mode,
+                oid,
+                size_bytes: size,
+                has_children,
+            }
+        })
+        .collect();
+    children.sort_by(|left, right| browse_order(&left.kind, &left.name, &right.kind, &right.name));
+    Ok((children, scan.saturated))
+}
+
+fn entry_to_node(entry: CommitTreeEntry) -> CommitTreeNode {
+    CommitTreeNode {
+        name: entry.name,
+        path: entry.path,
+        kind: entry.kind,
+        mode: entry.mode,
+        oid: entry.oid,
+        size_bytes: entry.size_bytes,
+        children: Vec::new(),
+    }
+}
+
+/// 按 ref 组树。条目超过 `max_entries` 时只返回**精确的根层单层列表**并置 `partial = true`，
+/// 前端改用 `load_commit_tree_children` 懒加载，绝不一次渲染几万个节点。
+/// 注意降级时不再复用递归扫描的结果当根层：递归扫描被上限截断时，
+/// 排在某个大目录之后的根级文件根本没被读到，那种「根层」是残缺的。
+pub fn load_commit_tree(
+    repository_path: &str,
+    reference: &str,
+    max_entries: Option<usize>,
+) -> Result<CommitTree, String> {
+    let root = git::repository_root(repository_path)?;
+    let reference = validated_reference(reference)?;
+    let limit = max_entries
+        .unwrap_or(DEFAULT_MAX_TREE_ENTRIES)
+        .clamp(1, ABSOLUTE_MAX_TREE_ENTRIES);
+    if !reference_exists(&root, &reference) {
+        // 空仓库：没有提交，树是空的，不该报错。
+        if !reference.eq_ignore_ascii_case("HEAD") {
+            return Err(format!("无效的引用：{reference}"));
+        }
+        return Ok(CommitTree {
+            reference,
+            oid: String::new(),
+            node_count: 0,
+            partial: false,
+            max_entries: limit,
+            roots: Vec::new(),
+        });
+    }
+    let tree_oid = git::git_output(&root, &["rev-parse", &format!("{reference}^{{tree}}")])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    // 有界扫描：最多读 limit 条记录，第 limit+1 条一出现就把 git 掐掉。
+    let scan = scan_ls_tree(&root, &reference, &["-r", "-t"], None, limit)?;
+    let (partial, node_count, roots) = if scan.saturated {
+        let (top, _) = direct_children(&root, &reference, "")?;
+        (true, scan.scanned, top.into_iter().map(entry_to_node).collect())
+    } else {
+        (false, scan.scanned, build_nested(scan.records))
+    };
+    Ok(CommitTree { reference, oid: tree_oid, node_count, partial, max_entries: limit, roots })
+}
+
+/// 懒加载某个目录的直接子项；`directory_path` 为空串表示仓库根。
+/// 子项多于 `MAX_CHILDREN_PER_DIRECTORY` 时返回前这么多条（有界优先于完整），
+/// 前端以「可视行数」提示呈现，不会因此把几万个节点渲染出来。
+pub fn load_commit_tree_children(
+    repository_path: &str,
+    reference: &str,
+    directory_path: &str,
+) -> Result<Vec<CommitTreeEntry>, String> {
+    let root = git::repository_root(repository_path)?;
+    let reference = validated_reference(reference)?;
+    let directory = validated_directory(directory_path)?;
+    if !reference_exists(&root, &reference) {
+        // 空仓库（HEAD 还不存在）给空列表；其它无法解析的引用照旧报错。
+        return if reference.eq_ignore_ascii_case("HEAD") {
+            Ok(Vec::new())
+        } else {
+            Err(format!("无效的引用：{reference}"))
+        };
+    }
+    let (children, _truncated) = direct_children(&root, &reference, &directory)?;
+    Ok(children)
+}
+
+/// 按 ref 打开某个文件的预览：文本截断返回，图片交给 git_media。
+/// 同样先查 `cat-file -s`，超限不整体读入内存。
+pub fn load_revision_file_preview(
+    repository_path: &str,
+    reference: &str,
+    file_path: &str,
+    max_text_bytes: Option<u64>,
+    request_id: Option<&str>,
+) -> Result<RevisionFilePreview, String> {
+    let root = git::repository_root(repository_path)?;
+    let reference = validated_reference(reference)?;
+    let path = validated_path(file_path)?;
+    let budget = max_text_bytes.unwrap_or(DEFAULT_TEXT_PREVIEW_BYTES).clamp(1024, 4 * 1024 * 1024);
+    git_media::ensure_not_cancelled(request_id)?;
+
+    if git_media::is_media_candidate(&path) {
+        // 图片/SVG：直接复用媒体模块，它有双重上限缓存与取消检查。
+        let media = git_media::describe_revision_blob(repository_path, &reference, &path, request_id)?;
+        let kind = if media.previewable {
+            "image"
+        } else if media.too_large {
+            "too_large"
+        } else {
+            "binary"
+        }
+        .to_string();
+        return Ok(RevisionFilePreview {
+            path,
+            reference,
+            oid: media.oid.clone(),
+            size_bytes: media.size_bytes,
+            kind,
+            text: None,
+            truncated: media.too_large,
+            media: Some(media),
+            error: None,
+        });
+    }
+
+    let oid = git_media::resolve_blob_oid(&root, &reference, &path)?
+        .ok_or_else(|| format!("{reference}:{path} 在该引用下不存在"))?;
+    git_media::ensure_not_cancelled(request_id)?;
+    let size_bytes = git_media::blob_size(&root, &oid)?;
+    let read_budget = size_bytes.min(budget);
+    let (bytes, truncated) = git_media::blob_bytes_for_text(&root, &oid, read_budget)?;
+    // NUL 出现在前 8 KiB 内即判定为二进制，与 git 的经验规则一致。
+    let probe = &bytes[..bytes.len().min(8 * 1024)];
+    if probe.contains(&0u8) {
+        return Ok(RevisionFilePreview {
+            path,
+            reference,
+            oid,
+            size_bytes,
+            kind: "binary".to_string(),
+            text: None,
+            truncated,
+            media: None,
+            error: Some("二进制文件，不提供文本预览".to_string()),
+        });
+    }
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    Ok(RevisionFilePreview {
+        path,
+        reference,
+        oid,
+        size_bytes,
+        kind: "text".to_string(),
+        truncated: truncated || size_bytes > read_budget,
+        text: Some(text),
+        media: None,
+        error: None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    struct TestRepository(PathBuf);
+
+    impl Drop for TestRepository {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn repository() -> TestRepository {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos();
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("branchline-tree-{}-{nanos}-{seq}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create dir");
+        let path = dir.to_string_lossy().to_string();
+        git::git_output(Path::new(&path), &["init", "-b", "main"]).expect("init");
+        git::git_output(Path::new(&path), &["config", "user.name", "Tree Test"]).expect("name");
+        git::git_output(Path::new(&path), &["config", "user.email", "tree@example.com"]).expect("email");
+        TestRepository(dir)
+    }
+
+    fn commit(root: &Path, message: &str) -> String {
+        git::git_output(root, &["add", "-A"]).expect("add");
+        git::git_output(root, &["commit", "-m", message]).expect("commit");
+        git::git_output(root, &["rev-parse", "HEAD"]).expect("head").trim().to_string()
+    }
+
+    /// 一棵带中文目录名、空格文件名、多层嵌套的小树。
+    fn seed(repository: &TestRepository) -> String {
+        let root = &repository.0;
+        fs::write(root.join("README.md"), "# branchline\n").expect("write readme");
+        fs::create_dir_all(root.join("图片 资产/图标")).expect("mkdir");
+        fs::create_dir_all(root.join("apps/desktop/src")).expect("mkdir");
+        fs::write(root.join("图片 资产/图标/我的 logo.svg"), "<svg viewBox=\"0 0 4 4\"></svg>").expect("write svg");
+        fs::write(root.join("图片 资产/说明.txt"), "中文内容\n").expect("write txt");
+        fs::write(root.join("apps/desktop/src/main.rs"), "fn main() {}\n").expect("write main");
+        fs::write(root.join("apps/desktop/src/中文.rs"), "// 中文文件名\n").expect("write chinese rs");
+        fs::write(root.join("apps/desktop/config.json"), "{}").expect("write json");
+        commit(root, "组树素材")
+    }
+
+    #[test]
+    fn parses_ls_tree_records_with_padded_sizes_and_raw_utf8_paths() {
+        // 真实 git 输出的两条记录：tree 的尺寸字段是 "-"，blob 是右对齐宽度 8。
+        let raw = "100644 blob e69de29bb2d1d6434b8b29ae775ad8c2e48c5391       42\t图片 资产/说明.txt\0\
+                   040000 tree a35d4e21984d9df6eb81bddbf680fbff858982e3        -\t图片 资产\0";
+        let entries = parse_ls_tree(raw.as_bytes());
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].4, "图片 资产/说明.txt");
+        assert_eq!(entries[0].3, Some(42));
+        assert_eq!(entries[1].1, "tree");
+        assert_eq!(entries[1].3, None, "目录不该有尺寸");
+        assert_eq!(entries[1].0, "040000");
+    }
+
+    #[test]
+    fn quoted_paths_are_not_silently_mangled() {
+        // 我们用 -z，git 不会输出 C 风格八进制引号；这里记录「若真出现引号形式，
+        // 解析器原样保留、不做任何猜测解码」的契约，避免以后误改。
+        let oid = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+        let raw = format!("100644 blob {oid}        1\t\"\\344\\270\\255\"\0");
+        let entries = parse_ls_tree(raw.as_bytes());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].4, "\"\\344\\270\\255\"");
+        assert_eq!(entries[0].3, Some(1));
+    }
+
+    #[test]
+    fn builds_nested_tree_with_correct_parent_child_for_non_ascii_paths() {
+        let repository = repository();
+        let head = seed(&repository);
+        let tree = load_commit_tree(&repository.0.to_string_lossy(), &head, None).expect("build tree");
+        assert_eq!(tree.reference, head);
+        assert!(!tree.partial, "小仓库应一次成树");
+        assert!(tree.node_count >= 8);
+        assert_eq!(tree
+            .roots
+            .iter()
+            .filter(|node| node.kind == "tree")
+            .count(), 2, "根层应有 apps 与 图片 资产 两个目录");
+
+        let images = tree.roots.iter().find(|node| node.name == "图片 资产").expect("chinese root dir");
+        assert_eq!(images.kind, "tree");
+        assert_eq!(images.path, "图片 资产");
+        let inner = images.children.iter().find(|node| node.name == "图标").expect("nested dir");
+        assert_eq!(inner.path, "图片 资产/图标", "父路径必须按 / 逐级拼接");
+        let logo = inner.children.iter().find(|node| node.name == "我的 logo.svg").expect("leaf");
+        assert_eq!(logo.kind, "blob");
+        assert_eq!(logo.path, "图片 资产/图标/我的 logo.svg");
+        assert_eq!(logo.mode, "100644");
+        let note = images.children.iter().find(|node| node.name == "说明.txt").expect("sibling file");
+        assert_eq!(note.size_bytes, Some("中文内容\n".len() as u64));
+
+        // 深层嵌套：apps/desktop/src 逐级可寻，且 `-t` 带回来的目录自身记录应保留真实 oid。
+        let apps = tree.roots.iter().find(|node| node.name == "apps").expect("apps");
+        let desktop = apps.children.iter().find(|node| node.name == "desktop").expect("desktop");
+        assert_eq!(desktop.kind, "tree");
+        assert_eq!(desktop.oid.len(), 40, "`-t` 会带出目录自身的 tree 记录");
+        assert!(desktop.oid.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(desktop.mode, "040000");
+        let src = desktop.children.iter().find(|node| node.name == "src").expect("src");
+        assert_eq!(src.path, "apps/desktop/src");
+        assert_eq!(src.children.iter().filter(|node| node.kind == "blob").count(), 2);
+        // 目录在前、名称不区分大小写排序。
+        let names: Vec<&str> = src.children.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, vec!["main.rs", "中文.rs"], "排序应稳定（main < 中文）");
+    }
+
+    #[test]
+    fn lazy_children_listing_is_exact_per_directory_and_root() {
+        let repository = repository();
+        let head = seed(&repository);
+        let path = repository.0.to_string_lossy().to_string();
+
+        let top = load_commit_tree_children(&path, &head, "").expect("root children");
+        let top_names: Vec<&str> = top.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(top_names, vec!["apps", "图片 资产", "README.md"], "目录在前，文件在后");
+        assert!(top.iter().all(|node| node.has_children == (node.kind == "tree")));
+
+        let nested = load_commit_tree_children(&path, &head, "图片 资产").expect("nested");
+        assert_eq!(nested.len(), 2);
+        assert_eq!(nested[0].path, "图片 资产/图标", "懒加载返回完整路径而非仅名字");
+        assert_eq!(nested[1].path, "图片 资产/说明.txt");
+
+        // 只有一层之差的目录也必须精确（不带结尾斜杠的语义陷阱已规避）。
+        let deep = load_commit_tree_children(&path, &head, "apps/desktop").expect("deep");
+        assert_eq!(deep.len(), 2, "src 目录 + config.json");
+        assert_eq!(deep[0].name, "src");
+        assert_eq!(deep[1].name, "config.json");
+        assert_eq!(deep[1].size_bytes, Some(2));
+
+        let chinese_leaf = load_commit_tree_children(&path, &head, "apps/desktop/src").expect("leaf dir");
+        assert!(chinese_leaf.iter().any(|node| node.name == "中文.rs"));
+
+        // 空白目录 / 不存在的目录：git 返回空输出，不报错。
+        let missing = load_commit_tree_children(&path, &head, "no/such/dir").expect("missing dir");
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn oversized_tree_returns_only_roots_and_flags_partial() {
+        let repository = repository();
+        seed(&repository);
+        // 造 40 个文件，压到 max_entries=8 以下触发懒加载分支。
+        fs::create_dir_all(repository.0.join("bulk")).expect("mkdir bulk");
+        for index in 0..40 {
+            fs::write(repository.0.join(format!("bulk/f{index}.txt")), format!("{index}")).expect("bulk");
+        }
+        commit(&repository.0, "批量文件");
+        let path = repository.0.to_string_lossy().to_string();
+        let tree = load_commit_tree(&path, "HEAD", Some(8)).expect("partial tree");
+        assert!(tree.partial, "超过 max_entries 必须降级为根层");
+        assert!(tree.node_count > 8);
+        assert!(tree.roots.iter().all(|node| node.children.is_empty() || node.kind != "tree"));
+        assert!(tree.roots.iter().any(|node| node.name == "bulk"));
+        // 降级后仍可懒加载。
+        let bulk = load_commit_tree_children(&path, "HEAD", "bulk").expect("bulk children");
+        assert_eq!(bulk.len(), 40);
+        // 上限本身被夹住，不接受荒谬值。
+        let clamped = load_commit_tree(&path, "HEAD", Some(0)).expect("clamped");
+        assert_eq!(clamped.max_entries, 1);
+    }
+
+    #[test]
+    fn previews_text_image_and_binary_sides_of_a_revision() {
+        let repository = repository();
+        seed(&repository);
+        let path = repository.0.to_string_lossy().to_string();
+
+        let text = load_revision_file_preview(&path, "HEAD", "apps/desktop/src/main.rs", None, None).expect("text");
+        assert_eq!(text.kind, "text");
+        assert_eq!(text.text.as_deref(), Some("fn main() {}\n"));
+        assert!(!text.truncated);
+        assert!(text.media.is_none());
+
+        let image = load_revision_file_preview(&path, "HEAD", "图片 资产/图标/我的 logo.svg", None, None).expect("svg");
+        assert_eq!(image.kind, "image");
+        let media = image.media.clone().expect("svg media");
+        assert_eq!(media.mime, "image/svg+xml");
+        assert_eq!((media.width, media.height), (Some(4), Some(4)));
+        assert!(media.data_base64.is_some());
+
+        // 真二进制（含 NUL）走 binary 分支，不回传文本。
+        let mut bytes: Vec<u8> = vec![0x00, 0x01, 0x02, 0xff];
+        bytes.resize(4_096, 0x00);
+        fs::write(repository.0.join("blob.bin"), &bytes).expect("write bin");
+        commit(&repository.0, "加二进制");
+        let binary = load_revision_file_preview(&path, "HEAD", "blob.bin", None, None).expect("binary");
+        assert_eq!(binary.kind, "binary");
+        assert!(binary.text.is_none());
+        assert!(binary.error.is_some());
+
+        // 文本超预算：截断而不是整体交给前端。
+        let long = "x".repeat(9_000);
+        fs::write(repository.0.join("long.txt"), &long).expect("write long");
+        commit(&repository.0, "加长文本");
+        let clipped = load_revision_file_preview(&path, "HEAD", "long.txt", Some(4_096), None).expect("clip");
+        assert_eq!(clipped.kind, "text");
+        assert!(clipped.truncated);
+        assert_eq!(clipped.text.as_deref().map(str::len), Some(4_096));
+        assert_eq!(clipped.size_bytes, 9_000);
+
+        // 不存在的文件明确报错，不 panic。
+        assert!(load_revision_file_preview(&path, "HEAD", "nope.txt", None, None).is_err());
+    }
+
+    #[test]
+    fn empty_repository_and_invalid_reference_behave_predictably() {
+        let repository = repository();
+        let path = repository.0.to_string_lossy().to_string();
+        // 尚无任何提交：HEAD 不存在，返回空树而不是失败。
+        let tree = load_commit_tree(&path, "HEAD", None).expect("empty tree");
+        assert_eq!(tree.node_count, 0);
+        assert!(tree.roots.is_empty());
+        assert!(!tree.partial);
+        assert!(load_commit_tree_children(&path, "HEAD", "").expect("no children").is_empty());
+        // 显式给出的非法引用要报错。
+        assert!(load_commit_tree(&path, "definitely/not/a/ref", None).is_err());
+    }
+
+    // --- 收尾补齐：有界扫描、降级根层的完整性、目录名校验的宽严适度、取消闸 ---
+
+    #[test]
+    fn ls_tree_scan_stops_at_the_cap_instead_of_buffering_the_whole_output() {
+        let repository = repository();
+        for index in 0..50 {
+            fs::write(repository.0.join(format!("f{index}.txt")), "x").expect("write");
+        }
+        commit(&repository.0, "五十个文件");
+        let root = &repository.0;
+        // 只给 4 的预算：第 5 条一出现就掐断 git，缓冲区里最多留 4 条。
+        let scan = scan_ls_tree(root, "HEAD", &["-r", "-t"], None, 4).expect("bounded scan");
+        assert_eq!(scan.records.len(), 4, "缓冲区不得超过 cap");
+        assert!(scan.saturated);
+        assert!(scan.scanned >= 5, "被截断时 scanned 要如实给出下界：{}", scan.scanned);
+        // 预算足够时是全量、精确、且未标记截断。
+        let full = scan_ls_tree(root, "HEAD", &["-r", "-t"], None, 500).expect("full scan");
+        assert!(!full.saturated);
+        assert_eq!(full.scanned, 50);
+        assert_eq!(full.records.len(), 50);
+        // 单层列表同样有预算，且路径是原始 UTF-8（没有八进制引号）。
+        let chinese = {
+            fs::write(root.join("中文 目录.txt"), "x").expect("write chinese");
+            commit(root, "中文名");
+            scan_ls_tree(root, "HEAD", &[], None, 500).expect("root scan")
+        };
+        assert!(chinese.records.iter().any(|(_, _, _, _, path)| path == "中文 目录.txt"));
+        assert!(!chinese.records.iter().any(|(_, _, _, _, path)| path.contains('\\')));
+    }
+
+    #[test]
+    fn partial_tree_roots_come_from_the_exact_root_listing() {
+        let repository = repository();
+        let root = &repository.0;
+        fs::write(root.join("README.md"), "# hi\n").expect("write readme");
+        fs::create_dir_all(root.join("bulk")).expect("mkdir bulk");
+        for index in 0..40 {
+            fs::write(root.join(format!("bulk/f{index}.txt")), "x").expect("write bulk");
+        }
+        // 这两个根级文件在递归顺序里排在 bulk/ 之后：截断扫描根本读不到它们。
+        fs::write(root.join("zzz.png"), b"z\n").expect("write zzz");
+        fs::write(root.join("图片.png"), b"y\n").expect("write chinese");
+        commit(root, "大批量");
+        let path = root.to_string_lossy().to_string();
+        let tree = load_commit_tree(&path, "HEAD", Some(8)).expect("partial tree");
+        assert!(tree.partial);
+        assert!(tree.node_count > 8, "降级时 node_count 是下界：{}", tree.node_count);
+        assert!(tree.roots.iter().all(|node| node.children.is_empty()), "降级根层不带半成品子树");
+        let names: Vec<&str> = tree.roots.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["bulk", "README.md", "zzz.png", "图片.png"],
+            "根层必须完整（目录在前），且不因递归截断而丢尾巴"
+        );
+        // 目录 oid 仍是真实的 tree oid，可供前端直接展开。
+        let bulk = tree.roots.iter().find(|node| node.name == "bulk").expect("bulk");
+        assert_eq!(bulk.kind, "tree");
+        assert_eq!(bulk.oid.len(), 40, "单层列表要给出 tree oid");
+        // 降级后每一层都能懒加载出来。
+        let bulk_children = load_commit_tree_children(&path, "HEAD", "bulk").expect("bulk children");
+        assert_eq!(bulk_children.len(), 40);
+    }
+
+    #[test]
+    fn directory_names_containing_dots_are_still_browsable() {
+        let repository = repository();
+        let root = &repository.0;
+        fs::create_dir_all(root.join("a..b")).expect("mkdir dots");
+        fs::write(root.join("a..b/c.png"), b"png-ish\n").expect("write");
+        commit(root, "带点的目录名");
+        let path = root.to_string_lossy().to_string();
+        let children = load_commit_tree_children(&path, "HEAD", "a..b").expect("dots dir");
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].path, "a..b/c.png");
+        // 各种写法等价：结尾斜杠、反斜杠、前后空白。
+        assert_eq!(load_commit_tree_children(&path, "HEAD", "a..b/").expect("slash").len(), 1);
+        assert_eq!(load_commit_tree_children(&path, "HEAD", " a..b\\ ").expect("backslash").len(), 1);
+        // 真正的穿越照旧拒绝，且拒在校验层。
+        assert!(load_commit_tree_children(&path, "HEAD", "..").is_err());
+        assert!(load_commit_tree_children(&path, "HEAD", "a/../b").is_err());
+        assert!(load_commit_tree_children(&path, "HEAD", "../..").is_err());
+    }
+
+    #[test]
+    fn the_text_preview_honours_the_shared_cancellation_flag() {
+        let repository = repository();
+        seed(&repository);
+        let path = repository.0.to_string_lossy().to_string();
+        crate::git_media::cancel_media_request("tree-cancel-1");
+        let outcome = load_revision_file_preview(&path, "HEAD", "apps/desktop/src/main.rs", None, Some("tree-cancel-1"));
+        let Err(message) = outcome else {
+            panic!("已取消的请求不该读到内容");
+        };
+        assert!(message.contains("取消"));
+        // 标记只消费一次：同一 id 再来一次应当正常读到内容。
+        let retry = load_revision_file_preview(&path, "HEAD", "apps/desktop/src/main.rs", None, Some("tree-cancel-1")).expect("retry");
+        assert_eq!(retry.kind, "text");
+        // 取消不该污染不带 request_id 的常规调用。
+        assert!(load_revision_file_preview(&path, "HEAD", "apps/desktop/src/main.rs", None, None).is_ok());
+    }
+
+    #[test]
+    fn scan_rejects_an_unparsable_tail_without_panicking() {
+        // 极端输入：没有 tab 的记录被丢弃，scanned 不计数，解析器不 panic。
+        let raw = b"garbage-without-tab\0100644 blob abc\tok.txt\0";
+        let entries = parse_ls_tree(raw);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].4, "ok.txt");
+        assert_eq!(parse_ls_tree(b""), Vec::new());
+        assert_eq!(parse_ls_tree(b"\0\0\0"), Vec::new());
+    }
+
+    #[test]
+    fn relative_and_non_ascii_refs_work_for_the_tree_and_preview_paths() {
+        let repository = repository();
+        seed(&repository);
+        let root = &repository.0;
+        git::git_output(root, &["branch", "中文分支", "HEAD"]).expect("branch");
+        git::git_output(root, &["tag", "v1.0"]).expect("tag");
+        fs::write(root.join("apps/desktop/src/later.rs"), "fn later() {}\n").expect("write");
+        commit(root, "第二个提交");
+        let path = root.to_string_lossy().to_string();
+        // HEAD~1 是「和上一个提交比」的入口写法，过去会被引用白名单直接判非法。
+        let previous = load_commit_tree(&path, "HEAD~1", None).expect("HEAD~1 tree");
+        let current = load_commit_tree(&path, "HEAD", None).expect("HEAD tree");
+        assert_eq!(current.node_count, previous.node_count + 1, "新提交多了一个文件");
+        // 中文分支名与标签名同样是合法 ref。
+        assert_eq!(load_commit_tree(&path, "中文分支", None).expect("chinese branch").node_count, previous.node_count);
+        assert_eq!(load_commit_tree(&path, "v1.0", None).expect("tag").node_count, previous.node_count);
+        assert_eq!(
+            load_commit_tree_children(&path, "v1.0", "apps/desktop").expect("tag children").len(),
+            2,
+            "懒加载也要认得这些 ref"
+        );
+        // 相对写法 + 中文路径混在一起时预览照常。
+        let preview = load_revision_file_preview(&path, "v1.0", "图片 资产/说明.txt", None, None).expect("preview");
+        assert_eq!(preview.kind, "text");
+        assert_eq!(preview.text.as_deref(), Some("中文内容\n"));
+    }
+
+    #[test]
+    fn rejects_option_injection_and_path_traversal_in_arguments() {
+        let repository = repository();
+        seed(&repository);
+        let path = repository.0.to_string_lossy().to_string();
+        assert!(load_commit_tree(&path, "--output=/tmp/pwn", None).is_err());
+        assert!(load_commit_tree_children(&path, "HEAD", "../outside").is_err());
+        assert!(load_commit_tree_children(&path, "HEAD", "-C").is_err());
+        assert!(load_revision_file_preview(&path, "HEAD", "../../etc/passwd", None, None).is_err());
+        assert!(load_revision_file_preview(&path, "HEAD", "", None, None).is_err());
+    }
+}

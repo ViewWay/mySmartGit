@@ -453,3 +453,95 @@ export async function advanceRepositoryBisect(repositoryPath: string) {
 export async function resetRepositoryBisect(repositoryPath: string) {
   return invoke<RepositorySnapshot>('reset_repository_bisect', { repositoryPath })
 }
+
+// ---------------------------------------------------------------------------
+// W2-8 图片/SVG 差异预览 与 提交文件树浏览（后端 git_media.rs / git_tree.rs）
+// 类型走 inline import()，与既有写法一致，避免改动文件头部的聚合 import。
+// ---------------------------------------------------------------------------
+
+export type {
+  CommitTree,
+  CommitTreeEntry,
+  CommitTreeNode,
+  ImageFileDiff,
+  MediaBlob,
+  RevisionFilePreview,
+} from '@branchline/git-models'
+
+/** 与后端 git_media.rs 的预览阈值保持一致（4 MiB）。 */
+export const MEDIA_PREVIEW_MAX_BYTES = 4 * 1024 * 1024
+
+/**
+ * 读取某个 ref 下一个媒体 blob（图片/SVG）。
+ * `requestId` 用于协作式取消：切换文件/关闭窗口时调用 cancelMediaPreview 传同一个 id。
+ */
+export async function loadMediaBlob(repositoryPath: string, reference: string, filePath: string, requestId?: string) {
+  return invoke<import('@branchline/git-models').MediaBlob>('load_media_blob', {
+    repositoryPath,
+    reference,
+    filePath,
+    requestId: requestId ?? null,
+  })
+}
+
+/** 差异配对：变更前 / 变更后两张图；新增侧或删除侧可能为 null。 */
+export async function loadImageFileDiff(
+  repositoryPath: string,
+  fromReference: string,
+  toReference: string,
+  filePath: string,
+  requestId?: string,
+) {
+  return invoke<import('@branchline/git-models').ImageFileDiff>('load_image_file_diff', {
+    repositoryPath,
+    fromReference,
+    toReference,
+    filePath,
+    requestId: requestId ?? null,
+  })
+}
+
+/** 取消进行中的媒体读取（按 requestId）。 */
+export async function cancelMediaPreview(requestId: string) {
+  return invoke<void>('cancel_media_preview', { requestId })
+}
+
+/** 按 ref 组出该版本的完整文件树；`partial` 为 true 时须改用懒加载。 */
+export async function loadCommitTree(repositoryPath: string, reference: string, maxEntries?: number) {
+  return invoke<import('@branchline/git-models').CommitTree>('load_commit_tree', {
+    repositoryPath,
+    reference,
+    maxEntries: maxEntries ?? null,
+  })
+}
+
+/** 懒加载某个目录的直接子项；directoryPath 传空串表示仓库根。 */
+export async function loadCommitTreeChildren(repositoryPath: string, reference: string, directoryPath: string) {
+  return invoke<import('@branchline/git-models').CommitTreeEntry[]>('load_commit_tree_children', {
+    repositoryPath,
+    reference,
+    directoryPath,
+  })
+}
+
+/** 按 ref 预览某个文件：文本截断返回，图片交给 media 字段。 */
+export async function loadRevisionFilePreview(
+  repositoryPath: string,
+  reference: string,
+  filePath: string,
+  maxTextBytes?: number,
+  requestId?: string,
+) {
+  return invoke<import('@branchline/git-models').RevisionFilePreview>('load_revision_file_preview', {
+    repositoryPath,
+    reference,
+    filePath,
+    maxTextBytes: maxTextBytes ?? null,
+    requestId: requestId ?? null,
+  })
+}
+
+/** 无法预览时，导出到临时目录并用系统默认程序打开。 */
+export async function openRevisionFileExternally(repositoryPath: string, reference: string, filePath: string) {
+  return invoke<string>('open_revision_file_externally', { repositoryPath, reference, filePath })
+}

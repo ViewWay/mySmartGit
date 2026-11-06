@@ -400,3 +400,105 @@ pub struct BisectStatus {
     pub bad_term: String,
     pub good_term: String,
 }
+
+// ---------------------------------------------------------------------------
+// W2-8 图片/SVG 差异预览 与 提交文件树浏览（仅追加，见 git_media.rs / git_tree.rs）
+// ---------------------------------------------------------------------------
+
+/// 单个 blob 的媒体描述。`data_base64` 只在字节数不超过预览阈值时填充，
+/// 超阈值走「仅元数据」降级（`too_large = true`、`data_base64 = None`）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaBlob {
+    pub path: String,
+    /// 请求使用的引用原样回填，便于前端展示「变更前 / 变更后」标签
+    pub reference: String,
+    pub oid: String,
+    /// 推断出的 MIME，例如 image/png、image/svg+xml
+    pub mime: String,
+    pub extension: String,
+    /// 前端渲染策略：image（位图，data URL）、svg（同样走 data URL，但允许透明棋盘格）、
+    /// other（无法预览）
+    pub preview_kind: String,
+    pub size_bytes: u64,
+    /// 解析失败时为 null，绝不猜测。
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub previewable: bool,
+    pub too_large: bool,
+    pub data_base64: Option<String>,
+    /// 命中内容寻址缓存时为 true，用于前端调试与性能观测。
+    pub cached: bool,
+}
+
+/// 差异场景的一对图片：新增文件时 `before` 为 None，删除文件时 `after` 为 None。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageFileDiff {
+    pub path: String,
+    pub from_reference: String,
+    pub to_reference: String,
+    pub before: Option<MediaBlob>,
+    pub after: Option<MediaBlob>,
+    /// 两侧 oid 相同（例如仅 mode 变化）时为 true，前端可提示「无像素差异」。
+    pub identical: bool,
+    /// 取消或读取失败时的原因，None 表示流程正常（不代表两侧都存在 blob）。
+    pub error: Option<String>,
+}
+
+/// 提交文件树的节点（嵌套结构，一次性构建小树用）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitTreeNode {
+    pub name: String,
+    pub path: String,
+    /// tree / blob / symlink / commit（gitlink 子模组）
+    pub kind: String,
+    pub mode: String,
+    pub oid: String,
+    pub size_bytes: Option<u64>,
+    pub children: Vec<CommitTreeNode>,
+}
+
+/// 单层目录的直接子项，用于大目录懒加载。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitTreeEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub mode: String,
+    pub oid: String,
+    pub size_bytes: Option<u64>,
+    pub has_children: bool,
+}
+
+/// `load_commit_tree` 的返回：`partial = true` 时只带了**精确的根层单层列表**，前端改用懒加载。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitTree {
+    pub reference: String,
+    pub oid: String,
+    /// 非 partial 时是该 ref 下的条目总数；
+    /// partial 时是本次有界扫描读到的条数下界（一定 > max_entries），不是总数。
+    pub node_count: usize,
+    pub partial: bool,
+    pub max_entries: usize,
+    pub roots: Vec<CommitTreeNode>,
+}
+
+/// 按 ref 打开某个文件的预览结果：文本截断返回，图片委托给 MediaBlob。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionFilePreview {
+    pub path: String,
+    pub reference: String,
+    pub oid: String,
+    pub size_bytes: u64,
+    /// text / image / binary / too_large
+    pub kind: String,
+    pub text: Option<String>,
+    pub truncated: bool,
+    pub media: Option<MediaBlob>,
+    pub error: Option<String>,
+}

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { AlignJustify, ArrowDown, ArrowRight, ArrowUp, Columns2, Copy, FileCode2, FileText, FolderOpen, History, List, Maximize2, Minimize2, Minus, Plus, RotateCcw, Undo2, ScanText, Search, X, Check, EyeOff } from 'lucide-react'
 import { ContextMenu } from '../../components/ContextMenu'
 import { Button } from '../../components/Button'
-import { loadRepositoryFileDiff, type RepositoryDiffLine, type RepositoryFile } from '../../repository'
+import { loadRepositoryFileDiff, cancelMediaPreview, type ImageFileDiff, type RepositoryDiffLine, type RepositoryFile } from '../../repository'
 import { DiffFileList } from './DiffFileList'
 import { HighlightedCode } from './HighlightedCode'
+import { ImageDiffViewer } from './ImageDiffViewer'
+import { createMediaRequestId, mediaTargetKey, planMediaRequest } from './imageDiffModel'
 import { buildDiffContextEntries, type DiffContextEntry } from './diffContext'
 import { isBooleanRecord, usePersistentState } from '../../persistentState'
 
@@ -365,6 +367,13 @@ type DiffPanelProps = {
   onStagePatch?: (filePath: string, patch: string, description: string) => void
   onRestorePatch?: (filePath: string, patch: string, description: string) => void
   onUnstagePatch?: (filePath: string, patch: string, description: string) => void
+  /**
+   * 宿主注入的「变更前/变更后」图片配对读取。未提供时 DiffPanel 行为与原来完全一致，
+   * 这样既有的所有调用点（暂存区 / 提交 / 比较 / stash）都不会被影响。
+   */
+  loadImageDiff?: (filePath: string) => Promise<ImageFileDiff>
+  /** 「用外部程序打开」入口，需要后端 open_revision_file_externally 命令。 */
+  onOpenFileExternally?: (filePath: string) => void
   actionScope?: 'staged' | 'unstaged'
   actionsBusy?: boolean
   allowStage?: boolean
@@ -372,7 +381,7 @@ type DiffPanelProps = {
   fontSizeStorageKey?: string
 }
 
-export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFile = 0, onActiveFileChange, onClose, hideFileList = false, loadRows, viewKey = '', reloadKey = '', fallbackRows = EMPTY_FALLBACK_ROWS, fallbackChangeRows = EMPTY_DIFF_ROWS, onOpenLineHistory, onStagePatch, onRestorePatch, onUnstagePatch, actionScope, actionsBusy = false, allowStage = false, defaultFontSize = DEFAULT_DIFF_FONT_SIZE, fontSizeStorageKey = DIFF_FONT_SIZE_KEY }: DiffPanelProps) {
+export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFile = 0, onActiveFileChange, onClose, hideFileList = false, loadRows, viewKey = '', reloadKey = '', fallbackRows = EMPTY_FALLBACK_ROWS, fallbackChangeRows = EMPTY_DIFF_ROWS, onOpenLineHistory, onStagePatch, onRestorePatch, onUnstagePatch, loadImageDiff, onOpenFileExternally, actionScope, actionsBusy = false, allowStage = false, defaultFontSize = DEFAULT_DIFF_FONT_SIZE, fontSizeStorageKey = DIFF_FONT_SIZE_KEY }: DiffPanelProps) {
   const [activeFile, setActiveFile] = useState(initialFile)
   const [view, setView] = usePersistentState('branchline.diffView.v1', 'unified', isDiffView)
   const [showWhitespace, setShowWhitespace] = usePersistentState('branchline.diffShowWhitespace.v1', true, (value): value is boolean => typeof value === 'boolean')
@@ -473,6 +482,73 @@ export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFi
   }, [defaultFontSize])
   const activeFileInfo = files[activeFile]
   const activeFileIdentity = activeFileInfo ? `${viewKey}\0${activeFile}\0${activeFileInfo.path}` : null
+  // --- 图片 / SVG 差异预览（仅在宿主注入 loadImageDiff 时启用；判定与请求计划见 imageDiffModel.ts） ---
+  const [mediaAsText, setMediaAsText] = useState(false)
+  const [mediaRetry, setMediaRetry] = useState(0)
+  const [imagePair, setImagePair] = useState<ImageFileDiff | null>(null)
+  const [imageLoading, setImageLoading] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
+  const mediaRequestId = useRef<string | null>(null)
+  const mediaActiveKey = useRef<string | null>(null)
+  // 宿主普遍传内联箭头函数，函数身份每次渲染都在变：收进 ref，
+  // 请求只由 mediaTargetKey（文件/重试/刷新）驱动，否则 StrictMode 与父组件重渲染都会把 IPC 打成循环。
+  const mediaLoader = useRef(loadImageDiff)
+  mediaLoader.current = loadImageDiff
+  const mediaPath = activeFileInfo?.path ?? null
+  const mediaTarget = mediaTargetKey({
+    loaderProvided: Boolean(loadImageDiff),
+    path: mediaPath,
+    identity: activeFileIdentity,
+    retry: mediaRetry,
+    reloadKey,
+    asText: mediaAsText,
+  })
+  useEffect(() => {
+    setMediaAsText(false)
+  }, [activeFileIdentity])
+  useEffect(() => {
+    const action = planMediaRequest(mediaTarget, mediaActiveKey.current)
+    if (action === 'reuse') return
+    if (action === 'reset' || !mediaTarget || !mediaPath) {
+      mediaActiveKey.current = null
+      mediaRequestId.current = null
+      setImagePair(null)
+      setImageError(null)
+      setImageLoading(false)
+      return
+    }
+    const loader = mediaLoader.current
+    if (!loader) return
+    mediaActiveKey.current = mediaTarget
+    const requestId = createMediaRequestId(mediaPath, viewKey)
+    mediaRequestId.current = requestId
+    setImageLoading(true)
+    setImageError(null)
+    setImagePair(null)
+    loader(mediaPath)
+      .then((result) => {
+        // 迟到的响应（用户已切走）直接丢弃，并通知后端取消。
+        if (mediaRequestId.current !== requestId) { void cancelMediaPreview(requestId); return }
+        setImagePair(result)
+      })
+      .catch((reason: unknown) => {
+        if (mediaRequestId.current !== requestId) return
+        setImageError(reason instanceof Error ? reason.message : String(reason))
+      })
+      .finally(() => {
+        if (mediaRequestId.current === requestId) setImageLoading(false)
+      })
+    return () => {
+      // 组件卸载 / 换文件 / 关面板都让后端尽早停手，避免大图片继续占内存。
+      // 同时把 key 清空：这条请求已经作废，不能让它冒充「已加载」。
+      if (mediaRequestId.current === requestId) {
+        mediaRequestId.current = null
+        mediaActiveKey.current = null
+        void cancelMediaPreview(requestId)
+      }
+    }
+  }, [mediaPath, mediaTarget, viewKey])
+  const usesMediaView = Boolean(mediaTarget)
   const usesLoader = Boolean(loadRows || repositoryPath)
   const sourceRows = usesLoader ? repositoryRows : (activeFileInfo ? (fallbackRows[activeFileInfo.path] ?? fallbackChangeRows) : EMPTY_DIFF_ROWS)
   const canStage = actionScope !== 'staged' && (allowStage || actionScope === 'unstaged')
@@ -878,7 +954,15 @@ export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFi
     <div className={`diff-body ${hideFileList ? 'code-only' : ''}`}>
       {!hideFileList && <DiffFileList files={files} activeFile={activeFile} mode={fileMode} onSelectFile={selectFile} collapsedFolders={collapsedFolders} onCollapsedFoldersChange={setCollapsedFolders}/>}
       <div className="diff-viewer" ref={overviewRef}>
-      <div className={`code-diff ${view}`}>
+      {usesMediaView ? <ImageDiffViewer
+        path={activeFileInfo?.path ?? ''}
+        pair={imagePair}
+        loading={imageLoading}
+        error={imageError}
+        onRetry={() => setMediaRetry((value) => value + 1)}
+        onOpenExternally={onOpenFileExternally && activeFileInfo ? () => onOpenFileExternally(activeFileInfo.path) : undefined}
+        onExitToText={() => setMediaAsText(true)}
+      /> : <div className={`code-diff ${view}`}>
         <div className="file-header"><div className="file-header-path" title={activeFileInfo?.path}><code title={activeFileInfo?.path}>{activeFileInfo?.path ?? '暂无变更文件'}</code></div>{activeFileInfo && <span className="file-header-stats"><i>+{activeFileInfo.add}</i> <b>-{activeFileInfo.del}</b></span>}</div>
         {scope === 'changes' && !usesLoader && <div className="hunk">@@ 完整改动 @@</div>}
         {diffLoading && !canRenderLoadedRows && <div className="diff-message">正在读取 Diff…</div>}
@@ -890,7 +974,7 @@ export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFi
           {stageActionsEnabled && <div ref={splitActionsRef} className="split-diff-actions" aria-label="差异操作"><div className={`split-diff-content${virtualized ? ' virtual-diff-list' : ''}`} style={{ paddingTop: virtualized ? virtualTopHeight : undefined, paddingBottom: virtualBottomHeight }}>{splitEntries.slice(virtualStart, virtualEnd).map((entry, index) => renderSplitActions(entry, index + virtualStart))}</div></div>}
           <div ref={splitRightRef} className="split-diff-pane split-right" aria-label="新版本代码" onScroll={() => syncSplitScroll('right')}><div className={`split-diff-content${virtualized ? ' virtual-diff-list' : ''}`} style={{ paddingTop: virtualized ? virtualTopHeight : undefined, paddingBottom: virtualBottomHeight }}>{splitEntries.slice(virtualStart, virtualEnd).map((entry, index) => renderSplitEntry(entry, index + virtualStart, 'new'))}</div></div>
         </div>}
-      </div>
+      </div>}
       {overviewMarkers.length > 0 && <div className={`diff-overview ${view === 'split' ? 'split' : ''}`} style={overviewBounds} onPointerDown={beginOverviewDrag} onPointerMove={moveOverviewDrag} onPointerUp={endOverviewDrag} onPointerCancel={endOverviewDrag} title="点击或拖拽跳转到对应差异位置" aria-label="Diff 差异位置">
         {overviewMarkers.map(({ index, top, height, kind, column }) => <span className={`diff-overview-marker ${kind} ${column}`} key={`${column}-${index}`} style={{ top: `max(0px, min(${top}%, calc(100% - 3px)))`, height: `${height}%` }}/>) }
         <span className="diff-overview-viewport" style={{ top: `${overviewViewport.top}%`, height: `${overviewViewport.height}%` }}/>

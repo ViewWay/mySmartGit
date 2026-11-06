@@ -1,0 +1,214 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw, Search, X } from 'lucide-react'
+import { Button } from '../../components/Button'
+import { loadCommitTree, loadCommitTreeChildren, loadRevisionFilePreview, cancelMediaPreview, type RevisionFilePreview } from '../../repository'
+import { isBooleanRecord, usePersistentState } from '../../persistentState'
+import { createMediaRequestId, isStaleRequest } from '../diff/imageDiffModel'
+import { CommitTreePreview, CommitTreeRowList, CommitTreeSummary, TREE_ROW_HEIGHT } from './CommitTreeView'
+import {
+  ancestorPaths,
+  childrenOf,
+  createCommitTreeIndex,
+  createNameMatcher,
+  flattenTreeRows,
+  isPreviewableRow,
+  needsChildrenFetch,
+  toggleExpanded,
+  withDirectoryLoading,
+  withLoadedChildren,
+  withoutDirectoryLoading,
+  type CommitTreeIndex,
+  type CommitTreeNodeRecord,
+  type CommitTreeRow,
+} from './commitTreeModel'
+import './commitTree.css'
+
+export type CommitTreeBrowserProps = {
+  repositoryPath: string
+  /** 任意可解析的 ref：提交 hash、分支、标签、HEAD^ 等（后端做白名单校验）。 */
+  reference: string
+  onOpenExternally?: (filePath: string) => void
+  /** 打开时定位到某个文件（会自动展开祖先目录）。 */
+  initialPath?: string
+}
+
+/**
+ * 提交文件树浏览的数据容器：按某个提交看该版本的完整文件树。
+ * 大目录两道闸：后端 partial 时改懒加载（单层列表 + 条目上限），前端固定行高窗口化渲染。
+ * 「怎么画」全在 CommitTreeView.tsx（纯展示，可脱离后端单测），这里只管「取什么数据」。
+ */
+export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally, initialPath }: CommitTreeBrowserProps) {
+  const [index, setIndex] = useState<CommitTreeIndex | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [expanded, setExpanded] = usePersistentState<Record<string, boolean>>('branchline.commitTreeExpanded.v1', {}, isBooleanRecord)
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<string | null>(null)
+  const [selectedKind, setSelectedKind] = useState<string | null>(null)
+  const [preview, setPreview] = useState<RevisionFilePreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const previewRequestId = useRef<string | null>(null)
+
+  const loadTree = useCallback((mode: 'initial' | 'reload') => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    if (mode === 'initial') {
+      // 换 ref / 换仓库时把选中项与右侧预览一起归零，避免把上一个版本的 blob 留在屏幕上。
+      setIndex(null)
+      setSelected(null)
+      setSelectedKind(null)
+      setPreview(null)
+    }
+    loadCommitTree(repositoryPath, reference)
+      .then((tree) => {
+        if (cancelled) return
+        setIndex(createCommitTreeIndex(tree))
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return
+        setError(reason instanceof Error ? reason.message : String(reason))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [reference, repositoryPath])
+
+  useEffect(() => loadTree('initial'), [loadTree])
+
+  // 定位 initialPath：展开祖先目录并选中它。
+  useEffect(() => {
+    if (!index || !initialPath) return
+    const missing = ancestorPaths(initialPath).filter((path) => !expanded[path])
+    if (missing.length) {
+      setExpanded((current) => {
+        const next = { ...current }
+        missing.forEach((path) => { next[path] = true })
+        return next
+      })
+    }
+    setSelected(initialPath)
+    // 懒加载模式下祖先可能还没取过：kind 未知就留给点击补齐，不瞎猜。
+    setSelectedKind(findKind(index, initialPath))
+  }, [expanded, index, initialPath, setExpanded])
+
+  const fetchDirectory = useCallback((row: CommitTreeRow) => {
+    if (!index || !needsChildrenFetch(index, row)) return
+    setIndex((current) => (current ? withDirectoryLoading(current, row.path) : current))
+    loadCommitTreeChildren(repositoryPath, reference, row.path)
+      .then((entries) => setIndex((current) => (current ? withLoadedChildren(current, row.path, entries) : current)))
+      .catch((reason: unknown) => {
+        // 失败必须摘掉「加载中」：否则那一行永远转圈，而且再点也不会重试。
+        setIndex((current) => (current ? withoutDirectoryLoading(current, row.path) : current))
+        setError(reason instanceof Error ? reason.message : String(reason))
+      })
+  }, [index, reference, repositoryPath])
+
+  const handleActivate = useCallback((row: CommitTreeRow) => {
+    setSelected(row.path)
+    setSelectedKind(row.kind)
+    if (!row.hasChildren) return
+    const willExpand = !expanded[row.path]
+    setExpanded((current) => toggleExpanded(current, row.path))
+    if (willExpand) fetchDirectory(row)
+  }, [expanded, fetchDirectory, setExpanded])
+
+  // 预览：换选中项时取消上一请求，迟到的响应直接丢弃；目录与子模组指针不发请求。
+  const previewWanted = Boolean(selected) && isPreviewableRow({ kind: selectedKind ?? '' })
+  useEffect(() => {
+    if (!selected || !previewWanted) {
+      setPreview(null)
+      setPreviewError(null)
+      setPreviewLoading(false)
+      return
+    }
+    const requestId = createMediaRequestId(selected, reference)
+    previewRequestId.current = requestId
+    setPreviewLoading(true)
+    setPreviewError(null)
+    setPreview(null)
+    loadRevisionFilePreview(repositoryPath, reference, selected, undefined, requestId)
+      .then((result) => {
+        if (isStaleRequest(previewRequestId.current, requestId)) { void cancelMediaPreview(requestId); return }
+        setPreview(result)
+      })
+      .catch((reason: unknown) => {
+        if (isStaleRequest(previewRequestId.current, requestId)) return
+        setPreview(null)
+        setPreviewError(reason instanceof Error ? reason.message : String(reason))
+      })
+      .finally(() => {
+        if (!isStaleRequest(previewRequestId.current, requestId)) setPreviewLoading(false)
+      })
+    return () => {
+      if (!isStaleRequest(previewRequestId.current, requestId)) {
+        previewRequestId.current = null
+        void cancelMediaPreview(requestId)
+      }
+    }
+  }, [previewWanted, reference, repositoryPath, selected])
+
+  const matcher = useMemo(() => createNameMatcher(query), [query])
+  const rows = useMemo(() => (index ? flattenTreeRows(index, expanded, matcher) : []), [expanded, index, matcher])
+
+  return <div className="commit-tree-browser">
+    <div className="commit-tree-pane">
+      <div className="commit-tree-toolbar">
+        <Search size={13}/>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="按名称过滤（仅已加载节点）" aria-label="过滤文件树"/>
+        {query && <Button variant="icon" size="compact" onClick={() => setQuery('')} title="清除过滤" aria-label="清除过滤"><X size={13}/></Button>}
+        <Button variant="icon" size="compact" onClick={() => loadTree('reload')} title="重新加载文件树" aria-label="重新加载文件树"><RefreshCw size={13}/></Button>
+      </div>
+      <CommitTreeSummary
+        loading={loading}
+        loaded={Boolean(index)}
+        nodeCount={index?.nodeCount ?? 0}
+        partial={Boolean(index?.partial)}
+        visibleRows={rows.length}/>
+      <CommitTreeRowList
+        rows={rows}
+        selected={selected}
+        error={error}
+        loading={loading}
+        hasIndex={Boolean(index)}
+        query={query}
+        label={`提交 ${reference} 的文件树`}
+        onActivate={handleActivate}/>
+    </div>
+    <CommitTreePreview
+      selected={selected}
+      kind={selectedKind}
+      preview={preview}
+      loading={previewLoading}
+      error={previewError}
+      onOpenExternally={onOpenExternally}/>
+  </div>
+}
+
+/**
+ * 在已加载的索引里找某一行的 kind。
+ * 懒加载回来的节点不在 roots 里，所以 roots 与 childrenByPath 都要看；找不到返回 null（未知）。
+ */
+function findKind(index: CommitTreeIndex, path: string): string | null {
+  const walk = (nodes: CommitTreeNodeRecord[]): string | null => {
+    for (const node of nodes) {
+      if (node.path === path) return node.kind
+      if (node.kind === 'tree') {
+        const hit = walk(childrenOf(index, node))
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+  const fromRoots = walk(index.roots)
+  if (fromRoots) return fromRoots
+  for (const children of Object.values(index.childrenByPath)) {
+    const hit = walk(children)
+    if (hit) return hit
+  }
+  return null
+}
+
+export { TREE_ROW_HEIGHT }
