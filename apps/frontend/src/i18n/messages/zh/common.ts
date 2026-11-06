@@ -13,4 +13,7 @@ export const common = {
   'common.unknown': '未知',
   'common.none': '无',
   'common.loading': '加载中…',
+  'common.confirmTitle': '确认操作',
+  'common.confirmGeneric': '请确认',
+  'common.selectPlaceholder': '请选择',
 } as const

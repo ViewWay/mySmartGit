@@ -13,4 +13,7 @@ export const common = {
   'common.unknown': 'Unknown',
   'common.none': 'None',
   'common.loading': 'Loading…',
+  'common.confirmTitle': 'Confirm action',
+  'common.confirmGeneric': 'Please confirm',
+  'common.selectPlaceholder': 'Select',
 } satisfies Record<keyof typeof import('../zh/common').common, string>

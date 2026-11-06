@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { zh } from './i18n/messages/zh'
 
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 const tokens = readFileSync(new URL('./styles/tokens.css', import.meta.url), 'utf8')
@@ -122,13 +123,16 @@ describe('semantic style architecture', () => {
   })
 
   it('allows committer and branch filters to select multiple values', () => {
-    expect(app).toContain('提交人（可多选）')
-    expect(app).toContain('按分支筛选（可多选）')
+    expect(zh['history.filter.committerMulti']).toBe('筛选提交人（可多选）')
+    expect(zh['history.filter.byBranch']).toBe('按分支筛选（可多选）')
+    expect(zh['history.filter.committer']).toBe('筛选提交人')
+    expect(app).toContain("t('history.filter.committerMulti')")
+    expect(app).toContain("t('history.filter.byBranch')")
     expect(app).toContain('committerName(commit)')
     expect(app).toContain('checked={branchFilter.includes(branch)}')
     expect(app).toContain('committerColumnVisible ? `${widths.author}px` : \'\'')
     expect(app).toMatch(/message-label[^\n]*\{committerFilterButton\}/)
-    expect(app).toMatch(/const committerFilterButton = .*aria-label="筛选提交人"/)
+    expect(app).toMatch(/const committerFilterButton = .*aria-label=\{t\('history\.filter\.committer'\)\}/)
   })
 
   it('places the diff close control at the far end of the toolbar', () => {

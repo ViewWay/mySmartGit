@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 type CompactSelectValue = string | number
 
@@ -23,6 +24,7 @@ export function compactSelectOptionClassName(selected: boolean) {
 }
 
 export function CompactSelect<T extends CompactSelectValue>({ value, options, onChange, ariaLabel, className, disabled = false, title }: CompactSelectProps<T>) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const selected = options.find((option) => option.value === value)
@@ -45,7 +47,7 @@ export function CompactSelect<T extends CompactSelectValue>({ value, options, on
 
   return <div ref={rootRef} className={['compact-select', open && 'open', className].filter(Boolean).join(' ')}>
     <button type="button" className="compact-select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} disabled={disabled} title={title ?? selected?.label} onClick={() => setOpen((current) => !current)}>
-      <span>{selected?.label ?? '请选择'}</span><ChevronDown size={14}/>
+      <span>{selected?.label ?? t('common.selectPlaceholder')}</span><ChevronDown size={14}/>
     </button>
     {open && <div className="compact-select-popover" role="listbox" aria-label={ariaLabel}>
       {options.map((option) => {
