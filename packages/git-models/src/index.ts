@@ -70,7 +70,7 @@ export type RepositoryOperationStep = {
 }
 
 export type RepositoryOperationState = {
-  kind: 'merge' | 'rebase' | 'cherry-pick' | 'conflict'
+  kind: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'conflict'
   label: string
   originalBranch?: string
   onto?: string
