@@ -1224,3 +1224,336 @@ pub async fn reset_repository_bisect(repository_path: String) -> Result<Reposito
     .await
     .map_err(|error| task_error("退出 Bisect", error))?
 }
+
+#[tauri::command]
+pub async fn load_media_blob(
+    repository_path: String,
+    reference: String,
+    file_path: String,
+    request_id: Option<String>,
+) -> Result<crate::models::MediaBlob, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_media::describe_revision_blob(
+            &repository_path,
+            &reference,
+            &file_path,
+            request_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| task_error("读取图片内容", error))?
+}
+
+#[tauri::command]
+pub async fn load_image_file_diff(
+    repository_path: String,
+    from_reference: String,
+    to_reference: String,
+    file_path: String,
+    request_id: Option<String>,
+) -> Result<crate::models::ImageFileDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_media::load_image_file_diff(
+            &repository_path,
+            &from_reference,
+            &to_reference,
+            &file_path,
+            request_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| task_error("读取图片差异", error))?
+}
+
+#[tauri::command]
+pub fn cancel_media_preview(request_id: String) -> Result<(), String> {
+    crate::git_media::cancel_media_request(&request_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn load_commit_tree(
+    repository_path: String,
+    reference: String,
+    max_entries: Option<usize>,
+) -> Result<crate::models::CommitTree, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_tree::load_commit_tree(&repository_path, &reference, max_entries)
+    })
+    .await
+    .map_err(|error| task_error("读取提交文件树", error))?
+}
+
+#[tauri::command]
+pub async fn load_commit_tree_children(
+    repository_path: String,
+    reference: String,
+    directory_path: String,
+) -> Result<Vec<crate::models::CommitTreeEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_tree::load_commit_tree_children(&repository_path, &reference, &directory_path)
+    })
+    .await
+    .map_err(|error| task_error("读取目录子项", error))?
+}
+
+#[tauri::command]
+pub async fn load_revision_file_preview(
+    repository_path: String,
+    reference: String,
+    file_path: String,
+    max_text_bytes: Option<u64>,
+    request_id: Option<String>,
+) -> Result<crate::models::RevisionFilePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_tree::load_revision_file_preview(
+            &repository_path,
+            &reference,
+            &file_path,
+            max_text_bytes,
+            request_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| task_error("读取文件内容", error))?
+}
+
+#[tauri::command]
+pub async fn open_revision_file_externally(
+    repository_path: String,
+    reference: String,
+    file_path: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_media::open_revision_file_externally(&repository_path, &reference, &file_path)
+    })
+    .await
+    .map_err(|error| task_error("外部打开文件", error))?
+}
+
+#[tauri::command]
+pub async fn search_commits(
+    repository_path: String,
+    query: crate::models::CommitSearchQuery,
+) -> Result<crate::models::CommitSearchPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::search_commits(&repository_path, query)
+    })
+    .await
+    .map_err(|error| task_error("历史搜索", error))?
+}
+
+#[tauri::command]
+pub async fn load_commit_search_page(
+    repository_path: String,
+    search_id: String,
+    offset: usize,
+    page_size: usize,
+) -> Result<crate::models::CommitSearchPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::load_commit_search_page(&repository_path, &search_id, offset, page_size)
+    })
+    .await
+    .map_err(|error| task_error("历史搜索翻页", error))?
+}
+
+#[tauri::command]
+pub async fn search_repository_text(
+    repository_path: String,
+    query: crate::models::TextSearchQuery,
+) -> Result<crate::models::TextSearchPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::search_repository_text(&repository_path, query)
+    })
+    .await
+    .map_err(|error| task_error("全文搜索", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_text_page(
+    repository_path: String,
+    search_id: String,
+    offset: usize,
+    page_size: usize,
+    context_lines: usize,
+) -> Result<crate::models::TextSearchPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::load_repository_text_page(
+            &repository_path,
+            &search_id,
+            offset,
+            page_size,
+            context_lines,
+        )
+    })
+    .await
+    .map_err(|error| task_error("全文搜索翻页", error))?
+}
+
+#[tauri::command]
+pub async fn preview_text_replace(
+    repository_path: String,
+    query: crate::models::TextReplaceQuery,
+) -> Result<crate::models::ReplacePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::preview_text_replace(&repository_path, query)
+    })
+    .await
+    .map_err(|error| task_error("替换预览", error))?
+}
+
+#[tauri::command]
+pub async fn apply_text_replace(
+    repository_path: String,
+    preview_id: String,
+    confirm: bool,
+) -> Result<crate::models::ReplaceReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::apply_text_replace(&repository_path, &preview_id, confirm)
+    })
+    .await
+    .map_err(|error| task_error("执行替换", error))?
+}
+
+#[tauri::command]
+pub async fn undo_text_replace(
+    repository_path: String,
+    replace_id: String,
+) -> Result<crate::models::ReplaceReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::undo_text_replace(&repository_path, &replace_id)
+    })
+    .await
+    .map_err(|error| task_error("撤销替换", error))?
+}
+
+#[tauri::command]
+pub async fn list_text_replace_backups(
+    repository_path: String,
+) -> Result<Vec<crate::models::ReplaceBackupSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::list_text_replace_backups(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("列出替换备份", error))?
+}
+
+#[tauri::command]
+pub async fn load_repository_text_file(
+    repository_path: String,
+    file_path: String,
+    max_bytes: Option<usize>,
+    revision: Option<String>,
+) -> Result<crate::models::RepositoryTextFile, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::load_repository_text_file(
+            &repository_path,
+            &file_path,
+            max_bytes,
+            revision.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| task_error("读取文本文件", error))?
+}
+
+#[tauri::command]
+pub async fn save_repository_text_file(
+    repository_path: String,
+    file_path: String,
+    content: String,
+    base_checksum: String,
+) -> Result<crate::models::RepositoryTextFile, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::save_repository_text_file(
+            &repository_path,
+            &file_path,
+            &content,
+            &base_checksum,
+        )
+    })
+    .await
+    .map_err(|error| task_error("保存文本文件", error))?
+}
+
+#[tauri::command]
+pub async fn cancel_repository_search(
+    repository_path: String,
+) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_search::cancel_repository_search(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("取消搜索", error))
+}
+
+#[tauri::command]
+pub async fn add_repository_submodule(
+    repository_path: String,
+    url: String,
+    submodule_path: Option<String>,
+    name: Option<String>,
+    branch: Option<String>,
+    confirm: bool,
+) -> Result<crate::models::SubmoduleOperationReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_submodule::add_repository_submodule(
+            &repository_path,
+            &url,
+            submodule_path.as_deref(),
+            name.as_deref(),
+            branch.as_deref(),
+            confirm,
+        )
+    })
+    .await
+    .map_err(|error| task_error("添加 Submodule", error))?
+}
+
+#[tauri::command]
+pub async fn list_repository_submodule_details(
+    repository_path: String,
+) -> Result<Vec<crate::models::RepositorySubmoduleDetail>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_submodule::list_repository_submodule_details(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("读取 Submodule 明细", error))?
+}
+
+#[tauri::command]
+pub async fn load_submodule_pointer_diff(
+    repository_path: String,
+    submodule_path: String,
+) -> Result<crate::models::SubmodulePointerDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_submodule::load_submodule_pointer_diff(&repository_path, &submodule_path)
+    })
+    .await
+    .map_err(|error| task_error("读取 Submodule 差异", error))?
+}
+
+#[tauri::command]
+pub async fn clone_repository_with_options(
+    destination: String,
+    source: String,
+    recurse_submodules: bool,
+    depth: Option<usize>,
+    branch: Option<String>,
+    single_branch: bool,
+) -> Result<crate::repository_management::RepositoryDetails, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::repository_management::clone_repository(
+            &destination,
+            &source,
+            &crate::repository_management::clone_options(
+                recurse_submodules,
+                depth,
+                branch,
+                single_branch,
+            ),
+        )
+    })
+    .await
+    .map_err(|error| task_error("克隆仓库", error))?
+}

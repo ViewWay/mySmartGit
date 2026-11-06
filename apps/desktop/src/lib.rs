@@ -4,6 +4,7 @@ mod git_media;
 mod git_tree;
 mod git_remote;
 mod git_recovery;
+mod git_search;
 mod git_submodule;
 mod models;
 mod repository_management;
@@ -109,6 +110,31 @@ pub fn run() {
             commands::mark_repository_bisect,
             commands::advance_repository_bisect,
             commands::reset_repository_bisect,
+            // W2-8 图片/SVG 差异预览 与 提交文件树浏览
+            commands::load_media_blob,
+            commands::load_image_file_diff,
+            commands::cancel_media_preview,
+            commands::load_commit_tree,
+            commands::load_commit_tree_children,
+            commands::load_revision_file_preview,
+            commands::open_revision_file_externally,
+            // W2-9 历史深度搜索与仓库全文搜索/替换
+            commands::search_commits,
+            commands::load_commit_search_page,
+            commands::search_repository_text,
+            commands::load_repository_text_page,
+            commands::preview_text_replace,
+            commands::apply_text_replace,
+            commands::undo_text_replace,
+            commands::list_text_replace_backups,
+            commands::load_repository_text_file,
+            commands::save_repository_text_file,
+            commands::cancel_repository_search,
+            // W2-10 子模块添加、递归/浅克隆与指针差异
+            commands::add_repository_submodule,
+            commands::list_repository_submodule_details,
+            commands::load_submodule_pointer_diff,
+            commands::clone_repository_with_options,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");
