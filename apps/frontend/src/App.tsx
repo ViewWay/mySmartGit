@@ -753,7 +753,7 @@ export default function App() {
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
   }, [notificationOpen])
   const workingTreeCommit = useMemo(() => repository
-    ? createWorkingTreeCommit(repository.files, resolveWorkingTreeParent(repository), repository.operation)
+    ? createWorkingTreeCommit(repository.files, resolveWorkingTreeParent(repository), repository.operation, t)
     : null, [repository])
   const activeCommits = useMemo<Commit[]>(() => {
     const history = mergeHistoryStreamCommits(repository?.commits ?? [], historyStreamCommits)

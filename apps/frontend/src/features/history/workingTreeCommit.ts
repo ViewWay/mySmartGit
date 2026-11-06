@@ -1,5 +1,7 @@
 import type { RepositoryFile, RepositoryOperationState, RepositorySnapshot } from '../../repository'
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 export const WORKING_TREE_COMMIT_ID = '__branchline_working_tree__'
 
 export type WorkingTreeCommit = {
@@ -31,20 +33,21 @@ export function resolveWorkingTreeParent(repository: WorkingTreeRepository) {
     ?? repository.commits.find((commit) => commit.branches?.includes(repository.branch))?.fullHash
 }
 
-export function createWorkingTreeCommit(files: RepositoryFile[], headHash?: string, operation?: RepositoryOperationState): WorkingTreeCommit | null {
+export function createWorkingTreeCommit(files: RepositoryFile[], headHash?: string, operation?: RepositoryOperationState, t?: Translate): WorkingTreeCommit | null {
+  const translate = t ?? ((key: string) => key)
   if (!files.length && !operation) return null
   const title = operation
-    ? `${operation.label}：${operation.conflicts.length ? '冲突待处理' : '待处理'}`
-    : '未提交的修改'
-  const author = operation ? 'Git 操作' : '工作区'
+    ? `${operation.label}：${operation.conflicts.length ? translate('history.working.conflict') : translate('history.working.pending')}`
+    : translate('history.working.title')
+  const author = operation ? translate('history.working.operation') : translate('history.working.tree')
   return {
     id: WORKING_TREE_COMMIT_ID,
     lane: 0,
     color: '#faad14',
     title,
     message: operation
-      ? `${operation.label}仍在进行中，请在操作面板中继续、跳过或中止。`
-      : `当前工作区有 ${files.length} 个未提交文件，这些修改尚未写入 Git 历史。`,
+      ? translate('history.working.operationInProgress', { label: operation.label })
+      : translate('history.working.filesPending', { count: files.length }),
     author,
     avatar: operation ? 'OP' : 'WT',
     time: new Date().toISOString(),
