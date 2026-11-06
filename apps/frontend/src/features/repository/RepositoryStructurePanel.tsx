@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Box, Check, FolderGit2, GitFork, Lock, LockOpen, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import {
+  addRepositorySubmodule,
   createRepositoryWorktree,
   deinitializeRepositorySubmodule,
   initializeRepositorySubmodule,
@@ -12,7 +13,10 @@ import {
   type RepositorySnapshot,
 } from '../../repository'
 import { CreateWorktreeDialog } from './CreateWorktreeDialog'
+import { SubmoduleAddDialog } from './SubmoduleAddDialog'
+import { SubmodulePointerDiffPanel } from './SubmodulePointerDiffPanel'
 import { TagManagementPanel } from '../remote/TagManagementPanel'
+import { needsSubmoduleConfirmation, submoduleConfirmationText, type SubmoduleAddDraft } from './submoduleAddForm'
 import { submoduleAbsolutePath, type RepositoryStructureSelection } from './repositoryTree'
 import { Button } from '../../components/Button'
 import { useConfirmDialog } from '../../components/ConfirmDialog'
@@ -40,6 +44,8 @@ export function RepositoryStructurePanel({ repository, activePath, view, query =
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addBusy, setAddBusy] = useState(false)
   const { confirm, confirmDialog } = useConfirmDialog()
   if (!repository) return <section className="workspace-empty"><FolderGit2 size={34}/><strong>仓库结构</strong><span>请先打开本地仓库。</span></section>
 
@@ -78,6 +84,34 @@ export function RepositoryStructurePanel({ repository, activePath, view, query =
   const deinitializeSubmodule = async (path: string) => {
     if (await confirm({ title: '取消初始化 Submodule', message: `确定取消初始化 Submodule？\n${path}`, confirmLabel: '取消初始化', variant: 'danger' })) await run('deinit', () => deinitializeRepositorySubmodule(repository.path, path), '已取消初始化 Submodule')
   }
+  // 添加子模块沿用「预览 → 二次确认 → 执行」约定：confirm=false 时后端未改动仓库，
+  // 收养已存在目录需要用户显式确认后才带 confirm=true 再调一次。返回 true 让对话框关闭。
+  const submitAddSubmodule = async (draft: SubmoduleAddDraft): Promise<boolean> => {
+    setAddBusy(true)
+    try {
+      const call = (confirmFlag: boolean) => addRepositorySubmodule(
+        repository.path,
+        draft.url,
+        draft.path || null,
+        draft.name || null,
+        draft.branch || null,
+        confirmFlag,
+      )
+      let report = await call(false)
+      if (needsSubmoduleConfirmation(report)) {
+        if (!await confirm({ title: '确认添加 Submodule', message: submoduleConfirmationText(report), confirmLabel: '仍然添加', variant: 'danger' })) return false
+        report = await call(true)
+      }
+      if (report.snapshot) onSnapshot(report.snapshot)
+      onNotice(report.summary)
+      return report.executed
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : String(error))
+      return false
+    } finally {
+      setAddBusy(false)
+    }
+  }
 
   return <section className="structure-panel workspace-page repository-structure-workspace">
     <div className="workspace-page-heading"><div><span className="eyebrow">仓库结构</span><h2>{title}</h2><p>{description}</p></div>{selection.kind === 'worktrees' && <Button variant="primary" className="structure-heading-action" onClick={() => setCreateOpen(true)}><Plus size={14}/>创建 Worktree</Button>}</div>
@@ -93,9 +127,9 @@ export function RepositoryStructurePanel({ repository, activePath, view, query =
 
     {selection.kind === 'worktree' && worktree && <div className="structure-detail-grid"><article className="structure-detail-card"><span className="structure-icon"><GitFork size={18}/></span><h3>{worktree.path.split(/[\\/]/).pop() || worktree.path}</h3><dl><DetailField label="目录"><code>{worktree.path}</code></DetailField><DetailField label="分支">{worktree.branch ?? 'Detached HEAD'}</DetailField><DetailField label="HEAD"><code>{worktree.head ?? '—'}</code></DetailField><DetailField label="状态">{currentWorktree ? '当前 Worktree' : worktree.locked ? `已锁定${worktree.locked ? `：${worktree.locked}` : ''}` : worktree.prunable ? `可清理：${worktree.prunable}` : primaryWorktree ? '主 Worktree' : '可用'}</DetailField></dl><div className="structure-actions"><Button variant="primary" disabled={currentWorktree} onClick={() => onOpenPath(worktree.path, 'worktree')}><FolderGit2 size={14}/>{currentWorktree ? '当前仓库' : '打开仓库'}</Button><Button variant="secondary" disabled={busy !== null || currentWorktree || primaryWorktree} onClick={() => void run('lock', () => setRepositoryWorktreeLock(repository.path, worktree.path, !worktree.locked), worktree.locked ? '已解锁 Worktree' : '已锁定 Worktree')}>{worktree.locked ? <LockOpen size={14}/> : <Lock size={14}/>} {worktree.locked ? '解锁' : '锁定'}</Button><Button variant="danger" disabled={busy !== null || currentWorktree || primaryWorktree} onClick={() => void removeWorktree(worktree.path)}><Trash2 size={14}/>移除</Button></div></article></div>}
 
-    {(selection.kind === 'submodules' || selection.kind === 'submodule-folder') && <div className="structure-detail-grid"><article className="structure-detail-card"><span className="structure-icon"><Box size={18}/></span><h3>{selection.kind === 'submodules' ? 'Submodules' : selection.path}</h3><dl><DetailField label="总数">{selection.kind === 'submodules' ? repository.submodules.length : folderSubmodules.length}</DetailField><DetailField label="正常">{(selection.kind === 'submodules' ? repository.submodules : folderSubmodules).filter((item) => item.status === 'ok').length}</DetailField><DetailField label="有修改">{(selection.kind === 'submodules' ? repository.submodules : folderSubmodules).filter((item) => item.status === 'modified').length}</DetailField><DetailField label="未初始化/缺失">{(selection.kind === 'submodules' ? repository.submodules : folderSubmodules).filter((item) => item.status === 'uninitialized' || item.status === 'missing').length}</DetailField></dl><div className="structure-actions"><Button variant="primary" disabled={busy !== null} onClick={() => void run('update-all', () => updateRepositorySubmodule(repository.path), '已递归初始化并更新 Submodule')}><RefreshCw className={busy === 'update-all' ? 'spin' : ''} size={14}/>{busy === 'update-all' ? '更新中…' : '递归更新'}</Button><Button variant="secondary" disabled={busy !== null} onClick={() => void run('sync', () => syncRepositorySubmodules(repository.path), '已同步 Submodule URL')}><RotateCcw size={14}/>同步 URL</Button></div></article></div>}
+    {(selection.kind === 'submodules' || selection.kind === 'submodule-folder') && <div className="structure-detail-grid"><article className="structure-detail-card"><span className="structure-icon"><Box size={18}/></span><h3>{selection.kind === 'submodules' ? 'Submodules' : selection.path}</h3><dl><DetailField label="总数">{selection.kind === 'submodules' ? repository.submodules.length : folderSubmodules.length}</DetailField><DetailField label="正常">{(selection.kind === 'submodules' ? repository.submodules : folderSubmodules).filter((item) => item.status === 'ok').length}</DetailField><DetailField label="有修改">{(selection.kind === 'submodules' ? repository.submodules : folderSubmodules).filter((item) => item.status === 'modified').length}</DetailField><DetailField label="未初始化/缺失">{(selection.kind === 'submodules' ? repository.submodules : folderSubmodules).filter((item) => item.status === 'uninitialized' || item.status === 'missing').length}</DetailField></dl><div className="structure-actions"><Button variant="primary" disabled={busy !== null} onClick={() => void run('update-all', () => updateRepositorySubmodule(repository.path), '已递归初始化并更新 Submodule')}><RefreshCw className={busy === 'update-all' ? 'spin' : ''} size={14}/>{busy === 'update-all' ? '更新中…' : '递归更新'}</Button><Button variant="secondary" disabled={busy !== null} onClick={() => void run('sync', () => syncRepositorySubmodules(repository.path), '已同步 Submodule URL')}><RotateCcw size={14}/>同步 URL</Button><Button variant="primary" disabled={busy !== null} onClick={() => setAddOpen(true)}><Plus size={14}/>添加 Submodule</Button></div></article></div>}
 
-    {selection.kind === 'submodule' && submodule && <div className="structure-detail-grid"><article className="structure-detail-card"><span className="structure-icon"><Box size={18}/></span><h3>{submodule.path}</h3><dl><DetailField label="相对路径"><code>{submodule.path}</code></DetailField><DetailField label="绝对路径"><code>{submoduleAbsolutePath(repository.path, submodule.path)}</code></DetailField><DetailField label="记录提交"><code>{submodule.hash}</code></DetailField><DetailField label="跟踪分支">{submodule.branch ?? '固定提交'}</DetailField><DetailField label="状态"><strong>{currentSubmodule ? '当前仓库' : statusLabels[submodule.status]}</strong></DetailField></dl><div className="structure-actions"><Button variant="primary" disabled={!availableSubmodule || currentSubmodule} onClick={() => onOpenPath(submoduleAbsolutePath(repository.path, submodule.path), 'submodule')}><FolderGit2 size={14}/>{currentSubmodule ? '当前仓库' : '打开仓库'}</Button>{(submodule.status === 'uninitialized' || submodule.status === 'missing') && <Button variant="secondary" disabled={busy !== null} onClick={() => void run('init', () => initializeRepositorySubmodule(repository.path, submodule.path), '已初始化 Submodule 配置')}><Plus size={14}/>初始化</Button>}<Button variant="secondary" disabled={busy !== null} onClick={() => void run('update', () => updateRepositorySubmodule(repository.path, submodule.path), '已更新 Submodule')}><RefreshCw className={busy === 'update' ? 'spin' : ''} size={14}/>更新</Button><Button variant="secondary" disabled={busy !== null} onClick={() => void run('sync', () => syncRepositorySubmodules(repository.path), '已同步 Submodule URL')}><RotateCcw size={14}/>同步 URL</Button><Button variant="danger" disabled={busy !== null || submodule.status === 'uninitialized'} onClick={() => void deinitializeSubmodule(submodule.path)}><Trash2 size={14}/>取消初始化</Button></div></article></div>}
+    {selection.kind === 'submodule' && submodule && <div className="structure-detail-grid"><article className="structure-detail-card"><span className="structure-icon"><Box size={18}/></span><h3>{submodule.path}</h3><dl><DetailField label="相对路径"><code>{submodule.path}</code></DetailField><DetailField label="绝对路径"><code>{submoduleAbsolutePath(repository.path, submodule.path)}</code></DetailField><DetailField label="记录提交"><code>{submodule.hash}</code></DetailField><DetailField label="跟踪分支">{submodule.branch ?? '固定提交'}</DetailField><DetailField label="状态"><strong>{currentSubmodule ? '当前仓库' : statusLabels[submodule.status]}</strong></DetailField></dl><div className="structure-actions"><Button variant="primary" disabled={!availableSubmodule || currentSubmodule} onClick={() => onOpenPath(submoduleAbsolutePath(repository.path, submodule.path), 'submodule')}><FolderGit2 size={14}/>{currentSubmodule ? '当前仓库' : '打开仓库'}</Button>{(submodule.status === 'uninitialized' || submodule.status === 'missing') && <Button variant="secondary" disabled={busy !== null} onClick={() => void run('init', () => initializeRepositorySubmodule(repository.path, submodule.path), '已初始化 Submodule 配置')}><Plus size={14}/>初始化</Button>}<Button variant="secondary" disabled={busy !== null} onClick={() => void run('update', () => updateRepositorySubmodule(repository.path, submodule.path), '已更新 Submodule')}><RefreshCw className={busy === 'update' ? 'spin' : ''} size={14}/>更新</Button><Button variant="secondary" disabled={busy !== null} onClick={() => void run('sync', () => syncRepositorySubmodules(repository.path), '已同步 Submodule URL')}><RotateCcw size={14}/>同步 URL</Button><Button variant="danger" disabled={busy !== null || submodule.status === 'uninitialized'} onClick={() => void deinitializeSubmodule(submodule.path)}><Trash2 size={14}/>取消初始化</Button></div></article><SubmodulePointerDiffPanel repositoryPath={repository.path} submodulePath={submodule.path} onNotice={onNotice}/></div>}
 
     {((selection.kind === 'worktree' && !worktree) || (selection.kind === 'submodule' && !submodule)) && <div className="workspace-hint"><FolderGit2 size={26}/><strong>所选项目已不存在</strong><span>刷新仓库结构后请重新选择。</span></div>}
     {createOpen && (
@@ -106,6 +140,14 @@ export function RepositoryStructurePanel({ repository, activePath, view, query =
         onSubmit={async (path, branch, createBranch) => {
           if (await run('create', () => createRepositoryWorktree(repository.path, path, branch, createBranch), `已创建 Worktree：${path}`)) setCreateOpen(false)
         }}
+      />
+    )}
+    {addOpen && (
+      <SubmoduleAddDialog
+        submodules={repository.submodules}
+        busy={addBusy}
+        onClose={() => setAddOpen(false)}
+        onSubmit={submitAddSubmodule}
       />
     )}
     {confirmDialog}

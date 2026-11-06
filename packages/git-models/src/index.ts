@@ -584,3 +584,93 @@ export type RepositoryTextFile = {
   binary: boolean
   notice?: string | null
 }
+
+// ---------------------------------------------------------------------------
+// W2-10 子模块接入：添加 Submodule / 递归克隆 / 指针差异
+// 对应 apps/desktop/src/git_submodule.rs 与 models.rs 的同名结构体。
+// 地址一律由 Rust 侧脱敏：内嵌凭据替换为 [redacted]，凭据不进前端也不进命令日志。
+// ---------------------------------------------------------------------------
+
+/** `.gitmodules` 与 `submodule status --recursive` 合并出的子模块明细。 */
+export type RepositorySubmoduleDetail = {
+  /** 相对父仓库的路径，始终用 `/` 分隔。 */
+  path: string
+  /** `.gitmodules` 里的段名；未配置时退化为路径。 */
+  name: string
+  /** 已脱敏的子模块地址。 */
+  url: string
+  /** `.gitmodules` 配置的跟踪分支；为空表示跟随父仓库记录的提交。 */
+  configuredBranch?: string
+  status: RepositorySubmodule['status']
+  initialized: boolean
+  /** 父仓库 HEAD 记录的 gitlink 提交；未提交时为空串。 */
+  headCommit: string
+  /** 父仓库索引记录的 gitlink 提交。 */
+  stagedCommit: string
+  /** 子模块工作区 HEAD；未初始化时为空串。 */
+  checkedOutCommit: string
+  /** 子模块工作区的未提交改动文件数；超大仓库未探测时为 null。 */
+  dirtyFiles: number | null
+  /** 该路径下的嵌套子模块数量。 */
+  nestedCount: number
+  credentialsRedacted: boolean
+  /** 磁盘上的绝对路径，供「下钻打开子模块仓库」复用。 */
+  absolutePath: string
+}
+
+/** 子模块指针差异里列出的单条提交（子模块仓库内部的新增提交）。 */
+export type SubmoduleCommitEntry = {
+  hash: string
+  shortHash: string
+  title: string
+  author: string
+  email: string
+  commitTime: string
+}
+
+/** 子模块差异语义：指针从哪个提交移到哪个提交，以及子模块内部为此新增了什么。 */
+export type SubmodulePointerDiff = {
+  path: string
+  name: string
+  /** 已脱敏的子模块地址。 */
+  url: string
+  absolutePath: string
+  headCommit: string
+  stagedCommit: string
+  currentCommit: string
+  /** 实际用于比较的旧提交（优先父仓库 HEAD 记录）。 */
+  previousCommit: string
+  /** 实际用于比较的新提交；未初始化时为空串。 */
+  targetCommit: string
+  changed: boolean
+  /** 指针变化只落在索引里（已暂存未提交）。 */
+  pointerStaged: boolean
+  /** 子模块工作区 HEAD 与索引记录不一致（未暂存的指针移动）。 */
+  pointerUnstaged: boolean
+  uninitialized: boolean
+  detached: boolean
+  addedCommits: SubmoduleCommitEntry[]
+  addedCount: number
+  /** 指针后移丢掉的提交数（非快进 / 回退）。 */
+  removedCount: number
+  fastForward: boolean
+  filesChanged: number
+  additions: number
+  deletions: number
+  dirtyFiles: number
+  summary: string
+  warnings: string[]
+}
+
+/** 添加子模块的统一返回；executed=false 表示仓库未被改动，等待二次确认。 */
+export type SubmoduleOperationReport = {
+  action: string
+  executed: boolean
+  requiresConfirmation: boolean
+  summary: string
+  warnings: string[]
+  affected: string[]
+  submodules: RepositorySubmoduleDetail[]
+  snapshot?: RepositorySnapshot | null
+}
+

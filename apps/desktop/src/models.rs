@@ -334,6 +334,118 @@ pub struct RemoteOperationReport {
 }
 
 // ---------------------------------------------------------------------------
+// 子模块接入（W2-10）：添加子模块 / 递归克隆 / 指针差异
+// 全部由 src/git_submodule.rs 与 src/repository_management.rs 生产。
+// 红线：所有 URL 一律先脱敏再序列化，凭据不进入返回值；
+//       Git 在 stderr 里回显的地址同样过 redact_error_text 后才返回前端。
+// ---------------------------------------------------------------------------
+
+/// `.gitmodules` + `submodule status --recursive` 合并出的子模块明细。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositorySubmoduleDetail {
+    /// 相对父仓库的路径（始终是 `/` 分隔，便于前端比对）。
+    pub path: String,
+    /// `.gitmodules` 里的段名；未配置时退化为路径。
+    pub name: String,
+    /// 已脱敏的子模块地址（userinfo 与查询串替换为 `[redacted]`）。
+    pub url: String,
+    /// `.gitmodules` 配置的跟踪分支；为空表示「跟随父仓库记录的提交」。
+    pub configured_branch: Option<String>,
+    pub status: String,
+    /// `submodule.<name>.url` 是否已进入本地 `.git/config`（即是否已 init）。
+    pub initialized: bool,
+    /// 父仓库 HEAD 记录的 gitlink 提交；未提交时为空。
+    pub head_commit: String,
+    /// 父仓库索引记录的 gitlink 提交。
+    pub staged_commit: String,
+    /// 子模块工作区当前 HEAD；未初始化时为空。
+    pub checked_out_commit: String,
+    /// 子模块工作区的未提交改动文件数；过深仓库可能为 None（未探测）。
+    pub dirty_files: Option<usize>,
+    /// 该路径下的嵌套子模块数量。
+    pub nested_count: usize,
+    /// 原始 URL 是否内嵌凭据；为真时上面的 url 已脱敏。
+    pub credentials_redacted: bool,
+    /// 子模块在磁盘上的绝对路径，供前端「下钻打开仓库」复用。
+    pub absolute_path: String,
+}
+
+/// 子模块指针差异里列出的单条提交（子模块仓库内部的新增提交）。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmoduleCommitEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub title: String,
+    pub author: String,
+    pub email: String,
+    pub commit_time: String,
+}
+
+/// 子模块差异语义：指针从哪个提交移到哪个提交，以及子模块内部为此新增了什么。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmodulePointerDiff {
+    pub path: String,
+    pub name: String,
+    /// 已脱敏的子模块地址。
+    pub url: String,
+    pub absolute_path: String,
+    /// 父仓库 HEAD 记录的提交（「旧」侧优先取它）。
+    pub head_commit: String,
+    /// 父仓库索引记录的提交。
+    pub staged_commit: String,
+    /// 子模块工作区 HEAD（「新」侧）。
+    pub current_commit: String,
+    /// 实际用于比较的旧提交。
+    pub previous_commit: String,
+    /// 实际用于比较的新提交；未初始化时为空。
+    pub target_commit: String,
+    /// 相对 HEAD 记录，指针是否发生变化（暂存或工作区任一不同）。
+    pub changed: bool,
+    /// 指针变化是否只停留在索引（已暂存未提交）。
+    pub pointer_staged: bool,
+    /// 子模块工作区 HEAD 与索引记录不一致（未暂存的指针移动）。
+    pub pointer_unstaged: bool,
+    pub uninitialized: bool,
+    pub detached: bool,
+    /// `previous..target`：子模块内为此新增的提交列表（限量并给出截断提示）。
+    pub added_commits: Vec<SubmoduleCommitEntry>,
+    pub added_count: usize,
+    /// `target..previous`：指针后移丢掉的提交数（非快进 / 回退）。
+    pub removed_count: usize,
+    /// 旧提交是否是新增提交的祖先；false 表示指针被回退或分叉。
+    pub fast_forward: bool,
+    pub files_changed: usize,
+    pub additions: usize,
+    pub deletions: usize,
+    /// 子模块自身工作区的未提交改动文件数。
+    pub dirty_files: usize,
+    pub summary: String,
+    pub warnings: Vec<String>,
+}
+
+/// 添加子模块的统一返回：既能表达「已执行」，也能表达「等待二次确认」。
+/// executed=false 时 Rust 层没有对仓库做任何改动。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmoduleOperationReport {
+    /// 稳定的动作标识，前端据此选择确认文案。
+    pub action: String,
+    pub executed: bool,
+    /// 为真表示这是一次预览，需要用户确认后携带 confirm=true 再调用一次。
+    pub requires_confirmation: bool,
+    pub summary: String,
+    pub warnings: Vec<String>,
+    pub affected: Vec<String>,
+    /// 执行后的子模块明细（URL 已脱敏）。
+    pub submodules: Vec<RepositorySubmoduleDetail>,
+    /// 仅在 executed=true 时回填，供前端直接刷新主界面；读取失败不影响操作本身。
+    pub snapshot: Option<RepositorySnapshot>,
+}
+
+// ---------------------------------------------------------------------------
 // 恢复与问题定位（W1-5）：Reflog / Bisect / Reset 模式
 // ---------------------------------------------------------------------------
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { CloudDownload, FolderGit2, FolderOpen, Plus, RefreshCw, X } from 'lucide-react'
 import { Button } from '../../components/Button'
-import { createRepository, pickRepositoryDirectory, type RepositoryDetails } from '../../repository'
+import { cloneRepositoryWithSubmodules, createRepository, pickRepositoryDirectory, type RepositoryDetails } from '../../repository'
+import { parseCloneDepth } from './submoduleAddForm'
 
 export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }: {
   mode: 'clone' | 'init'
@@ -12,12 +13,15 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
   const [source, setSource] = useState('')
   const [parent, setParent] = useState(initialParent)
   const [name, setName] = useState('')
+  const [recurse, setRecurse] = useState(false)
+  const [depth, setDepth] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const dialogRef = useRef<HTMLElement>(null)
   const destination = parent ? `${parent.replace(/[\\/]+$/, '')}${parent.includes('\\') ? '\\' : '/'}${name}` : ''
   const validName = Boolean(name.trim()) && !/^[.]+$|[<>:"/\\|?*\x00-\x1f]|[. ]$/.test(name)
-  const canSubmit = validName && Boolean(parent.trim()) && (mode !== 'clone' || Boolean(source.trim()))
+  const cloneDepth = parseCloneDepth(depth)
+  const canSubmit = validName && Boolean(parent.trim()) && (mode !== 'clone' || (Boolean(source.trim()) && !cloneDepth.error))
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null
     dialogRef.current?.querySelector('input')?.focus()
@@ -45,7 +49,10 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
     if (!canSubmit || busy) return
     setBusy(true)
     setError('')
-    try { onCreated(await createRepository(destination, mode === 'clone' ? source.trim() : null)) }
+    try {
+      if (mode === 'clone') onCreated(await cloneRepositoryWithSubmodules(destination, source.trim(), recurse, cloneDepth.depth, null, false))
+      else onCreated(await createRepository(destination, null))
+    }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); setBusy(false) }
   }
 
@@ -62,6 +69,12 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
         {mode === 'clone' && <label>仓库地址<input value={source} onChange={(event) => setSource(event.target.value)} onBlur={() => {
           if (!name) setName(source.trim().replace(/[\\/]+$/, '').split(/[/:\\]/).pop()?.replace(/\.git$/, '') ?? '')
         }} placeholder="https://… / git@… / 本地仓库路径" spellCheck={false} disabled={busy}/></label>}
+        {mode === 'clone' && <div className="repository-clone-options">
+          <label className="repository-checkbox"><input type="checkbox" checked={recurse} onChange={(event) => setRecurse(event.target.checked)} disabled={busy}/><span>递归克隆 Submodule（--recurse-submodules，含嵌套）</span></label>
+          <label>浅克隆深度（可选）<input value={depth} onChange={(event) => setDepth(event.target.value)} placeholder="留空＝完整历史" inputMode="numeric" spellCheck={false} disabled={busy}/></label>
+          {cloneDepth.error && <p className="repository-inline-error" role="alert">{cloneDepth.error}</p>}
+          <small>浅克隆会把本地路径改写为 file:// 以让 --depth 真正生效；递归克隆失败时会脱敏回显子模块地址。</small>
+        </div>}
         <label>父目录<span className="repository-directory-input"><input value={parent} onChange={(event) => setParent(event.target.value)} placeholder="选择或输入父目录" disabled={busy}/><Button type="button" variant="secondary" onClick={() => void browse()} disabled={busy} title="选择父目录"><FolderOpen size={15}/></Button></span></label>
         <label>仓库文件夹名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="my-project" spellCheck={false} disabled={busy}/></label>
         <div className="repository-destination"><span>将保存到</span><code>{destination || '请选择父目录并填写名称'}</code><small>目标文件夹须为新目录或空目录。</small></div>
