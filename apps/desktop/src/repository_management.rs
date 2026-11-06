@@ -1,4 +1,4 @@
-use crate::{git, models::RepositorySubmodule};
+use crate::{git, git_submodule, models::RepositorySubmodule};
 use serde::Serialize;
 use std::{
     fs,
@@ -8,6 +8,24 @@ use std::{
 };
 
 const README_LIMIT: usize = 1024 * 1024;
+/// 浅克隆深度上限：再深就没意义，且明显是误填（比如把提交数当深度）。
+#[allow(dead_code)] // 待 commands.rs 注册 clone_repository_with_options 后可移除
+const MAX_CLONE_DEPTH: usize = 10_000;
+
+/// 递归 / 浅克隆的开关集合。每一项都必须先过校验才进入 Git 参数数组，
+/// 前端对话框只允许布尔与数字，不存在把命令片段传进来的通道。
+#[derive(Clone, Default)]
+#[allow(dead_code)] // 待 commands.rs 注册 clone_repository_with_options 后可移除
+pub struct CloneOptions {
+    /// `--recurse-submodules`：克隆父仓库的同时把子模块（含嵌套）拉到工作区。
+    pub recurse_submodules: bool,
+    /// `--depth N`：父仓库（递归时连同子模块）只取最近 N 个提交。
+    pub depth: Option<usize>,
+    /// `--branch`：检出的分支或标签。
+    pub branch: Option<String>,
+    /// `--single-branch`：只取该分支的历史，不抓其他分支引用。
+    pub single_branch: bool,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,21 +143,12 @@ pub fn load_repository_readme(path: &str) -> Result<Option<RepositoryReadme>, St
     Ok(None)
 }
 
-pub fn create_repository(
-    destination: &str,
-    source: Option<&str>,
-) -> Result<RepositoryDetails, String> {
+/// 克隆 / 初始化的目标目录校验：必须是绝对路径，且只能是新目录或空目录。
+/// 抽出来给 create_repository 与 clone_repository 共用，保证两条入口的拒绝行为一致。
+fn validated_destination(destination: &str) -> Result<PathBuf, String> {
     let target = PathBuf::from(destination.trim());
     if !target.is_absolute() || target.file_name().is_none() {
         return Err("请选择仓库的绝对路径".into());
-    }
-    if let Some(source) = source {
-        if source.trim().is_empty()
-            || source.trim().starts_with('-')
-            || source.contains(['\0', '\n', '\r'])
-        {
-            return Err("请输入有效的远程地址或本地仓库路径".into());
-        }
     }
     if target.exists() {
         if !target.is_dir()
@@ -155,13 +164,137 @@ pub fn create_repository(
     if !parent.is_dir() {
         return Err("目标目录的父目录不存在".into());
     }
-    let destination = target.to_string_lossy();
+    Ok(target)
+}
+
+pub fn create_repository(
+    destination: &str,
+    source: Option<&str>,
+) -> Result<RepositoryDetails, String> {
+    let target = validated_destination(destination)?;
+    if let Some(source) = source {
+        if source.trim().is_empty()
+            || source.trim().starts_with('-')
+            || source.contains(['\0', '\n', '\r'])
+        {
+            return Err("请输入有效的远程地址或本地仓库路径".into());
+        }
+    }
+    let destination = target.to_string_lossy().to_string();
+    let parent = target.parent().ok_or("目标目录无效")?;
     if let Some(source) = source {
         git::git_output(parent, &["clone", "--", source.trim(), &destination])?;
     } else {
         git::git_output(parent, &["init", "--", &destination])?;
     }
     load_repository_details(&destination)
+}
+
+/// 带选项的克隆（W2-10）：递归子模块 + 浅克隆 + 指定分支。
+///
+/// 与 `create_repository` 的分工：那条是「最小可用的克隆/初始化」入口（既有对话框、
+/// 且被别的轨道依赖），这条是能力补齐，只加不减 —— 不改变旧入口的任何行为。
+///
+/// 两个必须知道的细节：
+/// 1. 浅克隆依赖 `--depth` 真正生效。对**裸本地路径**，Git 会走硬链接优化并警告
+///    「--depth 在本地克隆时被忽略」，于是用户以为是浅仓库、实际是全量仓库。
+///    因此这里把 POSIX 绝对路径改写成 `file:///...` 再克隆（同一份内容，只是不走硬链接），
+///    让深度如实生效；Windows 盘符路径不做改写，交由 Git 自己决定。
+/// 2. 递归克隆的子模块若使用 file 协议，需要为该条命令临时放开
+///    `protocol.file.allow`（Git 自 CVE-2022-39253 起默认拒绝），由 git_submodule 统一判定。
+#[allow(dead_code)] // 待 commands.rs 注册 clone_repository_with_options 后可移除
+pub fn clone_repository(
+    destination: &str,
+    source: &str,
+    options: &CloneOptions,
+) -> Result<RepositoryDetails, String> {
+    let target = validated_destination(destination)?;
+    let parent = target.parent().ok_or("目标目录无效")?;
+    let mut source = git_submodule::validate_clone_source(source)?;
+    if options.depth.is_some() && source.starts_with('/') {
+        source = format!("file://{source}");
+    }
+    if let Some(depth) = options.depth {
+        if depth == 0 || depth > MAX_CLONE_DEPTH {
+            return Err(format!("浅克隆深度需要是 1..={MAX_CLONE_DEPTH}"));
+        }
+    }
+    let branch = options
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            if value.starts_with('-') {
+                return Err("分支名不能以 - 开头，否则会被 Git 当成命令选项".to_string());
+            }
+            if value
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+            {
+                return Err("分支名不能包含空白或控制字符".to_string());
+            }
+            git::git_output(parent, &["check-ref-format", "--branch", value])
+                .map_err(|_| format!("分支名称不符合 Git 规则：{value}"))?;
+            Ok(value.to_string())
+        })
+        .transpose()?;
+
+    let mut args: Vec<String> = Vec::new();
+    if options.recurse_submodules {
+        args.extend(git_submodule::file_transport_args(&source));
+    }
+    args.push("clone".into());
+    if options.recurse_submodules {
+        args.push("--recurse-submodules".into());
+        if options.depth.is_some() {
+            // 子模块同样只取最近 N 个提交，否则深度只对父仓库生效。
+            args.push("--shallow-submodules".into());
+        }
+    }
+    if let Some(depth) = options.depth {
+        args.extend(["--depth".into(), depth.to_string()]);
+    }
+    if options.single_branch {
+        args.push("--single-branch".into());
+    }
+    if let Some(branch) = &branch {
+        args.extend(["--branch".into(), branch.clone()]);
+    }
+    args.extend([
+        "--".into(),
+        source.clone(),
+        target.to_string_lossy().to_string(),
+    ]);
+
+    let destination = target.to_string_lossy().to_string();
+    if let Err(error) = git::git_output_owned(parent, &args) {
+        // 递归克隆的失败常发生在子模块阶段，Git 会把地址原样回显；出口一律脱敏。
+        let reason = git_submodule::redact_error_text(&error);
+        let hint = if options.recurse_submodules {
+            "（递归克隆可能在子模块阶段失败：可先不勾选递归，克隆后在 Submodule 面板逐个初始化）"
+        } else {
+            ""
+        };
+        return Err(format!("克隆仓库失败：{reason}{hint}"));
+    }
+    load_repository_details(&destination)
+}
+
+/// 供 commands.rs 直接把布尔/数字参数转成选项结构，避免前端传对象带来的反序列化面。
+#[allow(dead_code)] // 待 commands.rs 注册 clone_repository_with_options 后可移除
+pub fn clone_options(
+    recurse_submodules: bool,
+    depth: Option<usize>,
+    branch: Option<String>,
+    single_branch: bool,
+) -> CloneOptions {
+    CloneOptions {
+        recurse_submodules,
+        depth,
+        branch,
+        single_branch,
+    }
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -244,12 +377,18 @@ mod tests {
     struct Sandbox(PathBuf);
     impl Sandbox {
         fn new() -> Self {
+            // 这台机器的 SystemTime 只有微秒级粒度：并行用例可能拿到完全相同的
+            // pid+时间戳，于是一个用例的 Drop 会把另一个仍在用的沙箱整个删掉
+            // （表现为一堆 "无法读取当前工作目录" 的假失败）。补一个进程内自增序号。
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+            let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst);
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
             let path = std::env::temp_dir().join(format!(
-                "branchline-manager-{}-{unique}",
+                "branchline-manager-{}-{unique}-{sequence}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).unwrap();
@@ -362,5 +501,312 @@ mod tests {
         assert_eq!(readme.name, "README.md");
         assert_eq!(readme.content.len(), README_LIMIT);
         assert!(readme.truncated);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // 递归 / 浅克隆（W2-10）。夹具直接调用被测的 add 入口，顺带验证两条能力的衔接。
+    // -----------------------------------------------------------------------------------------
+
+    fn git_at(dir: &std::path::Path, args: &[&str]) -> String {
+        git::git_output(dir, args).expect("fixture git command")
+    }
+
+    fn init_repo(dir: &std::path::Path, file: &str, message: &str) {
+        fs::create_dir_all(dir).expect("create repo dir");
+        git_at(dir, &["init", "--quiet"]);
+        git_at(dir, &["config", "user.name", "Branchline Test"]);
+        git_at(dir, &["config", "user.email", "branchline@example.com"]);
+        git_at(dir, &["config", "commit.gpgsign", "false"]);
+        fs::write(dir.join(file), "内容\n").expect("write seed");
+        git_at(dir, &["add", "--", file]);
+        git_at(dir, &["commit", "--quiet", "-m", message]);
+    }
+
+    fn commit_more(dir: &std::path::Path, file: &str, message: &str) {
+        fs::write(dir.join(file), format!("{message}\n")).expect("write extra");
+        git_at(dir, &["add", "--", file]);
+        git_at(dir, &["commit", "--quiet", "-m", message]);
+    }
+
+    /// clone_repository 的返回值没有 Debug（内含 RepositoryDetails 的嵌套结构），
+    /// 用这个辅助取错误信息，避免 expect_err 的 trait 约束。
+    trait RejectedClone {
+        fn rejected_clone(self) -> String;
+    }
+    impl RejectedClone for Result<RepositoryDetails, String> {
+        fn rejected_clone(self) -> String {
+            match self {
+                Err(error) => error,
+                Ok(details) => panic!("预期被拒绝，实际克隆到 {}", details.path),
+            }
+        }
+    }
+
+    /// 造一个「已登记子模块并已提交」的父仓库。
+    fn parent_with_submodule(sandbox: &Sandbox, label: &str, extra_commits: usize) -> PathBuf {
+        let parent = sandbox.0.join(format!("{label}-parent"));
+        let library = sandbox.0.join(format!("{label}-library"));
+        init_repo(&library, "lib.md", "子模块初始提交");
+        init_repo(&parent, "README.md", "父仓库初始提交");
+        let report = crate::git_submodule::add_repository_submodule(
+            &parent.to_string_lossy(),
+            &library.to_string_lossy(),
+            Some("vendor/lib"),
+            None,
+            None,
+            false,
+        )
+        .expect("夹具添加子模块");
+        assert!(report.executed, "{}", report.summary);
+        git_at(&parent, &["add", ".gitmodules", "vendor/lib"]);
+        git_at(&parent, &["commit", "--quiet", "-m", "登记子模块"]);
+        for index in 0..extra_commits {
+            commit_more(&parent, &format!("note{index}.md"), &format!("补充提交 {index}"));
+        }
+        parent
+    }
+
+    #[test]
+    fn manager_recursive_clone_fetches_submodule_content() {
+        let sandbox = Sandbox::new();
+        let parent = parent_with_submodule(&sandbox, "recurse", 0);
+        let target = sandbox.0.join("递归克隆");
+        let details = clone_repository(
+            &target.to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions {
+                recurse_submodules: true,
+                ..CloneOptions::default()
+            },
+        )
+        .expect("递归克隆");
+        // 子模块内容真的落地，而不是留一个空目录。
+        assert!(target.join("vendor/lib/lib.md").is_file());
+        assert_eq!(
+            git_at(&target.join("vendor/lib"), &["rev-parse", "--verify", "HEAD"])
+                .trim()
+                .len(),
+            40
+        );
+        let listed =
+            crate::git_submodule::list_repository_submodule_details(&details.path).expect("读明细");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].path, "vendor/lib");
+        assert!(listed[0].initialized);
+
+        // 不勾选递归时行为不变：父仓库到位，子模块目录为空。
+        let plain = sandbox.0.join("普通克隆");
+        clone_repository(
+            &plain.to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions::default(),
+        )
+        .expect("普通克隆");
+        assert!(plain.join("README.md").is_file());
+        assert!(!plain.join("vendor/lib/lib.md").exists());
+    }
+
+    #[test]
+    fn manager_shallow_recursive_clone_bounds_history_of_both_levels() {
+        let sandbox = Sandbox::new();
+        let parent = parent_with_submodule(&sandbox, "shallow", 3);
+        let library = sandbox.0.join("shallow-library");
+        assert_eq!(
+            git_at(&parent, &["rev-list", "--count", "HEAD"]).trim(),
+            "5"
+        );
+        // 子模块地址改成 file://：Git 对「裸本地路径」的克隆会忽略 --depth
+        // （硬链接优化），只有 file:// 才真的受浅克隆约束 —— 这是 Git 的既定行为，
+        // 用例把它写出来，免得以后误以为是实现缺陷。
+        git_at(
+            &parent,
+            &[
+                "config",
+                "-f",
+                ".gitmodules",
+                "submodule.vendor/lib.url",
+                &format!("file://{}", library.to_string_lossy()),
+            ],
+        );
+        git_at(&parent, &["add", ".gitmodules"]);
+        git_at(&parent, &["commit", "--quiet", "-m", "子模块地址改为 file://"]);
+
+        let target = sandbox.0.join("浅克隆");
+        clone_repository(
+            &target.to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions {
+                recurse_submodules: true,
+                depth: Some(1),
+                ..CloneOptions::default()
+            },
+        )
+        .expect("浅递归克隆");
+        // 本地绝对路径被改写成 file:// 才让 --depth 真正生效（否则 Git 走硬链接并忽略深度）。
+        assert_eq!(
+            git_at(&target, &["rev-list", "--count", "HEAD"]).trim(),
+            "1"
+        );
+        assert_eq!(
+            git_at(&target, &["rev-parse", "--is-shallow-repository"]).trim(),
+            "true"
+        );
+        assert!(target.join("vendor/lib/lib.md").is_file());
+        assert_eq!(
+            git_at(
+                &target.join("vendor/lib"),
+                &["rev-parse", "--is-shallow-repository"]
+            )
+            .trim(),
+            "true",
+            "--shallow-submodules 必须让子模块同样变浅"
+        );
+    }
+
+    #[test]
+    fn manager_recursive_clone_still_fetches_content_from_plain_local_submodule_urls() {
+        let sandbox = Sandbox::new();
+        // 裸本地路径的子模块：浅克隆对它不生效（Git 忽略 --depth），但内容必须照样落地。
+        let parent = parent_with_submodule(&sandbox, "plainurl", 0);
+        let target = sandbox.0.join("本地地址浅克隆");
+        clone_repository(
+            &target.to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions {
+                recurse_submodules: true,
+                depth: Some(1),
+                ..CloneOptions::default()
+            },
+        )
+        .expect("带深度的递归克隆");
+        assert_eq!(
+            git_at(&target, &["rev-parse", "--is-shallow-repository"]).trim(),
+            "true"
+        );
+        assert!(target.join("vendor/lib/lib.md").is_file());
+        assert_eq!(
+            git_at(&target.join("vendor/lib"), &["rev-list", "--count", "HEAD"]).trim(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn manager_recursive_clone_redacts_credentials_from_clone_errors() {
+        let sandbox = Sandbox::new();
+        // 必须是「真 gitlink + 坏地址」：只有 .gitmodules 而没有指针记录时，
+        // Git 的递归克隆会静默跳过子模块并以 0 退出，那样根本走不到错误出口，
+        // 这个用例就会假绿。
+        let parent = parent_with_submodule(&sandbox, "cred", 0);
+        git_at(
+            &parent,
+            &[
+                "config",
+                "-f",
+                ".gitmodules",
+                "submodule.vendor/lib.url",
+                "https://user:SECRETTOK@127.0.0.1:1/team/missing.git",
+            ],
+        );
+        git_at(&parent, &["add", ".gitmodules"]);
+        git_at(&parent, &["commit", "--quiet", "-m", "把子模块地址改成带凭据的不可达地址"]);
+
+        let error = clone_repository(
+            &sandbox.0.join("cred-target").to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions {
+                recurse_submodules: true,
+                ..CloneOptions::default()
+            },
+        )
+        .rejected_clone();
+        assert!(
+            !error.contains("SECRETTOK"),
+            "克隆错误泄漏凭据（Git 会把带凭据的地址原样回显）：{error}"
+        );
+        assert!(!error.contains("user:"), "克隆错误泄漏凭据：{error}");
+        // 失败原因仍要可读：既点名地址主机，也给出可操作的下一步。
+        assert!(error.contains("127.0.0.1:1"), "克隆错误不可读：{error}");
+        assert!(error.contains("递归"), "克隆错误缺少引导：{error}");
+    }
+
+    #[test]
+    fn manager_clone_validates_options_before_reaching_git() {
+        let sandbox = Sandbox::new();
+        let parent = parent_with_submodule(&sandbox, "opts", 0);
+        let target = sandbox.0.join("opts-target");
+        // 源地址：可执行传输与选项注入一律拒绝，且不落盘。
+        for source in [
+            "ext::sh -c touch% /tmp/branchline-clone-pwned",
+            "--upload-pack=evil",
+        ] {
+            let error =
+                clone_repository(&target.to_string_lossy(), source, &CloneOptions::default())
+                    .rejected_clone();
+            assert!(!error.is_empty());
+        }
+        assert!(!target.exists());
+        assert!(!std::path::Path::new("/tmp/branchline-clone-pwned").exists());
+
+        // 深度：0 与超大值都是误填，直接拒绝。
+        for depth in [0usize, 10_001] {
+            assert!(clone_repository(
+                &sandbox.0.join(format!("depth-{depth}")).to_string_lossy(),
+                &parent.to_string_lossy(),
+                &CloneOptions {
+                    depth: Some(depth),
+                    ..CloneOptions::default()
+                },
+            )
+            .is_err());
+        }
+        // 合法分支 + --single-branch 正常克隆。
+        let branch = git_at(&parent, &["branch", "--show-current"]).trim().to_string();
+        let ok = clone_repository(
+            &sandbox.0.join("branch-ok").to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions {
+                branch: Some(branch.clone()),
+                single_branch: true,
+                ..CloneOptions::default()
+            },
+        )
+        .expect("按分支克隆");
+        assert_eq!(ok.branch, branch);
+    }
+
+    #[test]
+    fn manager_clone_rejects_bad_branch_names_and_destinations() {
+        let sandbox = Sandbox::new();
+        let parent = parent_with_submodule(&sandbox, "dest", 0);
+        for branch in ["-b", "feat branch"] {
+            let error = clone_repository(
+                &sandbox.0.join(format!("bad-{}", branch.len())).to_string_lossy(),
+                &parent.to_string_lossy(),
+                &CloneOptions {
+                    branch: Some(branch.to_string()),
+                    ..CloneOptions::default()
+                },
+            )
+            .rejected_clone();
+            assert!(error.contains("分支"), "分支错误文案不明确：{error}");
+        }
+        // 非空目录、相对路径都必须先被拒，且不动磁盘。
+        fs::write(sandbox.0.join("keep.txt"), "keep").unwrap();
+        assert!(clone_repository(
+            &sandbox.0.to_string_lossy(),
+            &parent.to_string_lossy(),
+            &CloneOptions::default()
+        )
+        .is_err());
+        assert!(clone_repository(
+            "relative/target",
+            &parent.to_string_lossy(),
+            &CloneOptions::default()
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(sandbox.0.join("keep.txt")).unwrap(),
+            "keep"
+        );
     }
 }

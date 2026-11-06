@@ -1,4 +1,4 @@
-import type { BisectStatus, BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, ReflogEntry, RemoteOperationReport, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositoryRemoteDetail, RepositorySnapshot, RepositoryTagDetail } from '@branchline/git-models'
+import type { BisectStatus, BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, ReflogEntry, RemoteOperationReport, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositoryRemoteDetail, RepositorySnapshot, RepositorySubmoduleDetail, RepositoryTagDetail, SubmoduleOperationReport, SubmodulePointerDiff } from '@branchline/git-models'
 
 export type {
   RepositoryDetails,
@@ -33,6 +33,10 @@ export type {
   BisectStep,
   BisectStatus,
   RepositoryResetMode,
+  RepositorySubmoduleDetail,
+  SubmoduleCommitEntry,
+  SubmodulePointerDiff,
+  SubmoduleOperationReport,
 } from '@branchline/git-models'
 
 export async function loadGitUserConfig() {
@@ -452,4 +456,56 @@ export async function advanceRepositoryBisect(repositoryPath: string) {
 
 export async function resetRepositoryBisect(repositoryPath: string) {
   return invoke<RepositorySnapshot>('reset_repository_bisect', { repositoryPath })
+}
+
+// ---------------------------------------------------------------------------
+// W2-10 子模块接入：添加 Submodule / 递归克隆 / 指针差异。
+//
+// 约定与远程管理一致：写操作第一次调用只做「预览」—— report.executed=false
+// 且 requiresConfirmation=true 时 Rust 层没动仓库，前端确认后带 confirm=true 再调一次。
+// 所有 Submodule 地址都由 Rust 侧脱敏后返回，凭据不进前端、不进命令日志。
+// ---------------------------------------------------------------------------
+
+export async function addRepositorySubmodule(
+  repositoryPath: string,
+  url: string,
+  submodulePath?: string | null,
+  name?: string | null,
+  branch?: string | null,
+  confirm = false,
+) {
+  return invoke<SubmoduleOperationReport>('add_repository_submodule', {
+    repositoryPath,
+    url,
+    submodulePath: submodulePath || null,
+    name: name || null,
+    branch: branch || null,
+    confirm,
+  })
+}
+
+export async function listRepositorySubmoduleDetails(repositoryPath: string) {
+  return invoke<RepositorySubmoduleDetail[]>('list_repository_submodule_details', { repositoryPath })
+}
+
+export async function loadSubmodulePointerDiff(repositoryPath: string, submodulePath: string) {
+  return invoke<SubmodulePointerDiff>('load_submodule_pointer_diff', { repositoryPath, submodulePath })
+}
+
+export async function cloneRepositoryWithSubmodules(
+  destination: string,
+  source: string,
+  recurseSubmodules = false,
+  depth: number | null = null,
+  branch: string | null = null,
+  singleBranch = false,
+) {
+  return invoke<import('@branchline/git-models').RepositoryDetails>('clone_repository_with_options', {
+    destination,
+    source,
+    recurseSubmodules,
+    depth,
+    branch,
+    singleBranch,
+  })
 }

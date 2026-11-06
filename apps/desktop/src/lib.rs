@@ -2,6 +2,7 @@ mod commands;
 mod git;
 mod git_remote;
 mod git_recovery;
+mod git_submodule;
 mod models;
 mod repository_management;
 
