@@ -100,3 +100,56 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 文件状态、提交图谱和 Diff 分开缓存，缓存使用条目和字节双重上限。
 - 定时 Fetch 在后台低优先级执行，同一仓库只允许一个网络任务。
 - 前端避免 Electron 常驻进程；目标空闲内存控制在 100 MB 左右，具体以接入 Tauri 后的基准测试为准。
+
+## 安装包、自动更新与签名
+
+桌面端使用 Tauri 2 bundler 产出 `.dmg` / `.app`（macOS）、`.deb` / `.AppImage`（Linux）与 `.msi` / `.exe`（Windows）。`tauri.conf.json` 已开启 `bundle.createUpdaterArtifacts`，构建时会同时生成 updater 签名产物与 `latest.json`。
+
+更新通道固定为 GitHub Releases：
+
+```text
+https://github.com/ViewWay/mySmartGit/releases/latest/download/latest.json
+```
+
+客户端在「版本与更新」面板中调用官方 updater 插件检查、下载并安装更新，安装包由内置公钥验签，前端不自行拼接下载地址。
+
+### 生成与配置签名密钥
+
+```bash
+pnpm --filter @branchline/desktop exec tauri signer generate -w ~/.branchline/updater.key
+```
+
+- 私钥 `updater.key` 只保存在本机或 CI Secret 中，禁止提交；仓库已通过 `.gitignore` 忽略 `*.key`。
+- 公钥内容写入 `apps/desktop/tauri.conf.json` 的 `plugins.updater.pubkey`。
+- 在 GitHub 仓库 Secrets 中配置：
+  - `TAURI_SIGNING_PRIVATE_KEY`：私钥文件内容（或 `tauri signer generate` 输出的 base64 内容）
+  - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥密码（无密码时留空）
+
+### 发布流程
+
+1. 同步升级 `apps/desktop/tauri.conf.json`、`apps/desktop/Cargo.toml` 与根 `package.json` 的版本号。
+2. 提交后创建并推送 tag：
+
+   ```bash
+   git tag v0.5.1
+   git push origin v0.5.1
+   ```
+
+3. `.github/workflows/release.yml` 在 macOS（universal）、Ubuntu 22.04 与 Windows 上并行构建，使用 `TAURI_SIGNING_PRIVATE_KEY` 签名后上传安装包、签名文件与 `latest.json`；全部平台完成后再由 `publish-release` 作业把 Draft 转为正式发布，避免半成品清单被客户端拉到。
+4. Release 必须为正式发布（非 Draft / 非 Prerelease），否则 `releases/latest` 不会指向它，自动更新无法发现新版本。
+
+`latest.json` 由 CI 按平台合并生成；不要手工编辑或只上传单一平台的清单，否则其他平台会被判定为已是最新。
+
+### 本地验证
+
+```bash
+pnpm desktop:build
+```
+
+构建日志会列出生成的安装包与 `.sig` 文件。自动更新只能在打包后的桌面应用中验证；浏览器预览会明确提示更新器不可用。
+
+## 界面语言
+
+- 默认简体中文，可在左侧栏底部切换 English / 中文，选择写入 `localStorage` 的 `branchline.language`。
+- 文案集中在 `apps/frontend/src/i18n/index.ts`，使用 `{{param}}` 占位符插值，并同步更新 `<html lang>`。
+- 当前已覆盖应用外壳（侧栏导航、内容标签页、通用按钮）与「版本与更新」面板；各功能面板的文案仍为中文，按模块逐步迁移，新增文案时请同时补齐 `zh` 与 `en` 两个字典。

@@ -20,6 +20,8 @@ mod repository_management;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|_app| {
             // 自定义 / 随包 Git 目录必须在任何 Git 子进程启动前前置到 PATH。
             git_credentials::configure_process_path();

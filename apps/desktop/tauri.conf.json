@@ -25,13 +25,38 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "category": "DeveloperTool",
+    "shortDescription": "本地优先的 Git 桌面客户端",
+    "longDescription": "Branchline 是一个高性能本地 Git 客户端，提供提交图谱、暂存与提交、历史编辑、冲突处理、LFS、Gitflow、托管平台协作、内置终端与 AI 提交消息。",
+    "copyright": "Copyright © 2026 Branchline",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCRTM5QTA1NzE4NjRBNDEKUldSQlNvWnhCWnJqVy9tbkVzeGhRTm43b0hWU29CT3EwUlB5bDBJOUR1WVZ1QnFkUmtrTUxKNi8K",
+      "endpoints": [
+        "https://github.com/ViewWay/mySmartGit/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

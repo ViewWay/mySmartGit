@@ -5,3 +5,8 @@ apps/desktop/target/
 *.log
 
 .worktrees/
+
+# Tauri updater signing keys must never be committed.
+.branchline/
+*.key
+*.key.pub
