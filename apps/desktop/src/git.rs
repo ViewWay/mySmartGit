@@ -1793,10 +1793,73 @@ fn unresolved_paths(root: &Path) -> Vec<String> {
     .collect()
 }
 
+fn sequencer_todo_hashes(todo_path: &Path) -> Vec<String> {
+    std::fs::read_to_string(todo_path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            // 行格式为 `<command> [flags] <hash> <subject>`；命令后的第一个非 flag 词元即 hash。
+            let mut tokens = line.split_whitespace();
+            tokens.next()?;
+            tokens
+                .find(|token| !token.starts_with('-'))
+                .map(ToString::to_string)
+        })
+        .collect()
+}
+
+/// 多提交还原（`git revert A B`）冲突时 Git 只写 REVERT_HEAD + `.git/sequencer/`
+/// （todo 含当前条目、head 记原始 HEAD、opts 记 edit 标志）；单提交还原冲突则没有
+/// sequencer 目录。这里把两种形态统一折算成步数与步骤列表。
+fn revert_steps(
+    root: &Path,
+    sequencer_dir: &Path,
+    todo_hashes: &[String],
+    current_step: usize,
+) -> Vec<RepositoryOperationStep> {
+    let mut steps = Vec::new();
+    if let Some(sequence_head) = read_trimmed(&sequencer_dir.join("head")) {
+        steps.extend(operation_steps(
+            root,
+            &format!("{sequence_head}..HEAD"),
+            current_step,
+        ));
+    }
+    for (offset, hash) in todo_hashes.iter().enumerate() {
+        let full = git_output(root, &["rev-parse", hash])
+            .unwrap_or_else(|_| hash.clone())
+            .trim()
+            .to_string();
+        let (title, author) = git_output(
+            root,
+            &["show", "-s", "--format=%s%x1f%an", full.as_str()],
+        )
+        .map(|value| {
+            let mut fields = value.trim().split('\x1f');
+            (
+                fields.next().unwrap_or_default().to_string(),
+                fields.next().unwrap_or_default().to_string(),
+            )
+        })
+        .unwrap_or_default();
+        steps.push(RepositoryOperationStep {
+            short_hash: full.chars().take(7).collect(),
+            hash: full,
+            title,
+            author,
+            status: if offset == 0 { "current" } else { "pending" }.into(),
+        });
+    }
+    steps
+}
+
 fn repository_operation(root: &Path) -> Option<RepositoryOperationState> {
     let conflicts = unresolved_paths(root);
     let merge_head = git_internal_path(root, "MERGE_HEAD");
     let cherry_pick_head = git_internal_path(root, "CHERRY_PICK_HEAD");
+    let revert_head = git_internal_path(root, "REVERT_HEAD");
     let rebase_merge = git_internal_path(root, "rebase-merge");
     let rebase_apply = git_internal_path(root, "rebase-apply");
     let (kind, current_step, total_steps, original_branch, onto, current_commit, message, steps) =
@@ -1860,6 +1923,72 @@ fn repository_operation(root: &Path) -> Option<RepositoryOperationState> {
                 message,
                 Vec::new(),
             )
+        } else if revert_head.is_file() {
+            // revert 冲突态：Git 留下 REVERT_HEAD 与 MERGE_MSG（首行 `Revert "原标题"`），
+            // 但不写 MERGE_HEAD / CHERRY_PICK_HEAD；多提交还原时另有 sequencer 目录。
+            let current_commit = read_trimmed(&revert_head);
+            let message = read_trimmed(&git_internal_path(root, "MERGE_MSG"))
+                .map(|value| {
+                    value
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string()
+                })
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    current_commit.as_ref().and_then(|hash| {
+                        git_output_owned(
+                            root,
+                            &[
+                                "show".into(),
+                                "-s".into(),
+                                "--format=%s".into(),
+                                hash.clone(),
+                            ],
+                        )
+                        .ok()
+                        .map(|value| value.trim().to_string())
+                    })
+                });
+            let sequencer_dir = git_internal_path(root, "sequencer");
+            let todo_hashes = if sequencer_dir.is_dir() {
+                sequencer_todo_hashes(&sequencer_dir.join("todo"))
+            } else {
+                Vec::new()
+            };
+            let (current_step, total_steps) = if todo_hashes.is_empty() {
+                (1, 1)
+            } else {
+                let done = read_trimmed(&sequencer_dir.join("head"))
+                    .map(|head| {
+                        optional_git_output(
+                            root,
+                            &["rev-list", "--count", &format!("{head}..HEAD")],
+                        )
+                        .trim()
+                        .parse::<usize>()
+                        .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                (done + 1, done + todo_hashes.len())
+            };
+            let steps = if todo_hashes.is_empty() {
+                Vec::new()
+            } else {
+                revert_steps(root, &sequencer_dir, &todo_hashes, current_step)
+            };
+            (
+                "revert",
+                current_step,
+                total_steps,
+                None,
+                None,
+                current_commit,
+                message,
+                steps,
+            )
         } else if cherry_pick_head.is_file() {
             let current_commit = read_trimmed(&cherry_pick_head);
             let message = current_commit.as_ref().and_then(|hash| {
@@ -1904,6 +2033,7 @@ fn repository_operation(root: &Path) -> Option<RepositoryOperationState> {
         label: match kind {
             "rebase" => "变基进行中",
             "merge" => "合并进行中",
+            "revert" => "还原进行中",
             "cherry-pick" => "Cherry-pick 进行中",
             _ => "冲突待处理",
         }
@@ -2210,6 +2340,19 @@ pub fn merge_repository_reference(repository_path: &str, reference: &str) -> Res
 /// 3. 索引与 HEAD 完全一致（`git diff --cached --quiet` 退出码 0），即确实无内容可提交。
 fn is_empty_cherry_pick_state(root: &Path) -> bool {
     if !git_internal_path(root, "CHERRY_PICK_HEAD").exists() {
+        return false;
+    }
+    if !unresolved_paths(root).is_empty() {
+        return false;
+    }
+    git_output(root, &["diff", "--cached", "--quiet"]).is_ok()
+}
+
+/// revert 的空结果判定与 cherry-pick 同一结构信号原则（不解析 Git 的本地化文案）：
+/// REVERT_HEAD 存在、索引无未合并路径、索引与 HEAD 完全一致——即用户把冲突
+/// 解决成了与当前提交相同的内容，`revert --continue` 必然失败，按 Git 语义视作跳过。
+fn is_empty_revert_state(root: &Path) -> bool {
+    if !git_internal_path(root, "REVERT_HEAD").exists() {
         return false;
     }
     if !unresolved_paths(root).is_empty() {
@@ -2537,6 +2680,14 @@ pub fn revert_repository_commit(
 ) -> Result<(), String> {
     let root = repository_root(repository_path)?;
     let commit = resolve_commit(&root, commit.trim())?;
+    // 已有未完成操作（含上一个 revert 自己的冲突态）时先给出明确指引：
+    // 否则 Git 只会报“您有未合并的文件”，用户不知道要去冲突面板处理。
+    if let Some(operation) = repository_operation(&root) {
+        return Err(format!(
+            "当前存在未完成的 {} 操作，请先在冲突面板继续或中止后再还原",
+            operation.kind
+        ));
+    }
     let parent_count = git_output_owned(
         &root,
         &[
@@ -2551,6 +2702,8 @@ pub fn revert_repository_commit(
     .count()
     .saturating_sub(1);
     let mut args = vec!["revert".into(), "--no-edit".into()];
+    // mainline 只参与首次冲突 diff 的计算；一旦进入冲突态，三方结果已固化在索引与
+    // REVERT_HEAD 中，`revert --continue` 实测无需（也无法）重新指定 -m，主线不会丢失。
     if parent_count > 1 {
         let mainline = mainline.ok_or_else(|| {
             "合并提交需要选择主线父提交（-m），请指定 1 到父提交数量之间的编号".to_string()
@@ -3917,6 +4070,14 @@ pub fn continue_repository_operation(repository_path: &str) -> Result<(), String
             "cherry-pick".into(),
             "--continue".into(),
         ],
+        // revert 冲突后的 --continue 默认会弹编辑器确认还原信息（首次调用的 --no-edit
+        // 不会传递到这里），与 merge 同样用 core.editor=true 抑制。
+        "revert" => vec![
+            "-c".into(),
+            "core.editor=true".into(),
+            "revert".into(),
+            "--continue".into(),
+        ],
         _ => return Err("当前操作不支持继续".into()),
     };
     match git_output_owned(&root, &args) {
@@ -3930,6 +4091,10 @@ pub fn continue_repository_operation(repository_path: &str) -> Result<(), String
             )
             .map(|_| ())
         }
+        // revert 被解决成空结果时同理：按 Git 语义跳过该还原并推进 sequencer 序列。
+        Err(_) if operation.kind == "revert" && is_empty_revert_state(&root) => {
+            git_output_owned(&root, &["revert".into(), "--skip".into()]).map(|_| ())
+        }
         Err(error) => Err(error),
     }
 }
@@ -3941,6 +4106,7 @@ pub fn skip_repository_operation(repository_path: &str) -> Result<(), String> {
     let command = match operation.kind.as_str() {
         "rebase" => "rebase",
         "cherry-pick" => "cherry-pick",
+        "revert" => "revert",
         _ => return Err("合并操作不能跳过提交".into()),
     };
     git_output_owned(&root, &[command.into(), "--skip".into()]).map(|_| ())
@@ -3954,6 +4120,7 @@ pub fn abort_repository_operation(repository_path: &str) -> Result<(), String> {
         "merge" => "merge",
         "rebase" => "rebase",
         "cherry-pick" => "cherry-pick",
+        "revert" => "revert",
         _ => return Err("当前冲突不是由可中止的 Git 操作产生".into()),
     };
     git_output_owned(&root, &[command.into(), "--abort".into()]).map(|_| ())
@@ -4611,6 +4778,324 @@ mod tests {
                 .expect("read revert subject")
                 .trim(),
             "Revert \"第二次提交\""
+        );
+    }
+
+    /// revert 冲突夹具：base(first) → 待还原提交(second) → 后续提交(third)。
+    /// 还原待还原提交要求把行内容恢复为 first，但该行已被后续提交改为 third → 必然冲突。
+    /// 返回 (仓库, 路径, 被还原提交哈希)。
+    fn conflicted_revert_repository() -> (TestRepository, String, String) {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        fs::write(repository.0.join("README.md"), "second\n").expect("write revert target");
+        git_output(&repository.0, &["add", "README.md"]).expect("stage revert target");
+        git_output(&repository.0, &["commit", "-m", "待还原提交"])
+            .expect("commit revert target");
+        let target = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read revert target hash")
+            .trim()
+            .to_string();
+        fs::write(repository.0.join("README.md"), "third\n").expect("write follow-up");
+        git_output(&repository.0, &["add", "README.md"]).expect("stage follow-up");
+        git_output(&repository.0, &["commit", "-m", "后续提交"]).expect("commit follow-up");
+        revert_repository_commit(&path, &target, None).expect_err("revert should conflict");
+        (repository, path, target)
+    }
+
+    #[test]
+    fn reports_a_conflicted_revert_as_a_resumable_revert_operation() {
+        let (repository, path, target) = conflicted_revert_repository();
+
+        let snapshot = read_repository(&path).expect("read revert conflict state");
+        let operation = snapshot.operation.expect("revert stays in progress");
+
+        assert_eq!(operation.kind, "revert");
+        assert_eq!(operation.label, "还原进行中");
+        assert_eq!(operation.conflicts, vec!["README.md"]);
+        assert_eq!(operation.current_commit.as_deref(), Some(target.as_str()));
+        assert_eq!(operation.message.as_deref(), Some("Revert \"待还原提交\""));
+        assert_eq!(operation.current_step, 1);
+        assert_eq!(operation.total_steps, 1);
+        assert!(git_internal_path(&repository.0, "REVERT_HEAD").is_file());
+    }
+
+    #[test]
+    fn continues_a_conflicted_revert_into_a_revert_commit() {
+        let (repository, path, _) = conflicted_revert_repository();
+        fs::write(repository.0.join("README.md"), "first\n").expect("resolve revert conflict");
+        stage_files(&path, &["README.md".into()], false).expect("stage resolved revert file");
+
+        continue_repository_operation(&path).expect("continue conflicted revert");
+
+        let snapshot = read_repository(&path).expect("read completed revert");
+        assert!(snapshot.operation.is_none(), "REVERT_HEAD must be cleared");
+        assert_eq!(
+            git_output(&repository.0, &["log", "-1", "--format=%s"])
+                .expect("read revert subject")
+                .trim(),
+            "Revert \"待还原提交\""
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("README.md")).expect("read reverted file"),
+            "first\n"
+        );
+    }
+
+    #[test]
+    fn aborts_a_conflicted_revert_back_to_the_pre_revert_state() {
+        let (repository, path, _) = conflicted_revert_repository();
+        let before = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read pre-revert head")
+            .trim()
+            .to_string();
+
+        abort_repository_operation(&path).expect("abort conflicted revert");
+
+        assert_eq!(
+            git_output(&repository.0, &["rev-parse", "HEAD"])
+                .expect("read restored head")
+                .trim(),
+            before
+        );
+        assert!(read_repository(&path)
+            .expect("read aborted revert")
+            .operation
+            .is_none());
+        assert!(!git_internal_path(&repository.0, "REVERT_HEAD").exists());
+        assert!(git_output(&repository.0, &["status", "--porcelain"])
+            .expect("read aborted status")
+            .trim()
+            .is_empty());
+        assert_eq!(
+            fs::read_to_string(repository.0.join("README.md")).expect("read restored file"),
+            "third\n"
+        );
+    }
+
+    #[test]
+    fn skips_a_conflicted_revert_and_leaves_no_revert_commit() {
+        let (repository, path, _) = conflicted_revert_repository();
+        let before = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read pre-revert head")
+            .trim()
+            .to_string();
+
+        // Git 语义：revert --skip 丢弃当前还原并结束序列（单提交场景即彻底退出 revert）。
+        skip_repository_operation(&path).expect("skip conflicted revert");
+
+        assert_eq!(
+            git_output(&repository.0, &["rev-parse", "HEAD"])
+                .expect("read head after skip")
+                .trim(),
+            before
+        );
+        assert!(read_repository(&path)
+            .expect("read repository after skip")
+            .operation
+            .is_none());
+    }
+
+    #[test]
+    fn continues_an_emptied_revert_by_skipping_it() {
+        let (repository, path, _) = conflicted_revert_repository();
+        // 把冲突解决成与 HEAD 完全一致（third）：还原结果为空提交，
+        // git revert --continue 必然失败，应像 cherry-pick 一样按结构信号转为跳过。
+        fs::write(repository.0.join("README.md"), "third\n").expect("resolve to unchanged");
+        stage_files(&path, &["README.md".into()], false).expect("stage unchanged resolution");
+        let before = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read head before empty continue")
+            .trim()
+            .to_string();
+
+        continue_repository_operation(&path).expect("continue should skip the emptied revert");
+
+        assert!(!is_empty_revert_state(&repository.0));
+        assert_eq!(
+            git_output(&repository.0, &["rev-parse", "HEAD"])
+                .expect("read head after emptied revert")
+                .trim(),
+            before,
+            "an empty revert must not create a commit"
+        );
+        assert!(read_repository(&path)
+            .expect("read repository after emptied revert")
+            .operation
+            .is_none());
+    }
+
+    #[test]
+    fn continues_a_conflicted_merge_revert_without_asking_for_the_mainline_again() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        fs::write(repository.0.join("README.md"), "A\nB\nC\nD\nE\n")
+            .expect("write five-line base");
+        git_output(&repository.0, &["commit", "-am", "五线基线"]).expect("commit five-line base");
+        git_output(&repository.0, &["switch", "-c", "feat/mainline"])
+            .expect("create feature branch");
+        fs::write(repository.0.join("README.md"), "AFEAT\nB\nC\nD\nE\n")
+            .expect("feature edits first line");
+        git_output(&repository.0, &["commit", "-am", "功能侧改动"])
+            .expect("commit feature edit");
+        git_output(&repository.0, &["switch", &base_branch]).expect("switch back to base");
+        fs::write(repository.0.join("README.md"), "A\nB\nC\nD\nEMAIN\n")
+            .expect("main edits last line");
+        git_output(&repository.0, &["commit", "-am", "主线侧改动"]).expect("commit main edit");
+        git_output(&repository.0, &["merge", "--no-edit", "-m", "合并功能", "feat/mainline"])
+            .expect("merge feature cleanly");
+        let merge_hash = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read merge commit hash")
+            .trim()
+            .to_string();
+        fs::write(repository.0.join("README.md"), "AFEAT\nB\nC\nD\nEMAIN\nF\n")
+            .expect("append after merge");
+        git_output(&repository.0, &["commit", "-am", "合并之后的追加"])
+            .expect("commit append");
+        fs::write(repository.0.join("README.md"), "AFEAT2\nB\nC\nD\nEMAIN\nF\n")
+            .expect("rewrite merged line afterwards");
+        git_output(&repository.0, &["commit", "-am", "合并之后的改写"])
+            .expect("commit rewrite");
+
+        revert_repository_commit(&path, &merge_hash, Some(1)).expect_err("merge revert should conflict");
+
+        let snapshot = read_repository(&path).expect("read merge revert conflict");
+        let operation = snapshot.operation.expect("merge revert in progress");
+        assert_eq!(operation.kind, "revert");
+        assert_eq!(operation.current_commit.as_deref(), Some(merge_hash.as_str()));
+        assert_eq!(operation.message.as_deref(), Some("Revert \"合并功能\""));
+        assert_eq!(operation.conflicts, vec!["README.md"]);
+
+        // 主线只参与首次 diff：解决后 continue 无需重新指定 -m，主线信息不会丢失。
+        fs::write(repository.0.join("README.md"), "A\nB\nC\nD\nEMAIN\nF\n")
+            .expect("resolve reverting the feature line");
+        stage_files(&path, &["README.md".into()], false).expect("stage merge revert resolution");
+        continue_repository_operation(&path).expect("continue merge revert without mainline");
+
+        let snapshot = read_repository(&path).expect("read completed merge revert");
+        assert!(snapshot.operation.is_none());
+        assert_eq!(
+            git_output(&repository.0, &["log", "-1", "--format=%s"])
+                .expect("read merge revert subject")
+                .trim(),
+            "Revert \"合并功能\""
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("README.md")).expect("read reverted file"),
+            "A\nB\nC\nD\nEMAIN\nF\n"
+        );
+    }
+
+    #[test]
+    fn tracks_a_multi_commit_revert_sequence_with_step_progress() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        for (content, message) in [
+            ("one\n", "还原目标一"),
+            ("two\n", "还原目标二"),
+            ("three\n", "无关最新提交"),
+        ] {
+            fs::write(repository.0.join("README.md"), content).expect("write step commit");
+            git_output(&repository.0, &["add", "README.md"]).expect("stage step commit");
+            git_output(&repository.0, &["commit", "-m", message]).expect("create step commit");
+        }
+        let second = git_output(&repository.0, &["rev-parse", "HEAD~1"])
+            .expect("read second commit")
+            .trim()
+            .to_string();
+        let first = git_output(&repository.0, &["rev-parse", "HEAD~2"])
+            .expect("read first commit")
+            .trim()
+            .to_string();
+
+        // 序列还原（先还原较新的 HEAD~1，再还原 HEAD~2）：首个还原与无关最新提交冲突。
+        git_output_owned(
+            &repository.0,
+            &["revert".into(), "--no-edit".into(), second.clone(), first.clone()],
+        )
+        .expect_err("first revert of the sequence should conflict");
+
+        let snapshot = read_repository(&path).expect("read sequence revert conflict");
+        let operation = snapshot.operation.expect("revert sequence in progress");
+        assert_eq!(operation.kind, "revert");
+        assert_eq!(operation.current_step, 1);
+        assert_eq!(operation.total_steps, 2);
+        assert_eq!(operation.steps.len(), 2);
+        assert_eq!(operation.steps[0].hash, second);
+        assert_eq!(operation.steps[0].status, "current");
+        assert_eq!(operation.steps[1].hash, first);
+        assert_eq!(operation.steps[1].status, "pending");
+
+        // 解决首个还原：冲突三方是 base=two / ours=three / theirs=one，取 one
+        // 让第二个还原（one→first）能干净应用，continue 自动推进 sequencer 收尾。
+        fs::write(repository.0.join("README.md"), "one\n").expect("resolve to the reverted content");
+        stage_files(&path, &["README.md".into()], false).expect("stage sequence resolution");
+        continue_repository_operation(&path).expect("continue the revert sequence");
+
+        let snapshot = read_repository(&path).expect("read completed revert sequence");
+        assert!(snapshot.operation.is_none());
+        let subjects = git_output(&repository.0, &["log", "-2", "--format=%s"])
+            .expect("read sequence subjects");
+        assert_eq!(
+            subjects.lines().map(str::trim).collect::<Vec<_>>(),
+            vec!["Revert \"还原目标一\"", "Revert \"还原目标二\""]
+        );
+        assert_eq!(
+            fs::read_to_string(repository.0.join("README.md")).expect("read fully reverted file"),
+            "first\n"
+        );
+    }
+
+    #[test]
+    fn rejects_a_second_revert_while_an_operation_is_in_progress() {
+        let (repository, path, target) = conflicted_revert_repository();
+        let head = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read head")
+            .trim()
+            .to_string();
+
+        let error = revert_repository_commit(&path, &head, None)
+            .expect_err("revert must refuse during the pending revert");
+
+        assert!(error.contains("revert"), "error should name the pending kind: {error}");
+        assert!(error.contains("冲突面板"), "error should point at the panel: {error}");
+        // 冲突态本身不能被二次调用破坏。
+        let snapshot = read_repository(&path).expect("re-read after refused revert");
+        let operation = snapshot.operation.expect("still reverting");
+        assert_eq!(
+            operation.kind, "revert",
+            "the pending REVERT_HEAD state must survive"
+        );
+        assert_eq!(operation.current_commit.as_deref(), Some(target.as_str()));
+    }
+
+    #[test]
+    fn classifies_idle_revert_and_merge_operation_states() {
+        // 无操作：空闲仓库不产出任何操作状态。
+        let idle = test_repository();
+        let idle_path = idle.0.to_string_lossy().to_string();
+        assert!(read_repository(&idle_path)
+            .expect("read idle repository")
+            .operation
+            .is_none());
+
+        // revert 中：REVERT_HEAD 必须被识别为 revert，而不是 merge/cherry-pick/conflict。
+        let (_revert_repository, revert_path, _) = conflicted_revert_repository();
+        let revert_operation = read_repository(&revert_path)
+            .expect("read reverting repository")
+            .operation
+            .expect("revert detected");
+        assert_eq!(revert_operation.kind, "revert");
+
+        // 其他操作中：merge 冲突不能被误判成 revert。
+        let (merge_repository, merge_path) = conflicted_repository();
+        assert_eq!(
+            repository_operation(&merge_repository.0)
+                .expect("merge detected")
+                .kind,
+            "merge"
         );
     }
 
