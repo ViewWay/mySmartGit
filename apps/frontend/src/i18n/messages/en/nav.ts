@@ -112,6 +112,7 @@ export const nav = {
   'shell.ariaFetchInterval': 'Choose auto fetch interval',
   'shell.ariaPollingInterval': 'Choose local status sampling interval',
   'shell.parentRepoTitle': 'Back to parent repository: {{path}}',
+  'shell.parentRepoLabel': 'Back to parent · {{name}}',
   'shell.rootRepoTitle': 'Back to root repository: {{path}}',
   'shell.rootRepoLabel': 'Root · {{name}}',
   'shell.noRepositoryBranch': 'No repository',

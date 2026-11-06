@@ -112,6 +112,7 @@ export const nav = {
   'shell.ariaFetchInterval': '选择自动 Fetch 间隔',
   'shell.ariaPollingInterval': '选择本地状态采样间隔',
   'shell.parentRepoTitle': '返回父仓库：{{path}}',
+  'shell.parentRepoLabel': '返回父仓库 · {{name}}',
   'shell.rootRepoTitle': '返回主仓库：{{path}}',
   'shell.rootRepoLabel': '主仓库 · {{name}}',
   'shell.noRepositoryBranch': '未打开仓库',

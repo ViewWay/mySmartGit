@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, Box, Check, ChevronsUpDown, FolderGit2, FolderOpen, GitFork, Search, Star } from 'lucide-react'
 import type { RepositorySnapshot } from '../../repository'
+import { useI18n } from '../../i18n'
 import type { RecentRepository, RepositoryParent } from './useRepositoryWorkspace'
 import {
   buildRepositorySwitchTargets,
@@ -105,9 +106,9 @@ export function RepositoryQuickSwitcher({ favorites, onToggleFavorite, onManageR
   const shortcutTargets = query.trim() ? [] : quickTargets
   const shortcutIds = new Set(shortcutTargets.map((target) => target.id))
   const groups = [
-    { label: '收藏仓库', items: filteredTargets.filter((target) => target.pinned && target.source !== 'current') },
-    { label: '当前仓库结构', items: filteredTargets.filter((target) => target.source === 'current' || (!target.pinned && ['worktree', 'submodule'].includes(target.source))) },
-    { label: '最近仓库', items: filteredTargets.filter((target) => !target.pinned && !['current', 'worktree', 'submodule'].includes(target.source)) },
+    { label: t('repository.switcher.favorites'), items: filteredTargets.filter((target) => target.pinned && target.source !== 'current') },
+    { label: t('repository.switcher.structure'), items: filteredTargets.filter((target) => target.source === 'current' || (!target.pinned && ['worktree', 'submodule'].includes(target.source))) },
+    { label: t('repository.switcher.recent'), items: filteredTargets.filter((target) => !target.pinned && !['current', 'worktree', 'submodule'].includes(target.source)) },
   ].map((group) => ({ ...group, items: group.items.filter((target) => !shortcutIds.has(target.id)) })).filter((group) => group.items.length)
 
   const renderTarget = (target: RepositorySwitchTarget) => {
@@ -119,31 +120,31 @@ export function RepositoryQuickSwitcher({ favorites, onToggleFavorite, onManageR
         <span className="repository-switch-text"><strong title={target.label}>{target.label}</strong><small title={target.path}>{target.kind} · {target.path}</small></span>
         {target.source === 'current' && <Check size={14}/>} 
       </button>
-      <button type="button" className={`repository-pin-button ${target.pinned ? 'active' : ''}`} onClick={() => onToggleFavorite({ name: target.label, path: target.path })} title={target.pinned ? '取消收藏' : '收藏仓库'} aria-label={target.pinned ? `取消收藏 ${target.label}` : `收藏 ${target.label}`}><Star size={13} fill={target.pinned ? 'currentColor' : 'none'}/></button>
+      <button type="button" className={`repository-pin-button ${target.pinned ? 'active' : ''}`} onClick={() => onToggleFavorite({ name: target.label, path: target.path })} title={target.pinned ? t('repository.details.unfavorite') : t('repository.details.favorite')} aria-label={target.pinned ? t('repository.switcher.unfavoriteName', { name: target.label }) : t('repository.switcher.favoriteName', { name: target.label })}><Star size={13} fill={target.pinned ? 'currentColor' : 'none'}/></button>
     </div>
   }
 
   const menu = open && <div ref={menuRef} className="repo-switcher-menu" style={menuPosition}>
-    {parentRepository && <button type="button" className="parent-repository-action" onClick={() => { closeSwitcher(); onReturnToParentRepository() }} title={parentRepository.path}><span className="switcher-icon"><ArrowLeft size={14}/></span><span><strong>返回父仓库 · {parentRepository.name}</strong><small>{parentRepository.path}</small></span></button>}
+    {parentRepository && <button type="button" className="parent-repository-action" onClick={() => { closeSwitcher(); onReturnToParentRepository() }} title={parentRepository.path}><span className="switcher-icon"><ArrowLeft size={14}/></span><span><strong>{t('shell.parentRepoLabel', { name: parentRepository.name })}</strong><small>{parentRepository.path}</small></span></button>}
     <div className="repository-switch-search"><Search size={14}/><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0) }} onKeyDown={(event) => {
       if (event.key === 'ArrowDown') { event.preventDefault(); setActiveIndex((current) => filteredTargets.length ? (current + 1) % filteredTargets.length : 0) }
       if (event.key === 'ArrowUp') { event.preventDefault(); setActiveIndex((current) => filteredTargets.length ? (current - 1 + filteredTargets.length) % filteredTargets.length : 0) }
       if (event.key === 'Enter' && filteredTargets[activeIndex]) { event.preventDefault(); selectTarget(filteredTargets[activeIndex]) }
       if (event.key === 'Escape') { event.preventDefault(); closeSwitcher() }
-    }} placeholder="搜索仓库名称或路径" spellCheck={false}/></div>
+    }} placeholder={t('repository.manager.searchPlaceholderNoEllipsis')} spellCheck={false}/></div>
     <div className="repository-switch-results">
-      {shortcutTargets.length > 0 && <div className="repository-switch-shortcuts"><div className="switcher-label">快捷访问</div>{shortcutTargets.map(renderTarget)}</div>}
+      {shortcutTargets.length > 0 && <div className="repository-switch-shortcuts"><div className="switcher-label">{t('repository.switcher.quickAccess')}</div>{shortcutTargets.map(renderTarget)}</div>}
       {groups.map((group) => <div className="repository-switch-group" key={group.label}><div className="switcher-label">{group.label}</div>{group.items.map(renderTarget)}</div>)}
-      {!filteredTargets.length && <div className="repository-switch-empty">没有匹配的仓库</div>}
+      {!filteredTargets.length && <div className="repository-switch-empty">{t('repository.manager.noSearchMatchTitle')}</div>}
     </div>
-    <button type="button" className="open-repository-action" onClick={() => { closeSwitcher(); onManageRepositories() }}><FolderGit2 size={16}/><span>仓库管理</span></button>
-      <button type="button" className="open-repository-action" disabled={openingRepository} onClick={() => { onOpenRepository(); closeSwitcher() }}><span className="switcher-icon"><FolderOpen size={14}/></span><span><strong>{openingRepository ? '正在读取仓库…' : '打开本地仓库'}</strong><small>选择其他 Git 仓库或 Worktree</small></span></button>
+    <button type="button" className="open-repository-action" onClick={() => { closeSwitcher(); onManageRepositories() }}><FolderGit2 size={16}/><span>{t('nav.repositories')}</span></button>
+      <button type="button" className="open-repository-action" disabled={openingRepository} onClick={() => { onOpenRepository(); closeSwitcher() }}><span className="switcher-icon"><FolderOpen size={14}/></span><span><strong>{openingRepository ? t('sidebar.opening') : t('repository.manager.openLocal')}</strong><small>{t('repository.switcher.openOther')}</small></span></button>
   </div>
 
   return <div className="repo-switcher-wrap" ref={rootRef}>
-    <button type="button" className={`repo-switcher ${open ? 'open' : ''}`} onClick={() => open ? closeSwitcher() : showSwitcher()} title={activeTarget ? `${activeTarget.label}\n${activeTarget.path}` : '打开本地仓库'}>
+    <button type="button" className={`repo-switcher ${open ? 'open' : ''}`} onClick={() => open ? closeSwitcher() : showSwitcher()} title={activeTarget ? `${activeTarget.label}\n${activeTarget.path}` : t('repository.manager.openLocal')}>
       <div className="repo-icon"><ActiveIcon size={17}/></div>
-      <div><strong title={activeTarget?.label}>{activeTarget?.label ?? '打开本地仓库'}</strong><span title={activeTarget?.path}>{activeTarget?.path ?? '选择 Git 仓库或 Worktree'}</span></div>
+      <div><strong title={activeTarget?.label}>{activeTarget?.label ?? t('repository.manager.openLocal')}</strong><span title={activeTarget?.path}>{activeTarget?.path ?? t('repository.switcher.pickRepository')}</span></div>
       <ChevronsUpDown size={14}/>
     </button>
     {menu && createPortal(menu, rootRef.current?.closest('.app-shell') ?? document.body)}
