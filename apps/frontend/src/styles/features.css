@@ -347,6 +347,21 @@
 
 .code-row code { padding: 3px 9px; line-height: 1.5; white-space: pre; }
 
+.diff-panel { --diff-line-height: 1.5; --diff-code-padding-y: 3px; --diff-code-padding-x: 9px; }
+.diff-panel .code-row, .diff-panel .split-code-side, .diff-panel .split-action-row, .diff-panel .diff-omitted { min-height: 0; }
+.diff-panel .code-row code, .diff-panel .split-code-side code { padding: var(--diff-code-padding-y) var(--diff-code-padding-x); line-height: var(--diff-line-height); font-kerning: none; }
+.diff-panel.word-wrap .unified-diff-content, .diff-panel.word-wrap .split-diff-content { width: 100%; min-width: 0; }
+.diff-panel.word-wrap .code-row, .diff-panel.word-wrap .split-code-side { width: 100%; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-panel.word-wrap:not(.stage-actions-enabled) .code-row { grid-template-columns: var(--diff-line-number-width, 5ch) 2ch minmax(0, 1fr); }
+.diff-panel.word-wrap.stage-actions-enabled .code-row { grid-template-columns: 32px var(--diff-line-number-width, 5ch) 26px minmax(0, 1fr); }
+.diff-panel.word-wrap .split-code-side { grid-template-columns: var(--diff-line-number-width, 5ch) 22px minmax(0, 1fr); }
+.diff-panel.word-wrap.stage-actions-enabled .split-code-side { grid-template-columns: var(--diff-line-number-width, 5ch) 26px minmax(0, 1fr); }
+.diff-panel.word-wrap .code-row code, .diff-panel.word-wrap .split-code-side code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.diff-panel.word-wrap .line-no, .diff-panel.word-wrap .change-sign { white-space: nowrap; overflow-wrap: normal; }
+.diff-panel.word-wrap .diff-omitted { overflow: hidden; white-space: nowrap; }
+.diff-panel.word-wrap .unified-diff-pane, .diff-panel.word-wrap .split-diff-pane { overflow-x: hidden; }
+.diff-panel.word-wrap .unified-diff-content, .diff-panel.word-wrap .split-diff-content { overflow-anchor: none; }
+
 .diff-stage-slot { position: relative; height: 100%; min-width: 0; background: var(--code-surface); }
 
 .diff-block-range { position: absolute; left: 50%; z-index: 1; width: 1px; background: var(--code-border); pointer-events: none; }
