@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Copy, HardDrive, KeyRound, Plus, RefreshCw, ShieldCheck, TerminalSquare, Trash2 } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -69,6 +70,7 @@ type KeyForm = {
 }
 
 export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged }: CredentialsPanelProps) {
+  const { t } = useI18n()
   const [runtime, setRuntime] = useState<GitRuntimeInfo | null>(null)
   const [keys, setKeys] = useState<SshKeyInfo[]>([])
   const [helpers, setHelpers] = useState<string[]>([])
@@ -130,8 +132,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
   }, [repositoryPath, scope])
 
   const candidateHelper = preset === 'cache' ? buildCacheHelper(cacheSeconds) : preset
-  const helperValidation = useMemo(() => validateCredentialHelper(candidateHelper), [candidateHelper])
-  const helperRisk = useMemo(() => credentialHelperRisk(candidateHelper), [candidateHelper])
+  const helperValidation = useMemo(() => validateCredentialHelper(candidateHelper, t), [candidateHelper])
+  const helperRisk = useMemo(() => credentialHelperRisk(candidateHelper, t), [candidateHelper])
 
   const applyHelper = async () => {
     if (!helperValidation.ok) {
@@ -215,7 +217,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
 
   const submitKey = async (event: FormEvent) => {
     event.preventDefault()
-    const validation = validateSshKeyForm(form)
+    const validation = validateSshKeyForm(form, t)
     if (!validation.ok) {
       setError(validation.error)
       return
@@ -240,7 +242,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
         validation.values.overwrite,
       )
       onNotice?.(
-        `已生成 ${info.fileName}（${sshKeyTypeLabel(info.keyType)}）。密钥为空口令；如需口令保护，请在此终端执行：ssh-keygen -p -f "${info.path}"`,
+        `已生成 ${info.fileName}（${sshKeyTypeLabel(info.keyType, t)}）。密钥为空口令；如需口令保护，请在此终端执行：ssh-keygen -p -f "${info.path}"`,
       )
       onChanged?.()
       await refresh()
@@ -398,7 +400,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                       </span>
                     )}
                   </td>
-                  <td>{sshKeyTypeLabel(key.keyType)}</td>
+                  <td>{sshKeyTypeLabel(key.keyType, t)}</td>
                   <td>{sshKeyBitsLabel(key.bits)}</td>
                   <td>
                     <span className="credentials-fingerprint" title={key.fingerprint ?? undefined}>

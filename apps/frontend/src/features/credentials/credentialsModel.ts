@@ -5,6 +5,8 @@
  * 真正决定「能不能写进配置 / 能不能发起子进程」的仍是 Rust 侧校验。
  */
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 export type CredentialScope = 'global' | 'local'
 
 export type SshKeyType = 'ed25519' | 'rsa'
@@ -54,11 +56,11 @@ const FILE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
  * 校验 credential.helper。Git 会通过 shell 执行该值，因此只接受固定白名单：
  * 空串（清除）、内置助手名、以及 `cache --timeout=<1-5 位数字>`。
  */
-export function validateCredentialHelper(input: string): CredentialHelperValidation {
+export function validateCredentialHelper(input: string, t: Translate): CredentialHelperValidation {
   const trimmed = input.trim()
   if (!trimmed) return { ok: true, value: '' }
   if (CONTROL_CHARACTERS.test(trimmed)) {
-    return { ok: false, error: '凭据助手不能包含控制字符或换行' }
+    return { ok: false, error: t('credentials.helperIllegalChars') }
   }
   const normalized = trimmed.split(/\s+/).join(' ')
   if ((SIMPLE_CREDENTIAL_HELPERS as readonly string[]).includes(normalized)) {
@@ -68,18 +70,18 @@ export function validateCredentialHelper(input: string): CredentialHelperValidat
   if (cacheMatch) return { ok: true, value: normalized }
   return {
     ok: false,
-    error: '只支持 osxkeychain、manager、manager-core、libsecret、wincred、store、cache 或 cache --timeout=<1-5 位秒数>',
+    error: t('credentials.helperUnsupported'),
   }
 }
 
 /** 风险提示：store 明文落盘；cache 仅内存。 */
-export function credentialHelperRisk(helper: string): string | null {
+export function credentialHelperRisk(helper: string, t: Translate): string | null {
   const normalized = helper.trim().split(/\s+/).join(' ')
   if (normalized === 'store') {
-    return 'store 会把凭据以明文写入 ~/.git-credentials，其他程序可以直接读取；请仅在受控环境中使用。'
+    return t('credentials.helperStoreWarning')
   }
   if (normalized === 'cache' || normalized.startsWith('cache --timeout=')) {
-    return 'cache 只在内存中临时缓存凭据，Git 进程结束后失效。'
+    return t('credentials.helperCacheNote')
   }
   return null
 }
@@ -102,7 +104,7 @@ export function formatFingerprint(fingerprint: string | null | undefined, maxLen
   return `${prefix}${body.slice(0, headLength)}…${body.slice(-tailLength)}`
 }
 
-export function sshKeyTypeLabel(keyType: string): string {
+export function sshKeyTypeLabel(keyType: string, t: Translate): string {
   switch (keyType.trim().toUpperCase()) {
     case 'ED25519':
       return 'Ed25519'
@@ -117,12 +119,12 @@ export function sshKeyTypeLabel(keyType: string): string {
     case 'DSA':
       return 'DSA'
     default:
-      return '未知'
+      return t('credentials.unknown')
   }
 }
 
 export function sshKeyBitsLabel(bits: number | null | undefined): string {
-  return typeof bits === 'number' && Number.isFinite(bits) ? `${bits} 位` : '—'
+  return typeof bits === 'number' && Number.isFinite(bits) ? `${bits}-bit` : '—'
 }
 
 /**
@@ -130,40 +132,40 @@ export function sshKeyBitsLabel(bits: number | null | undefined): string {
  * 文件名 `[A-Za-z0-9._-]{1,64}`、不能以 `-` 开头、不能带 .pub；
  * rsa 位数仅 2048/3072/4096；ed25519 忽略位数；注释禁止控制字符。
  */
-export function validateSshKeyForm(input: SshKeyFormInput): SshKeyFormValidation {
+export function validateSshKeyForm(input: SshKeyFormInput, t: Translate): SshKeyFormValidation {
   const fileName = input.fileName.trim()
-  if (!fileName) return { ok: false, error: '请输入密钥文件名' }
+  if (!fileName) return { ok: false, error: t('credentials.keyFileNameRequired') }
   if (!FILE_NAME_PATTERN.test(fileName)) {
-    return { ok: false, error: '文件名只能包含字母、数字、点、下划线和短横线，且不超过 64 字符' }
+    return { ok: false, error: t('credentials.keyFileNameChars') }
   }
   if (fileName.startsWith('-')) {
-    return { ok: false, error: '文件名不能以 - 开头，否则会被当成命令选项' }
+    return { ok: false, error: t('credentials.keyFileNameOptionLike') }
   }
   if (fileName === '.' || fileName === '..') {
-    return { ok: false, error: '文件名不能是 . 或 ..' }
+    return { ok: false, error: t('credentials.keyFileNameDot') }
   }
   if (fileName.endsWith('.pub')) {
-    return { ok: false, error: '文件名不要带 .pub 后缀，公钥会自动生成' }
+    return { ok: false, error: t('credentials.keyFileNameNoPub') }
   }
   if (input.keyType !== 'ed25519' && input.keyType !== 'rsa') {
-    return { ok: false, error: '密钥类型只能是 ed25519 或 rsa' }
+    return { ok: false, error: t('credentials.keyTypeUnsupported') }
   }
 
   let bits: number | null = null
   if (input.keyType === 'rsa') {
     const raw = input.bits.trim() || '3072'
     if (!(RSA_BITS as readonly string[]).includes(raw)) {
-      return { ok: false, error: 'RSA 位数只能是 2048 / 3072 / 4096' }
+      return { ok: false, error: t('credentials.rsaBitsUnsupported') }
     }
     bits = Number(raw)
   }
 
   const comment = input.comment.trim()
   if (comment.length > 200) {
-    return { ok: false, error: '密钥注释过长（上限 200 字符）' }
+    return { ok: false, error: t('credentials.commentTooLong') }
   }
   if (CONTROL_CHARACTERS.test(comment)) {
-    return { ok: false, error: '密钥注释不能包含控制字符或换行' }
+    return { ok: false, error: t('credentials.commentIllegalChars') }
   }
 
   return {

@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useEffect, useState } from 'react'
 import { Loader2, Settings2, Sparkles } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -37,6 +38,7 @@ export type CommitMessageAssistantProps = {
  * - API Key 只提交给后端保存，界面永远不回显明文。
  */
 export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply, onNotice }: CommitMessageAssistantProps) {
+  const { t } = useI18n()
   const [settings, setSettings] = useState<AiSettings | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
@@ -66,7 +68,7 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
         setMaxSubjectChars(loaded.maxSubjectChars)
       })
       .catch((error) => {
-        if (active) setSettingsError(describeAiError(error))
+        if (active) setSettingsError(describeAiError(error, t))
       })
     return () => {
       active = false
@@ -90,10 +92,10 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
       const options = normalizeAiOptions({ language, style, includeBody, maxSubjectChars })
       const generated = await generateCommitMessage(repositoryPath, options)
       setResult(generated)
-      const notice = generatedMessageNotice(generated)
+      const notice = generatedMessageNotice(generated, t)
       if (notice) onNotice?.(notice)
     } catch (error) {
-      onNotice?.(describeAiError(error))
+      onNotice?.(describeAiError(error, t))
     } finally {
       setBusy(false)
     }
@@ -118,7 +120,7 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
       setModel(saved.model)
       onNotice?.('AI 设置已保存')
     } catch (error) {
-      setSettingsError(describeAiError(error))
+      setSettingsError(describeAiError(error, t))
     } finally {
       setSaving(false)
     }
@@ -133,7 +135,7 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
       setApiKey('')
       onNotice?.('已清除 AI API Key')
     } catch (error) {
-      setSettingsError(describeAiError(error))
+      setSettingsError(describeAiError(error, t))
     } finally {
       setSaving(false)
     }
