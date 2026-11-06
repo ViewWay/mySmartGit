@@ -901,3 +901,49 @@ export type GitflowFinishReport = {
   headBefore: string
   headAfter: string
 }
+
+// ---------------------------------------------------------------------------
+// W3-5 AI 提交消息生成（apps/desktop/src/git_ai.rs）——与 Rust 同名结构对齐
+//
+// API Key 只存后端配置文件；AiSettings 仅用 `apiKeyConfigured` 标记是否已配置，
+// 前端永远拿不到明文。save 时 apiKey 传 null 表示保留原 key，空字符串表示清除。
+// ---------------------------------------------------------------------------
+
+export type AiLanguage = 'zh' | 'en'
+
+export type AiMessageStyle = 'conventional' | 'plain'
+
+/** 暴露给前端的 AI 设置；apiKeyConfigured 只表示后端是否已保存 key。 */
+export type AiSettings = {
+  baseUrl: string
+  model: string
+  language: AiLanguage
+  style: AiMessageStyle
+  includeBody: boolean
+  /** subject 字符上限（后端会钳制到 16–200）。 */
+  maxSubjectChars: number
+  apiKeyConfigured: boolean
+}
+
+/** 保存设置时的输入（不含 apiKeyConfigured）。 */
+export type AiSettingsInput = Omit<AiSettings, 'apiKeyConfigured'>
+
+/** 单次生成的可选覆盖项；缺省时沿用已保存设置。 */
+export type AiGenerateOptions = {
+  language?: AiLanguage | null
+  style?: AiMessageStyle | null
+  includeBody?: boolean | null
+  maxSubjectChars?: number | null
+}
+
+/**
+ * 生成结果。note 标明降级来源（暂存区为空时回退工作区）与截断信息；
+ * truncated 为机器可判定的「diff 或 subject 被截断」标记。
+ */
+export type AiCommitMessage = {
+  subject: string
+  body?: string | null
+  model: string
+  note?: string | null
+  truncated: boolean
+}

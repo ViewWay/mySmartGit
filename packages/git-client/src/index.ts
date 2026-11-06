@@ -941,3 +941,44 @@ export async function finishGitflowBranch(
     options,
   })
 }
+
+// ---------------------------------------------------------------------------
+// W3-5 AI 提交消息生成（apps/desktop/src/git_ai.rs）
+//
+// API Key 只在后端设置文件中保存；saveAiSettings 的 apiKey 传 null 保留原值，
+// 传空字符串清除。返回的 AiSettings 永不包含明文 key。
+// ---------------------------------------------------------------------------
+
+export type { AiSettings, AiSettingsInput, AiGenerateOptions, AiCommitMessage, AiLanguage, AiMessageStyle } from '@branchline/git-models'
+
+/** 读取 AI 设置（只回传 apiKeyConfigured 标记，不含明文 key）。 */
+export async function loadAiSettings() {
+  return invoke<import('@branchline/git-models').AiSettings>('load_ai_settings', {})
+}
+
+/** 保存 AI 设置；apiKey 为 null/undefined 时保留后端原 key，空字符串清除。 */
+export async function saveAiSettings(
+  settings: import('@branchline/git-models').AiSettingsInput,
+  apiKey?: string | null,
+) {
+  return invoke<import('@branchline/git-models').AiSettings>('save_ai_settings', {
+    settings,
+    apiKey: apiKey ?? null,
+  })
+}
+
+/** 清除已保存的 API Key，其余设置保持不变。 */
+export async function clearAiApiKey() {
+  return invoke<import('@branchline/git-models').AiSettings>('clear_ai_api_key', {})
+}
+
+/** 基于暂存区 diff（为空回退工作区）生成提交消息；错误文本已由后端脱敏。 */
+export async function generateCommitMessage(
+  repositoryPath: string,
+  options: import('@branchline/git-models').AiGenerateOptions,
+) {
+  return invoke<import('@branchline/git-models').AiCommitMessage>('generate_commit_message', {
+    repositoryPath,
+    options,
+  })
+}
