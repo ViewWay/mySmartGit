@@ -3,7 +3,9 @@ mod git;
 mod git_ai;
 mod git_credentials;
 mod git_flow;
+mod git_hosting;
 mod git_lfs;
+mod git_terminal;
 mod git_media;
 mod git_tree;
 mod git_remote;
@@ -189,6 +191,25 @@ pub fn run() {
             crate::git_credentials::api::delete_ssh_key,
             crate::git_credentials::api::set_credential_helper,
             crate::git_credentials::api::get_credential_helpers,
+            // W4-1 GitHub / GitLab 托管、PR/MR 与 CI
+            crate::git_hosting::load_hosting_settings,
+            crate::git_hosting::save_hosting_settings,
+            crate::git_hosting::clear_hosting_token,
+            crate::git_hosting::detect_hosting_repository,
+            crate::git_hosting::list_hosting_pull_requests,
+            crate::git_hosting::create_hosting_pull_request,
+            crate::git_hosting::load_hosting_pull_request,
+            // W4-2 内置终端与命令流水线
+            crate::git_terminal::start_terminal_session,
+            crate::git_terminal::read_terminal_output,
+            crate::git_terminal::write_terminal,
+            crate::git_terminal::resize_terminal,
+            crate::git_terminal::close_terminal_session,
+            crate::git_terminal::list_terminal_sessions,
+            crate::git_terminal::load_pipeline_commands,
+            crate::git_terminal::save_pipeline_commands,
+            crate::git_terminal::run_pipeline_command,
+            crate::git_terminal::cancel_pipeline_command,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");
