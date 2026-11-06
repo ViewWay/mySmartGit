@@ -396,4 +396,12 @@ export const repository = {
   'repository.structure.staleTitle': 'The selected item no longer exists',
   'repository.structure.staleHint': 'Refresh the repository structure and choose again.',
   'repository.structure.created': 'Worktree created: {{path}}',
+  'repository.switcher.kindCurrent': 'Current repository · {{branch}}',
+  'repository.switcher.kindFavorite': 'Favorite repository',
+  'repository.switcher.kindRecent': 'Recent repository · {{branch}}',
+  'repository.workspace.opened': 'Opened repository: {{name}}',
+  'repository.workspace.enteredSubmodule': 'Entered submodule: {{name}}',
+  'repository.workspace.returnedToParent': 'Returned to parent repository: {{name}}',
+  'repository.workspace.reopenFailed': 'Could not reopen the last repository: {{message}}',
+  'repository.workspace.fetchDone': 'Fetch finished; remote refs updated',
 } satisfies Record<keyof typeof import('../zh/repository').repository, string>

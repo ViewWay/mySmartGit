@@ -43,7 +43,7 @@ export function RepositoryQuickSwitcher({ favorites, onToggleFavorite, onManageR
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
-  const targets = useMemo(() => buildRepositorySwitchTargets(repository, recentRepositories, favorites), [favorites, recentRepositories, repository])
+  const targets = useMemo(() => buildRepositorySwitchTargets(repository, recentRepositories, favorites, t), [favorites, recentRepositories, repository, t])
   const filteredTargets = useMemo(() => filterRepositoryTargets(targets, query), [query, targets])
   const quickTargets = useMemo(() => quickAccessRepositoryTargets(targets), [targets])
   const activeTarget = targets.find((target) => target.source === 'current')

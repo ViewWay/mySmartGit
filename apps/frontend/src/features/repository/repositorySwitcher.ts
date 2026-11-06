@@ -47,6 +47,7 @@ export function buildRepositorySwitchTargets(
   repository: RepositorySwitchSnapshot | null,
   recentRepositories: RepositoryHistoryEntry[],
   favorites: FavoriteRepository[],
+  t: (key: string, params?: Record<string, string | number>) => string,
 ) {
   const favoritePaths = new Set(favorites.map((favorite) => normalizedRepositoryTargetPath(favorite.path)))
   const recentRanks = new Map(recentRepositories.map((recent, index) => [normalizedRepositoryTargetPath(recent.path), index]))
@@ -69,15 +70,15 @@ export function buildRepositorySwitchTargets(
   }
 
   if (repository) {
-    add({ label: repository.name, path: repository.path, kind: `当前仓库 · ${repository.branch}`, source: 'current', navigation: 'current' })
+    add({ label: repository.name, path: repository.path, kind: t('repository.switcher.kindCurrent', { branch: repository.branch }), source: 'current', navigation: 'current' })
     repository.submodules.forEach((submodule) => add({ label: submodule.path, path: joinedRepositoryPath(repository.path, submodule.path), kind: `Submodule · ${submodule.status}`, source: 'submodule', navigation: 'submodule' }))
     repository.worktrees
       .filter((worktree) => normalizedRepositoryTargetPath(worktree.path) !== normalizedRepositoryTargetPath(repository.path))
       .forEach((worktree) => add({ label: pathLabel(worktree.path), path: worktree.path, kind: `Worktree · ${worktree.branch ?? 'Detached'}`, source: 'worktree', navigation: 'worktree' }))
   }
 
-  favorites.forEach((favorite) => add({ label: favorite.name, path: favorite.path, kind: '收藏仓库', source: 'pinned', navigation: 'repository' }))
-  recentRepositories.forEach((recent) => add({ label: recent.name, path: recent.path, kind: `最近仓库 · ${recent.branch}`, source: 'recent', navigation: 'repository' }))
+  favorites.forEach((favorite) => add({ label: favorite.name, path: favorite.path, kind: t('repository.switcher.kindFavorite'), source: 'pinned', navigation: 'repository' }))
+  recentRepositories.forEach((recent) => add({ label: recent.name, path: recent.path, kind: t('repository.switcher.kindRecent', { branch: recent.branch }), source: 'recent', navigation: 'repository' }))
   return targets
 }
 

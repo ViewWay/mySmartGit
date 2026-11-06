@@ -396,4 +396,12 @@ export const repository = {
   'repository.structure.staleTitle': '所选项目已不存在',
   'repository.structure.staleHint': '刷新仓库结构后请重新选择。',
   'repository.structure.created': '已创建 Worktree：{{path}}',
+  'repository.switcher.kindCurrent': '当前仓库 · {{branch}}',
+  'repository.switcher.kindFavorite': '收藏仓库',
+  'repository.switcher.kindRecent': '最近仓库 · {{branch}}',
+  'repository.workspace.opened': '已打开仓库：{{name}}',
+  'repository.workspace.enteredSubmodule': '已进入 Submodule：{{name}}',
+  'repository.workspace.returnedToParent': '已返回父仓库：{{name}}',
+  'repository.workspace.reopenFailed': '无法重新打开上次仓库：{{message}}',
+  'repository.workspace.fetchDone': 'Fetch 完成，远程引用已更新',
 } as const

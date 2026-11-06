@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getLanguage, translate } from '../../i18n'
 import {
   fetchRepository,
   loadRepository,
@@ -259,13 +260,13 @@ export function useRepositoryWorkspace() {
   }, [applyRefreshedSnapshot, applySnapshot, setRepositoryNotice, startBackgroundFetch])
 
   const openRepositoryPath = useCallback(async (path: string) => {
-    const snapshot = await navigateToRepository(path, (loaded) => `已打开仓库：${loaded.name}`)
+    const snapshot = await navigateToRepository(path, (loaded) => translate(getLanguage(), 'repository.workspace.opened', { name: loaded.name }))
     if (snapshot) rememberRepository(snapshot)
     return snapshot
   }, [navigateToRepository, rememberRepository])
 
   const openSubmodulePath = useCallback(
-    (path: string) => navigateToRepository(path, (snapshot) => `已进入 Submodule：${snapshot.name}`),
+    (path: string) => navigateToRepository(path, (snapshot) => translate(getLanguage(), 'repository.workspace.enteredSubmodule', { name: snapshot.name })),
     [navigateToRepository],
   )
 
@@ -275,7 +276,7 @@ export function useRepositoryWorkspace() {
 
   const returnToParentRepository = useCallback(async () => {
     if (!parentRepository) return null
-    return navigateToRepository(parentRepository.path, (snapshot) => `已返回父仓库：${snapshot.name}`)
+    return navigateToRepository(parentRepository.path, (snapshot) => translate(getLanguage(), 'repository.workspace.returnedToParent', { name: snapshot.name }))
   }, [navigateToRepository, parentRepository])
 
   const openRepository = useCallback(async () => {
@@ -285,7 +286,7 @@ export function useRepositoryWorkspace() {
       const snapshot = await pickAndLoadRepository()
       if (!snapshot) return null
       navigationSequence.current += 1
-      applySnapshot(snapshot, `已打开仓库：${snapshot.name}`)
+      applySnapshot(snapshot, translate(getLanguage(), 'repository.workspace.opened', { name: snapshot.name }))
       rememberRepository(snapshot)
       startBackgroundFetch(snapshot.path)
       return snapshot
@@ -313,7 +314,7 @@ export function useRepositoryWorkspace() {
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error)
-        setRepositoryNotice(`无法重新打开上次仓库：${message}`)
+        setRepositoryNotice(translate(getLanguage(), 'repository.workspace.reopenFailed', { message }))
       })
       .finally(() => setOpeningRepository(false))
   }, [applySnapshot, recentRepositories, rememberRepository, setRepositoryNotice])
@@ -327,7 +328,7 @@ export function useRepositoryWorkspace() {
       navigationFetchedAt.current.set(repositoryCacheKey(snapshot.path), Date.now())
       applyRefreshedSnapshot(snapshot)
       setLastFetchAt(Date.now())
-      if (!quiet) setRepositoryNotice('Fetch 完成，远程引用已更新')
+      if (!quiet) setRepositoryNotice(translate(getLanguage(), 'repository.workspace.fetchDone'))
       return snapshot
     } catch (error) {
       if (!quiet) setRepositoryNotice(error instanceof Error ? error.message : String(error))
