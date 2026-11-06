@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   AlertTriangle,
@@ -81,6 +82,7 @@ const EMPTY_FORM: CreatePullRequestForm = {
 }
 
 export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanelProps) {
+  const { t } = useI18n()
   const [settings, setSettings] = useState<HostingSettings | null>(null)
   const [repository, setRepository] = useState<HostingRepository | null>(null)
   const [repositoryError, setRepositoryError] = useState('')
@@ -192,12 +194,12 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
 
   const saveSettings = async (event: FormEvent) => {
     event.preventDefault()
-    const hostError = validateHostingHost(host, provider)
+    const hostError = validateHostingHost(host, provider, t)
     if (hostError) {
       setError(hostError)
       return
     }
-    const tokenError = validateHostingToken(token)
+    const tokenError = validateHostingToken(token, t)
     if (tokenError) {
       setError(tokenError)
       return
@@ -267,7 +269,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
 
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault()
-    const invalid = validateCreatePullRequestForm(form, provider)
+    const invalid = validateCreatePullRequestForm(form, provider, t)
     if (invalid) {
       setError(invalid)
       return
@@ -318,7 +320,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
         <div>
           <span className="eyebrow">代码托管</span>
           <h2>PR / MR 与 CI</h2>
-          <p>{hostingSettingsSummary(settings)}</p>
+          <p>{hostingSettingsSummary(settings, t)}</p>
         </div>
         <div className="structure-actions">
           <Button
@@ -484,7 +486,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               </p>
               <div className="hosting-detail-flags">
                 <span className={`hosting-ci hosting-ci-${hostingCiTone(detail.ciStatus)}`}>
-                  {hostingCiLabel(detail.ciStatus)}
+                  {hostingCiLabel(detail.ciStatus, t)}
                 </span>
                 {mergeable && (
                   <span className={`hosting-badge ${mergeable.tone}`}>{mergeable.text}</span>
@@ -557,10 +559,10 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                   <span>{pr.title}</span>
                   {pr.draft && <span className="hosting-badge">草稿</span>}
                 </button>
-                <p className="hosting-pr-meta">{summarizePullRequest(pr)}</p>
+                <p className="hosting-pr-meta">{summarizePullRequest(pr, t)}</p>
               </div>
               <span className={`hosting-ci hosting-ci-${hostingCiTone(pr.ciStatus)}`}>
-                {hostingCiLabel(pr.ciStatus)}
+                {hostingCiLabel(pr.ciStatus, t)}
               </span>
               <Button
                 variant="icon"
