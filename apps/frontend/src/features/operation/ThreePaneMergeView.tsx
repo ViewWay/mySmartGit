@@ -51,15 +51,16 @@ type SidePaneProps = {
 }
 
 function SidePane({ side, title, bodyRef, segments, activeBlock, blockTotal, emptyReason, onActivateBlock, onAdoptActive }: SidePaneProps) {
+  const { t } = useI18n()
   return <div
     className={`tp-pane tp-pane-${side}`}
     role="region"
-    aria-label={`${title}（只读对照栏）`}
+    aria-label={t('operation.merge.readonlyPaneAria', { title })}
     tabIndex={0}
   >
     <div className="tp-pane-head">
       <strong>{title}</strong>
-      <Button variant="secondary" className="tp-adopt" onClick={() => onAdoptActive(side)} disabled={!blockTotal} title={blockTotal ? `把当前冲突块替换为「${title}」一侧的内容` : '没有待处理的冲突块'}>采用本侧当前块</Button>
+      <Button variant="secondary" className="tp-adopt" onClick={() => onAdoptActive(side)} disabled={!blockTotal} title={blockTotal ? t('operation.merge.adoptTitle', { title }) : t('operation.merge.noConflictBlocks')}>{t('operation.merge.useCurrentBlock')}</Button>
     </div>
     <div className="tp-pane-body" ref={bodyRef}>
       {emptyReason && <div className="tp-pane-empty"><Info size={15}/><span>{emptyReason}</span></div>}
@@ -102,8 +103,8 @@ export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase,
   const emptyReason = (side: 'current' | 'incoming'): string | null => {
     if (file[side] != null) return null
     return side === 'current'
-      ? '当前一侧没有该文件内容（典型的新增/删除冲突），可直接编辑中间结果后保存。'
-      : '传入一侧没有该文件内容（典型的新增/删除冲突），可直接编辑中间结果后保存。'
+      ? t('operation.merge.currentMissingHint')
+      : t('operation.merge.incomingMissingHint')
   }
 
   return <div className={`tp-merge-grid${showBase && file.base !== null ? ' tp-merge-with-base' : ''}`}>
@@ -122,7 +123,7 @@ export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase,
       onActivateBlock={onActivateBlock}
       onAdoptActive={onAdoptActive}
     />
-    <div className="tp-pane tp-pane-result" role="region" aria-label="合并结果（可编辑）">
+    <div className="tp-pane tp-pane-result" role="region" aria-label={t('operation.merge.editableResult')}>
       {resultPane}
     </div>
     <SidePane

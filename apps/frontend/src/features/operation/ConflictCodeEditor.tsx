@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, Save, X } from 'lucide-react'
 import { defaultKeymap } from '@codemirror/commands'
@@ -192,6 +193,7 @@ const conflictHighlightStyle = HighlightStyle.define([
 ])
 
 export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictCodeEditorProps>(function ConflictCodeEditor({ value, filePath, blocks, activeBlock, resolvedRanges = [], disabled = false, labels, onChange, onResolveBlock, onSave, saveLabel }, ref) {
+  const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -375,12 +377,12 @@ export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictC
 
   return <div className="conflict-code-editor">
     <div className="conflict-code-editor-host" ref={hostRef}/>
-    {searchOpen && <div className="conflict-search-bar" role="search"><Search size={14}/><input ref={searchInputRef} value={searchQuery} onChange={(event) => updateSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); jumpSearch(event.shiftKey ? -1 : 1) } if (event.key === 'Escape') { event.preventDefault(); setSearchOpen(false) } }} placeholder="搜索当前文件" aria-label="搜索当前冲突文件"/><span className="conflict-search-count">{searchQuery ? (searchMatches.length ? `${activeSearchMatch + 1} / ${searchMatches.length}` : '无匹配') : '输入关键词'}</span><button type="button" onClick={() => jumpSearch(-1)} disabled={!searchMatches.length} title="上一个匹配"><ChevronUp size={14}/></button><button type="button" onClick={() => jumpSearch(1)} disabled={!searchMatches.length} title="下一个匹配"><ChevronDown size={14}/></button><button type="button" onClick={() => { setSearchOpen(false); setSearchQuery('') }} title="关闭搜索" aria-label="关闭搜索"><X size={14}/></button></div>}
-    {!searchOpen && <button type="button" className="conflict-search-trigger" onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInputRef.current?.focus()) }} title="搜索当前文件（Ctrl/Cmd+F）" aria-label="搜索当前文件"><Search size={15}/></button>}
-    <div className="conflict-overview" onPointerDown={beginOverviewDrag} onPointerMove={moveOverviewDrag} onPointerUp={endOverviewDrag} onPointerCancel={endOverviewDrag} title="点击或拖拽跳转到对应位置">
+    {searchOpen && <div className="conflict-search-bar" role="search"><Search size={14}/><input ref={searchInputRef} value={searchQuery} onChange={(event) => updateSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); jumpSearch(event.shiftKey ? -1 : 1) } if (event.key === 'Escape') { event.preventDefault(); setSearchOpen(false) } }} placeholder={t('operation.conflict.searchTitle')} aria-label={t('operation.conflict.searchAria')}/><span className="conflict-search-count">{searchQuery ? (searchMatches.length ? `${activeSearchMatch + 1} / ${searchMatches.length}` : t('diff.searchNoMatch')) : t('diff.searchPlaceholder')}</span><button type="button" onClick={() => jumpSearch(-1)} disabled={!searchMatches.length} title={t('diff.searchPrev')}><ChevronUp size={14}/></button><button type="button" onClick={() => jumpSearch(1)} disabled={!searchMatches.length} title={t('diff.searchNext')}><ChevronDown size={14}/></button><button type="button" onClick={() => { setSearchOpen(false); setSearchQuery('') }} title={t('diff.searchClose')} aria-label={t('diff.searchClose')}><X size={14}/></button></div>}
+    {!searchOpen && <button type="button" className="conflict-search-trigger" onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInputRef.current?.focus()) }} title={t('operation.conflict.searchShortcut')} aria-label={t('operation.conflict.searchTitle')}><Search size={15}/></button>}
+    <div className="conflict-overview" onPointerDown={beginOverviewDrag} onPointerMove={moveOverviewDrag} onPointerUp={endOverviewDrag} onPointerCancel={endOverviewDrag} title={t('operation.conflict.overviewHint')}>
       {blocks.map((block) => <span className={`current${block.index === activeBlock ? ' active' : ''}`} key={`current-${block.index}`} style={overviewStyle(block.offset, block.currentEnd)}/>)}
       {blocks.map((block) => <span className={`incoming${block.index === activeBlock ? ' active' : ''}`} key={`incoming-${block.index}`} style={overviewStyle(block.separatorEnd, block.endOffset)}/>)}
     </div>
-    <Button variant="primary" className="conflict-save-floating" type="button" onClick={onSave} disabled={disabled} title="保存合并结果"><Save size={14}/>{saveLabel}</Button>
+    <Button variant="primary" className="conflict-save-floating" type="button" onClick={onSave} disabled={disabled} title={t('operation.saveResult')}><Save size={14}/>{saveLabel}</Button>
   </div>
 })
