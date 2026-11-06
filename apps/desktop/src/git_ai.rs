@@ -1063,10 +1063,8 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::{mpsc, Mutex, MutexGuard};
+    use std::sync::{mpsc, MutexGuard};
     use std::time::Duration;
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     fn unique_test_directory(label: &str) -> PathBuf {
         static SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -1098,9 +1096,7 @@ mod tests {
     impl TestHome {
         fn new(label: &str) -> Self {
             crate::git::isolate_test_git_environment();
-            let guard = ENV_MUTEX
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = crate::git::test_environment_lock();
             let root = unique_test_directory(label);
             let previous = std::env::var_os("BRANCHLINE_HOME");
             std::env::set_var("BRANCHLINE_HOME", &root);

@@ -1165,14 +1165,11 @@ fn isolate_credentials_home() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
 
-    /// 凭据 / SSH 用例共享同一个 BRANCHLINE_HOME 与隔离 global gitconfig，必须串行。
+    /// 凭据 / SSH 用例共享同一个 BRANCHLINE_HOME 与隔离 global gitconfig，必须串行；
+    /// 与 git_ai 等模块共用 git.rs 的全局测试环境锁，避免并行 cargo test 下互相覆盖。
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::git::test_environment_lock()
     }
 
     fn isolated() -> std::sync::MutexGuard<'static, ()> {

@@ -202,6 +202,17 @@ pub(crate) fn isolate_test_git_environment() {
     });
 }
 
+/// 跨模块共享的测试环境锁：任何会改写 `BRANCHLINE_HOME` 的用例都必须持有它。
+/// git_ai / git_credentials 各自只锁本模块时会互相覆盖环境变量（并行 cargo test
+/// 下表现为随机「文件不存在」）；终端轨道新增用例后该竞态更容易触发，故统一到此处。
+#[cfg(test)]
+pub(crate) fn test_environment_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 清理崩溃/强杀遗留的测试临时目录（超过 24 小时的 branchline-* 条目），
 /// 防止磁盘堆积；正在进行中的进程目录（含其他并行测试进程）不会被误删——
 /// 活跃用例的目录 mtime 一直在变，24 小时阈值只会命中真正的残留。
