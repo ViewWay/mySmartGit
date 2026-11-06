@@ -1051,3 +1051,77 @@ export async function setCredentialHelper(
 export async function getCredentialHelpers(repositoryPath?: string | null) {
   return invoke<string[]>('get_credential_helpers', { repositoryPath: repositoryPath ?? null })
 }
+
+// ---------------------------------------------------------------------------
+// W4-1 GitHub / GitLab 托管（apps/desktop/src/git_hosting.rs）
+//
+// 令牌只在保存设置时提交一次，写入后端 0600 配置文件；随后的列表 / 详情 /
+// 创建请求都由后端读取令牌，不再从前端传入。
+// ---------------------------------------------------------------------------
+
+export type {
+  HostingProvider,
+  HostingCiStatus,
+  HostingSettings,
+  HostingRepository,
+  HostingPullRequest,
+  HostingCheck,
+  HostingPullRequestDetail,
+  CreatePullRequestInput,
+} from '@branchline/git-models'
+
+/** 读取托管设置与「是否已配置令牌」标记（永不返回令牌）。 */
+export async function loadHostingSettings() {
+  return invoke<import('@branchline/git-models').HostingSettings>('load_hosting_settings', {})
+}
+
+/** 保存设置；token 传 null 或空字符串表示保留已保存的令牌。 */
+export async function saveHostingSettings(
+  provider: 'github' | 'gitlab',
+  host: string | null,
+  token: string | null,
+) {
+  return invoke<import('@branchline/git-models').HostingSettings>('save_hosting_settings', {
+    provider,
+    host,
+    token,
+  })
+}
+
+/** 清除已保存令牌，保留 provider / host。 */
+export async function clearHostingToken() {
+  return invoke<import('@branchline/git-models').HostingSettings>('clear_hosting_token', {})
+}
+
+/** 读取 origin 远端并识别托管平台、项目路径与网页地址。 */
+export async function detectHostingRepository(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').HostingRepository>('detect_hosting_repository', {
+    repositoryPath,
+  })
+}
+
+/** 列出开放 PR/MR；列表中 ciStatus 固定为 unknown，避免 N+1 请求。 */
+export async function listHostingPullRequests(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').HostingPullRequest[]>('list_hosting_pull_requests', {
+    repositoryPath,
+  })
+}
+
+/** 创建 PR/MR；GitLab 的 Draft 前缀由后端按 draft 生成。 */
+export async function createHostingPullRequest(
+  repositoryPath: string,
+  input: import('@branchline/git-models').CreatePullRequestInput,
+) {
+  return invoke<import('@branchline/git-models').HostingPullRequest>('create_hosting_pull_request', {
+    repositoryPath,
+    input,
+  })
+}
+
+/** 读取 PR/MR 详情，包括正文、检查列表与可合并状态。 */
+export async function loadHostingPullRequest(repositoryPath: string, number: number) {
+  return invoke<import('@branchline/git-models').HostingPullRequestDetail>(
+    'load_hosting_pull_request',
+    { repositoryPath, number },
+  )
+}
