@@ -375,6 +375,18 @@
 
 .token.punctuation { color: #aab6bd; }
 
+.tok-comment { color: var(--syntax-comment); font-style: italic; }
+.tok-keyword, .tok-meta { color: var(--syntax-keyword); }
+.tok-string, .tok-string2, .tok-url, .tok-regexp { color: var(--syntax-string); }
+.tok-number, .tok-bool, .tok-atom, .tok-literal { color: var(--syntax-number); }
+.tok-typeName, .tok-className, .tok-namespace, .tok-macroName { color: var(--syntax-type); }
+.tok-function, .tok-variableName.tok-definition, .tok-propertyName.tok-definition { color: var(--syntax-type); }
+.tok-propertyName { color: var(--syntax-type); }
+.tok-tagName { color: var(--syntax-keyword); }
+.tok-attributeName { color: var(--syntax-number); }
+.tok-operator, .tok-punctuation { color: var(--text-secondary); }
+.tok-invalid { color: var(--danger); }
+
 .staging-page, .stash-page { padding: 10px 12px 12px; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 
 .staging-page .staging-workspace, .stash-page .stash-workspace { height: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }

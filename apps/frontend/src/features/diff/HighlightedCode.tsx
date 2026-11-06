@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react'
+import type { SyntaxToken } from '../../syntax/highlight'
 
 type Token = { value: string; kind?: string }
 
@@ -75,8 +76,30 @@ function tokenize(code: string, language: string): Token[] {
   return tokens
 }
 
-export const HighlightedCode = memo(function HighlightedCode({ code, filePath }: { code: string; filePath: string }) {
+export const HighlightedCode = memo(function HighlightedCode({
+  code,
+  filePath,
+  tokens,
+}: {
+  code: string
+  filePath: string
+  tokens?: SyntaxToken[]
+}) {
   const language = languageForPath(filePath)
-  const tokens = useMemo(() => tokenize(code || ' ', language), [code, language])
-  return <code className={`syntax syntax-${language}`}>{tokens.map((token, index) => <span className={token.kind ? `token ${token.kind}` : undefined} key={index}>{token.value}</span>)}</code>
+  const fallback = useMemo(
+    () => (tokens ? [] : tokenize(code || ' ', language)),
+    [code, language, tokens],
+  )
+  const parts: Token[] | SyntaxToken[] = tokens ?? fallback
+  return (
+    <code className={`highlighted-code syntax syntax-${language}`}>
+      {parts.map((token, index) => {
+        const value = 'text' in token ? token.text : token.value
+        const className = 'text' in token
+          ? token.className ?? undefined
+          : token.kind ? `token ${token.kind}` : undefined
+        return <span className={className} key={index}>{value}</span>
+      })}
+    </code>
+  )
 })
