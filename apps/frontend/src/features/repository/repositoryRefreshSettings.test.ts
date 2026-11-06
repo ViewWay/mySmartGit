@@ -4,7 +4,8 @@ import {
   normalizeRepositoryRefreshSettings,
   shouldFetchOnNavigation,
 } from './repositoryRefreshSettings'
-import { FORCE_PUSH_LEASE_NOTE, canConfirmForcePush } from './forcePushGuard'
+import { forcePushLeaseNote, canConfirmForcePush } from './forcePushGuard'
+import { zh } from '../../i18n/messages/zh'
 
 describe('normalizeRepositoryRefreshSettings', () => {
   it('keeps local repository polling disabled when migrating existing settings', () => {
@@ -55,6 +56,6 @@ describe('canConfirmForcePush', () => {
   })
 
   it('advertises the lease protection in the confirmation copy', () => {
-    expect(FORCE_PUSH_LEASE_NOTE).toContain('force-with-lease')
+    expect(forcePushLeaseNote((key) => zh[key as keyof typeof zh] ?? key)).toContain('force-with-lease')
   })
 })
