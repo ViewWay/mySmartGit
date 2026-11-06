@@ -7785,4 +7785,251 @@ mod tests {
         }
         assert_eq!(total, 151, "every commit must arrive eventually: nothing dropped by budget");
     }
+
+    // ---------------------------------------------------------------------
+    // W3-3 大仓库基准（#[ignore]：手动 `cargo test --release -- --ignored
+    // --nocapture` 运行，用 git fast-import 现造上万提交临时仓库，出真实数字）
+    // ---------------------------------------------------------------------
+
+    fn commit_payload_bytes(commits: &[RepositoryCommit]) -> usize {
+        commits.iter().map(|commit| {
+            commit.full_hash.len() + commit.title.len() + commit.message.len()
+                + commit.author.len() + commit.email.len() + commit.committer.len()
+                + commit.committer_email.len() + commit.time.len() + commit.author_time.len()
+                + commit.commit_time.len() + commit.avatar.len() + commit.color.len()
+                + commit.branches.iter().map(String::len).sum::<usize>()
+                + commit.parents.iter().map(String::len).sum::<usize>()
+        }).sum()
+    }
+
+    fn entry_payload_bytes(entries: &[FileHistoryEntry]) -> usize {
+        entries.iter().map(|entry| {
+            entry.hash.len() + entry.title.len() + entry.message.len() + entry.author.len()
+                + entry.email.len() + entry.committer.len() + entry.committer_email.len()
+                + entry.time.len() + entry.commit_time.len()
+                + entry.parents.iter().map(String::len).sum::<usize>()
+        }).sum()
+    }
+
+    /// fast-import 的 `data` 语法：`data <字节数> LF <原文> LF`（原文不带尾换行）。
+    fn fi_data(writer: &mut impl Write, text: &str) {
+        writeln!(writer, "data {}\n{}", text.len(), text).unwrap();
+    }
+
+    fn fi_blob(writer: &mut impl Write, mark_no: usize, text: &str) {
+        writeln!(writer, "blob\nmark :{mark_no}").unwrap();
+        // blob 记录在 data 内容后直接结束（不留空行）；commit 记录才以空行收尾。
+        fi_data(writer, text);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fi_commit(
+        writer: &mut impl Write,
+        branch: &str,
+        mark_no: usize,
+        message: &str,
+        from: Option<usize>,
+        merge: Option<usize>,
+        file_mark: usize,
+        file_path: &str,
+    ) {
+        writeln!(writer, "commit {branch}\nmark :{mark_no}").unwrap();
+        writeln!(writer, "committer Benchmark Bot <bench@example.com> 1760000000 +0800").unwrap();
+        fi_data(writer, message);
+        if let Some(parent) = from {
+            writeln!(writer, "from :{parent}").unwrap();
+        }
+        if let Some(other) = merge {
+            writeln!(writer, "merge :{other}").unwrap();
+        }
+        writeln!(writer, "M 100644 :{file_mark} {file_path}\n").unwrap();
+    }
+
+    /// `git fast-import` 生成线性主干 + 每 100 提交一次 feature 分支合并的夹具；
+    /// 每个主干提交都改 f.txt，文件历史与提交数同规模，直接压测分页链路。
+    fn fast_import_repository(path: &Path, count: usize) {
+        let mut command = Command::new("git");
+        command.arg("-C").arg(path).args(["fast-import", "--quiet"]);
+        command.stdin(Stdio::piped());
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        let mut child = command.spawn().expect("spawn git fast-import");
+        {
+            use std::io::BufWriter;
+            let mut writer = BufWriter::new(child.stdin.take().expect("fast-import stdin"));
+            let mut mark: usize = 0;
+            let mut alloc = || {
+                mark += 1;
+                mark
+            };
+            let mut main_tip: Option<usize> = None;
+            for index in 0..count {
+                let blob = alloc();
+                let commit = alloc();
+                fi_blob(&mut writer, blob, &format!("v{index} benchmark payload"));
+                if index % 100 == 99 && index + 1 < count {
+                    let feature_blob = alloc();
+                    let feature_commit = alloc();
+                    fi_blob(&mut writer, feature_blob, "feature payload");
+                    // 每段 feature 从当时主干顶端重新开线；reset 记录以 `from` 行 +
+                    // 恰好一个空行收尾（多一个空行会被当成空命令而崩溃）。
+                    writeln!(writer, "reset refs/heads/feature\nfrom :{}\n", main_tip.unwrap_or(0)).unwrap();
+                    fi_commit(
+                        &mut writer,
+                        "refs/heads/feature",
+                        feature_commit,
+                        &format!("feature {index:06}"),
+                        main_tip,
+                        None,
+                        feature_blob,
+                        "g.txt",
+                    );
+                    fi_commit(
+                        &mut writer,
+                        "refs/heads/main",
+                        commit,
+                        &format!("merge feature at {index:06}"),
+                        main_tip,
+                        Some(feature_commit),
+                        blob,
+                        "f.txt",
+                    );
+                } else {
+                    fi_commit(
+                        &mut writer,
+                        "refs/heads/main",
+                        commit,
+                        &format!("c{index:06} 常规提交 benchmark"),
+                        main_tip,
+                        None,
+                        blob,
+                        "f.txt",
+                    );
+                }
+                main_tip = Some(commit);
+            }
+            writer.flush().unwrap();
+        }
+        let status = child.wait().expect("wait fast-import");
+        assert!(status.success(), "git fast-import failed");
+    }
+
+    #[test]
+    #[ignore = "大仓库基准：cargo test --release -- --ignored --nocapture"]
+    fn large_repository_history_stream_benchmark() {
+        const COUNT: usize = 20_000;
+        let base = unique_scratch_dir("bench");
+        let repo = base.join("repository");
+        fs::create_dir_all(&repo).expect("create bench repo dir");
+        git_output(&repo, &["init"]).expect("git init");
+        git_output(&repo, &["config", "user.name", "bench"]).expect("config name");
+        git_output(&repo, &["config", "user.email", "bench@example.com"]).expect("config email");
+
+        let build_start = std::time::Instant::now();
+        fast_import_repository(&repo, COUNT);
+        let total_head = git_output(&repo, &["rev-list", "--count", "--all"]).expect("count commits");
+        let total: usize = total_head.trim().parse().expect("count");
+        println!("[bench] fixture: {total} commits built in {:?}", build_start.elapsed());
+
+        // ---- 改造前：单次批读模型（旧首次可读 = 2000 窗口；旧最深 = 20000） ----
+        let old_first_start = std::time::Instant::now();
+        let old_window = parse_commits(&repo, COMMIT_GRAPH_LIMIT);
+        let old_first = old_first_start.elapsed();
+        let old_first_bytes = commit_payload_bytes(&old_window);
+        let old_deep_start = std::time::Instant::now();
+        let old_deep = parse_commits(&repo, MAX_COMMIT_GRAPH_LIMIT);
+        let old_deep_elapsed = old_deep_start.elapsed();
+        let old_deep_bytes = commit_payload_bytes(&old_deep);
+        println!(
+            "[bench] OLD  single-read first window: {} commits in {old_first:?}, payload {old_first_bytes} bytes",
+            old_window.len()
+        );
+        println!(
+            "[bench] OLD  deepest ×5 expansion (20000 cap): {} commits in {old_deep_elapsed:?}, payload {old_deep_bytes} bytes — 超过 20000 条的历史永远读不到",
+            old_deep.len()
+        );
+
+        // ---- 改造后：流式分页 ----
+        let stream_start = std::time::Instant::now();
+        let mut page = start_repository_history_stream(&repo.to_string_lossy(), Some(500)).expect("bench stream");
+        let new_first = stream_start.elapsed();
+        let first_page_count = page.commits.len();
+        let first_page_payload = commit_payload_bytes(&page.commits);
+        let mut total_count = page.commits.len();
+        let mut max_page_bytes = page.page_bytes;
+        let mut max_payload = first_page_payload;
+        let mut pages = 1usize;
+        let drain_start = std::time::Instant::now();
+        while page.has_more {
+            page = load_repository_history_next_page(&page.session_id, Some(500)).expect("bench page");
+            total_count += page.commits.len();
+            max_page_bytes = max_page_bytes.max(page.page_bytes);
+            max_payload = max_payload.max(commit_payload_bytes(&page.commits));
+            pages += 1;
+        }
+        let drain_elapsed = drain_start.elapsed();
+        println!(
+            "[bench] NEW  first page: {first_page_count} commits in {new_first:?}, payload {first_page_payload} bytes; all-page peak raw {max_page_bytes} / payload {max_payload} bytes"
+        );
+        println!(
+            "[bench] NEW  full drain: {total_count} commits via {pages} pages in {drain_elapsed:?}; per-page avg {:?}",
+            drain_elapsed / pages as u32
+        );
+        assert_eq!(total_count, total, "stream must cover the whole history");
+        // 时钟断言不放进契约（机器噪声大）；这里断言确定性更强的载荷边界：
+        // 有界首页必须显著小于旧 2000 条批读窗口，而全量覆盖不再有 20000 天花板。
+        assert!(
+            first_page_payload < old_first_bytes,
+            "bounded first page ({first_page_payload}B) should be smaller than old 2000-window ({old_first_bytes}B)"
+        );
+        assert!(old_deep.len() < total, "old model hard-caps depth at MAX_COMMIT_GRAPH_LIMIT");
+
+        // ---- 规模线性度：半量仓库的首屏耗时对比（首屏只付一次启动成本） ----
+        let half = base.join("half");
+        fs::create_dir_all(&half).expect("create half dir");
+        git_output(&half, &["init"]).expect("git init half");
+        git_output(&half, &["config", "user.name", "bench"]).expect("config");
+        git_output(&half, &["config", "user.email", "bench@example.com"]).expect("config");
+        fast_import_repository(&half, COUNT / 4);
+        let old_small_start = std::time::Instant::now();
+        let old_small = parse_commits(&half, COMMIT_GRAPH_LIMIT);
+        let old_small_elapsed = old_small_start.elapsed();
+        let new_small_start = std::time::Instant::now();
+        let new_small = start_repository_history_stream(&half.to_string_lossy(), Some(500)).expect("half stream");
+        let new_small_elapsed = new_small_start.elapsed();
+        println!(
+            "[bench] SCALE 2k-repo OLD window({} commits): {old_small_elapsed:?}; NEW first page({} commits): {new_small_elapsed:?} — 首屏耗时不随仓库规模恶化",
+            old_small.len(), new_small.commits.len()
+        );
+        cancel_repository_history_stream(&new_small.session_id);
+        cancel_repository_history_stream(&page.session_id);
+
+        // ---- 文件历史：旧 200 硬上限 vs 流式全覆盖 ----
+        let old_file_start = std::time::Instant::now();
+        let old_file = load_file_history(&half.to_string_lossy(), "f.txt").expect("old file history");
+        let old_file_elapsed = old_file_start.elapsed();
+        let file_start = std::time::Instant::now();
+        let mut file_page =
+            start_repository_file_history_stream(&repo.to_string_lossy(), "f.txt", Some(500)).expect("file stream");
+        let file_first = file_start.elapsed();
+        let mut file_count = file_page.entries.len();
+        let mut file_bytes = entry_payload_bytes(&file_page.entries);
+        while file_page.has_more {
+            file_page = load_repository_file_history_next_page(&file_page.session_id, Some(500)).expect("file page");
+            file_count += file_page.entries.len();
+            file_bytes = file_bytes.max(entry_payload_bytes(&file_page.entries));
+        }
+        let expected_file = git_output(&repo, &["log", "--all", "--follow", "--format=%H", "--", "f.txt"])
+            .expect("baseline file log")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        println!(
+            "[bench] FILE baseline full log: {expected_file} entries; NEW stream drained {file_count} in pages of 500 (first page {file_first:?}, peak payload {file_bytes} bytes); OLD model caps at {} with a hard 200 limit in {old_file_elapsed:?}",
+            old_file.len()
+        );
+        assert_eq!(file_count, expected_file, "file history stream must equal the full --follow log");
+        assert_eq!(old_file.len(), 200, "old model is hard-capped at 200");
+        let _ = fs::remove_dir_all(&base);
+    }
 }
