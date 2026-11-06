@@ -898,3 +898,35 @@ pub struct RepositoryTextFile {
     pub binary: bool,
     pub notice: Option<String>,
 }
+
+// ---------------------------------------------------------------------------
+// W3-3 流式提交历史（apps/desktop/src/git.rs）：游标分页 / 有界 / 可取消
+//
+// 一页流式历史的响应结构。`sessionId` 指向后端一个持续读取中的 `git log` 子进程
+// 会话：翻页从同一进程快照续读，已发条目的内容与顺序不受期间新提交影响。
+// 有界性三重保证：条数上限（分页参数）、字节预算（超限的记录留到下一页，
+// 绝不丢数据）、单条 title/message 字符上限（超限时 `truncated=true` + `notice`
+// 显式提示，绝不静默截断内容）。
+// ---------------------------------------------------------------------------
+
+/// 流式历史一页：graph 流填 `commits`，file/line 流填 `entries`。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryHistoryPage {
+    pub session_id: String,
+    /// "graph" | "file" | "line"：流类型，翻页必须走同类型接口。
+    pub kind: String,
+    /// 仅 graph 流非空；`lane` 携带跨页一致的轨道状态（与全量重放等价）。
+    pub commits: Vec<RepositoryCommit>,
+    /// 仅 file/line 流非空（`--follow` 语义保留）。
+    pub entries: Vec<FileHistoryEntry>,
+    /// 本会话累计已发出条数（含本页；不含被流式剪枝的 stash 辅助提交）。
+    pub emitted: usize,
+    /// true 表示进程快照仍有后续记录，可继续翻页。
+    pub has_more: bool,
+    /// true 表示本页存在超出字符预算的标题/正文，已显式截断（见 notice）。
+    pub truncated: bool,
+    pub notice: Option<String>,
+    /// 本页序列化前的近似字节数（用于前端监控 IPC 压力）。
+    pub page_bytes: usize,
+}
