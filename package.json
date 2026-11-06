@@ -10,7 +10,13 @@
     "desktop:dev": "pnpm --filter @branchline/desktop dev",
     "desktop:build": "pnpm --filter @branchline/desktop build",
     "typecheck": "pnpm --filter @branchline/frontend exec tsc -b",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:i18n:update": "node scripts/check-i18n.mjs --update",
+    "check:error-codes": "node scripts/check-error-codes.mjs",
     "rust:check": "cargo check --manifest-path apps/desktop/Cargo.toml",
     "rust:fmt": "cargo fmt --manifest-path apps/desktop/Cargo.toml -- --check"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }
