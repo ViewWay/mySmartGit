@@ -18,17 +18,19 @@ export function pointerChangeKind(diff: SubmodulePointerDiff): PointerChangeKind
   return 'unknown'
 }
 
-const changeLabels: Record<PointerChangeKind, string> = {
-  unchanged: '指针未变化',
-  staged: '指针已暂存',
-  unstaged: '指针已移动（未暂存）',
-  both: '指针已暂存且工作区又有移动',
-  uninitialized: '子模块未初始化',
-  unknown: '指针状态待确认',
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
+const changeLabelKeys: Record<PointerChangeKind, string> = {
+  unchanged: 'repository.submodule.pointerUnchanged',
+  staged: 'repository.submodule.pointerStaged',
+  unstaged: 'repository.submodule.pointerUnstaged',
+  both: 'repository.submodule.pointerBoth',
+  uninitialized: 'repository.submodule.pointerUninitialized',
+  unknown: 'repository.submodule.pointerUnknown',
 }
 
-export function pointerChangeLabel(kind: PointerChangeKind): string {
-  return changeLabels[kind]
+export function pointerChangeLabel(kind: PointerChangeKind, t: Translate): string {
+  return t(changeLabelKeys[kind])
 }
 
 export function pointerChangeTone(kind: PointerChangeKind): 'neutral' | 'warning' | 'danger' {
@@ -59,15 +61,15 @@ export function cappedCommits(commits: SubmoduleCommitEntry[], limit = COMMIT_DI
  * 后端的 summary 只讲指针；这里补上「是否非快进」「是否有本地改动」，
  * 因为这两件事用户最容易踩（回退指针会丢掉别人的提交）。
  */
-export function describePointerDiff(diff: SubmodulePointerDiff): string[] {
+export function describePointerDiff(diff: SubmodulePointerDiff, t: Translate): string[] {
   const lines = [diff.summary]
   const kind = pointerChangeKind(diff)
   if (kind !== 'unchanged' && kind !== 'uninitialized' && !diff.fastForward && diff.previousCommit && diff.targetCommit) {
-    lines.push('非快进移动：新指针不包含旧指针的历史，直接提交会丢掉旧提交一侧的改动')
+    lines.push(t('repository.submodule.nonFastForward'))
   }
-  if (diff.removedCount > 0) lines.push(`本次移动丢掉 ${diff.removedCount} 个提交`)
-  if (diff.dirtyFiles > 0) lines.push(`子模块内还有 ${diff.dirtyFiles} 个未提交改动，父仓库记录的指针不包含它们`)
-  if (diff.detached && !diff.uninitialized) lines.push('子模块处于分离 HEAD：提交父仓库前请先确认要跟踪的分支')
+  if (diff.removedCount > 0) lines.push(t('repository.submodule.droppedCommits', { count: diff.removedCount }))
+  if (diff.dirtyFiles > 0) lines.push(t('repository.submodule.dirtyFiles', { count: diff.dirtyFiles }))
+  if (diff.detached && !diff.uninitialized) lines.push(t('repository.submodule.detachedHead'))
   return lines
 }
 
