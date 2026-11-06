@@ -1,5 +1,9 @@
 mod commands;
 mod git;
+mod git_ai;
+mod git_credentials;
+mod git_flow;
+mod git_lfs;
 mod git_media;
 mod git_tree;
 mod git_remote;
@@ -14,6 +18,11 @@ mod repository_management;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // 自定义 / 随包 Git 目录必须在任何 Git 子进程启动前前置到 PATH。
+            git_credentials::configure_process_path();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::load_repository_details,
             commands::load_repository_readme,
@@ -152,6 +161,34 @@ pub fn run() {
             commands::load_repository_line_history_next_page,
             commands::cancel_repository_history_stream,
             commands::cancel_repository_history,
+            // W3-4 Git LFS 与 Gitflow
+            crate::git_lfs::lfs_status,
+            crate::git_lfs::lfs_install,
+            crate::git_lfs::lfs_track_pattern,
+            crate::git_lfs::lfs_untrack_pattern,
+            crate::git_lfs::lfs_list_files,
+            crate::git_lfs::lfs_fetch,
+            crate::git_lfs::lfs_pull,
+            crate::git_lfs::lfs_prune,
+            crate::git_flow::load_gitflow_config,
+            crate::git_flow::save_gitflow_config,
+            crate::git_flow::list_gitflow_branches,
+            crate::git_flow::start_gitflow_branch,
+            crate::git_flow::finish_gitflow_branch,
+            // W3-5 AI 提交消息
+            crate::git_ai::load_ai_settings,
+            crate::git_ai::save_ai_settings,
+            crate::git_ai::clear_ai_api_key,
+            crate::git_ai::generate_commit_message,
+            // W3-6 SSH 密钥、凭据助手与 Git 运行时
+            crate::git_credentials::api::load_git_runtime_info,
+            crate::git_credentials::api::set_custom_git_directory,
+            crate::git_credentials::api::load_ssh_keys,
+            crate::git_credentials::api::generate_ssh_key,
+            crate::git_credentials::api::read_ssh_public_key,
+            crate::git_credentials::api::delete_ssh_key,
+            crate::git_credentials::api::set_credential_helper,
+            crate::git_credentials::api::get_credential_helpers,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");

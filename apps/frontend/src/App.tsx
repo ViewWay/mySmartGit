@@ -28,6 +28,9 @@ import { RecoveryPage } from './features/recovery/RecoveryPage'
 import { CommitTreeBrowser } from './features/tree/CommitTreeBrowser'
 import { SearchPage } from './features/search/SearchPage'
 import { SequenceEditor } from './features/history-edit/SequenceEditor'
+import { LfsPanel } from './features/lfs/LfsPanel'
+import { GitflowPanel } from './features/flow/GitflowPanel'
+import { CredentialsPanel } from './features/credentials/CredentialsPanel'
 import { RebaseDialog } from './features/operation/RebaseDialog'
 import { CherryPickDialog } from './features/operation/CherryPickDialog'
 import { buildCommitGraphLayout, lanePosition, type CommitGraphRow } from './features/graph/commitGraphLayout'
@@ -70,6 +73,7 @@ import {
   GitFork,
   GitMerge,
   History,
+  KeyRound,
   LayoutGrid,
   List,
   ListFilter,
@@ -119,7 +123,7 @@ type Commit = {
   deletions: number
 }
 
-type WorkspaceView = 'history' | 'changes' | 'stash' | 'recovery' | 'search' | 'tree' | 'compare' | 'merge' | 'operation' | 'remotes' | StructureView
+type WorkspaceView = 'history' | 'changes' | 'stash' | 'recovery' | 'search' | 'tree' | 'compare' | 'merge' | 'operation' | 'remotes' | 'lfs' | 'gitflow' | 'credentials' | StructureView
 type TimeFilter = 'all' | 'day' | 'week' | 'month'
 type SearchNavigationAction = { sequence: number; direction: 1 | -1 }
 type SearchSummary = HistorySearchSummary
@@ -306,6 +310,7 @@ function Sidebar({ repository, structureRepository, parentRepository, recentRepo
       <BranchTree branches={repository.branches} remoteBranches={repository.remoteBranches} branchTracking={repository.branchTracking} worktreeBranches={Object.fromEntries(repository.worktrees.filter((worktree) => worktree.branch && worktree.path.replace(/[\\/]+$/, '').toLocaleLowerCase() !== repository.path.replace(/[\\/]+$/, '').toLocaleLowerCase()).map((worktree) => [worktree.branch as string, worktree.path]))} currentBranch={repository.branch} onCreateBranch={onCreateBranch} onDeletePrefix={onDeleteBranchPrefix} onJumpBranch={onJumpBranch} onSwitchBranch={onSwitchBranch} onPullBranch={onPullBranch} onMergeBranch={onMergeBranch} onDeleteBranch={onDeleteBranch} onCopyBranch={onCopyBranch}/>
       <RepositoryStructureTree repository={structureRepository ?? repository} activePath={repository.path} selection={structureSelection} onSelect={onSelectStructure} onOpenPath={(path, kind) => { if (kind === 'submodule') onOpenSubmodulePath(path); else onOpenRepositoryPath(path) }}/>
       <div className="nav-section structure-tags-section"><button className={`nav-row ${activeView === 'remotes' ? 'active' : ''}`} onClick={() => onSelectView('remotes')}><Cloud size={15}/><span>远程管理</span><span className="nav-badge muted">{repository.remoteBranches.length}</span></button><button className={`nav-row ${activeView === 'tags' ? 'active' : ''}`} onClick={() => onSelectView('tags')}><Tag size={15}/><span>标签</span><span className="nav-badge muted">{repository.tags.length}</span></button></div>
+      <div className="nav-section structure-tags-section"><button className={`nav-row ${activeView === 'lfs' ? 'active' : ''}`} onClick={() => onSelectView('lfs')} title="管理 Git LFS 跟踪模式与对象"><Box size={15}/><span>Git LFS</span></button><button className={`nav-row ${activeView === 'gitflow' ? 'active' : ''}`} onClick={() => onSelectView('gitflow')} title="按 Gitflow 模型创建与完成 feature/release/hotfix 分支"><GitMerge size={15}/><span>Gitflow 工作流</span></button><button className={`nav-row ${activeView === 'credentials' ? 'active' : ''}`} onClick={() => onSelectView('credentials')} title="管理 SSH 密钥、凭据助手与 Git 运行时"><KeyRound size={15}/><span>SSH 与凭据</span></button></div>
     </> : <div className="sidebar-empty-state"><FolderOpen size={24}/><strong>尚未打开仓库</strong><span>打开本地 Git 仓库后，这里会显示分支、Worktree 和 Submodule。</span><button onClick={onOpenRepository} disabled={openingRepository}>{openingRepository ? '正在打开…' : '打开仓库'}</button></div>}</nav>
     <div className="sidebar-footer"><button className="profile" onClick={onOpenGitConfig} title="打开本地 Git 配置"><AppMark className="app-brand-mark"/><div><strong>Branchline</strong><span>本地 Git 配置</span></div><Settings2 size={15}/></button><button className="sidebar-command-log" onClick={onOpenCommandLog} title="查看执行命令日志"><TerminalSquare size={14}/><span>执行命令日志</span></button></div>
   </aside>
@@ -957,6 +962,10 @@ export default function App() {
       if (workspaceView === 'operation') setWorkspaceView('history')
     }
   }
+  const refreshRepositorySnapshot = () => {
+    if (!repository) return
+    void loadRepository(repository.path).then(handleSnapshot).catch((reason) => setRepositoryNotice(reason instanceof Error ? reason.message : String(reason)))
+  }
   const handleDeleteBranchPrefix = async (prefix: string) => {
     if (!repository) return setRepositoryNotice('请先打开本地仓库')
     try {
@@ -1377,6 +1386,9 @@ export default function App() {
         </section>}
         {workspaceView === 'compare' && <ComparePanel repository={repository} initialBase={compareBase ?? undefined} initialTarget={compareBase ? repository?.branch : undefined} onNotice={setRepositoryNotice}/>} 
         {workspaceView === 'merge' && <MergeQueuePanel repository={repository} onNotice={setRepositoryNotice} onSwitchBranch={handleSwitchBranch}/>} 
+        {workspaceView === 'lfs' && <LfsPanel repositoryPath={repository.path} confirm={confirm} onNotice={setRepositoryNotice} onChanged={refreshRepositorySnapshot}/>}
+        {workspaceView === 'gitflow' && <GitflowPanel repositoryPath={repository.path} confirm={confirm} onNotice={setRepositoryNotice} onChanged={refreshRepositorySnapshot}/>}
+        {workspaceView === 'credentials' && <CredentialsPanel repositoryPath={repository.path} confirm={confirm} onNotice={setRepositoryNotice}/>}
          {workspaceView === 'operation' && <Suspense fallback={<section className="workspace-empty"><RefreshCw className="spin" size={28}/><strong>正在加载冲突编辑器</strong><span>编辑器组件仅在处理合并、变基或 Cherry-pick 时按需加载。</span></section>}><OperationPanel repository={repository} onSnapshot={handleSnapshot} onNotice={setRepositoryNotice} initialPath={operationPath} onReturnToChanges={() => setWorkspaceView('changes')} onClose={() => setWorkspaceView('history')}/></Suspense>}
         {workspaceView === 'changes' && (
           <StagingPage
