@@ -133,6 +133,109 @@ pub fn clear_command_logs() {
     if let Ok(mut logs) = command_logs().lock() { logs.clear(); }
 }
 
+/// 隔离夹具里的提交身份：测试仓库不得借用开发机的 user.name/user.email，
+/// 否则提交作者、`--author` 过滤、签名相关断言都会随机器变化。
+#[cfg(test)]
+pub(crate) const TEST_GIT_USER_NAME: &str = "Branchline Test";
+#[cfg(test)]
+pub(crate) const TEST_GIT_USER_EMAIL: &str = "branchline@example.com";
+/// 夹具固定的新仓库默认分支名（`git init` 在无夹具时是 master，本机全局配置是 main，
+/// 两种取值都会让「基线分支名」这类断言随机器/全局配置漂移，故显式钉死）。
+#[cfg(test)]
+pub(crate) const TEST_DEFAULT_BRANCH: &str = "main";
+/// 夹具固定的冲突风格。
+///
+/// 注意：这里必须写 `merge`，不能写 `normal`。Git 只接受 `merge`/`diff3`/`zdiff3`，
+/// 本机实测 `git 2.56.0` 在配置文件里读到 `normal` 会让**任何**用到合并命令的路径
+/// 直接失败：`错误：'merge.conflictstyle' 的未知风格取值 'normal'` +
+/// `致命错误：在文件 '...' 发现错误的配置变量`，比基线更糟。
+/// `merge` 是官方文档中的默认值，语义就是「两段冲突、无 `|||||||` 基线段」，
+/// 与需求里的「normal」等价。
+#[cfg(test)]
+pub(crate) const TEST_CONFLICT_STYLE: &str = "merge";
+
+/// 测试专用：把本测试进程的 Git 全局/系统配置与开发机隔离。
+///
+/// 集成测试创建的临时仓库若继承开发机用户级配置（本机实测全局值：pull.rebase=true、
+/// merge.conflictstyle=diff3、commit.template、core.excludesfile、core.autocrlf=input、
+/// core.pager=delta、interactive.difffilter=delta、init.defaultBranch、个人 user 身份、
+/// credential.helper、filter.lfs.*），同一批测试在不同机器/开发者上会得出不同结论
+/// （第一波各轨道报告的「基线失败数」不一致，3 个 vs 8 个，部分正源于此：
+/// 例如 diff3 会改变冲突标记结构、delta 会污染 diff 解析、autocrlf 会改写行尾）。
+///
+/// 实现方式：测试进程内所有 git 子进程都经由本文件的 spawn 函数启动，每个 spawn 点
+/// 先调用本函数；OnceLock 保证只初始化一次，且并发线程在初始化完成前会被阻塞，
+/// 因此不存在「某个子进程带着未隔离的环境起跑」的窗口。
+/// GIT_CONFIG_GLOBAL 指向内容固定的夹具文件、GIT_CONFIG_SYSTEM 指向空文件——
+/// 这是整体屏蔽（真实 ~/.gitconfig 与 /etc/gitconfig 不再被读取），比逐项 `-c` 覆盖
+/// 更可靠，因为它连开发机将来新增的未知配置项一起挡掉了。
+/// 另外清除 GIT_CONFIG_COUNT / GIT_CONFIG（环境变量注入通道与旧式配置路径），
+/// 并设 GIT_TERMINAL_PROMPT=0 防止任何凭据/编辑器提问把并行测试挂住。
+///
+/// 刻意不覆盖 LANG/LC_ALL：产品逻辑不应依赖 Git 错误文案的语言，保留中文环境
+/// 运行正是对该约束的持续验证（基线 3 个失败里就有 2 个是文案耦合导致的）。
+#[cfg(test)]
+pub(crate) fn isolate_test_git_environment() {
+    static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    INIT.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("branchline-git-env-{}", std::process::id()));
+        reap_stale_test_directories(&dir);
+        fs::create_dir_all(&dir).expect("create isolated git environment directory");
+        let fixture = format!(
+            "[user]\n\tname = {TEST_GIT_USER_NAME}\n\temail = {TEST_GIT_USER_EMAIL}\n\
+             [commit]\n\tgpgsign = false\n\
+             [merge]\n\tconflictstyle = {TEST_CONFLICT_STYLE}\n\
+             [pull]\n\trebase = false\n\
+             [init]\n\tdefaultBranch = {TEST_DEFAULT_BRANCH}\n\
+             [core]\n\texcludesfile = /dev/null\n\
+             \tattributesfile = /dev/null\n\
+             \tautocrlf = false\n"
+        );
+        fs::write(dir.join("config"), fixture).expect("write isolated global gitconfig");
+        fs::write(dir.join("system-config"), "").expect("write empty system gitconfig");
+        std::env::set_var("GIT_CONFIG_GLOBAL", dir.join("config"));
+        std::env::set_var("GIT_CONFIG_SYSTEM", dir.join("system-config"));
+        std::env::set_var("GIT_TERMINAL_PROMPT", "0");
+        std::env::remove_var("GIT_CONFIG_COUNT");
+        std::env::remove_var("GIT_CONFIG");
+    });
+}
+
+/// 清理崩溃/强杀遗留的测试临时目录（超过 24 小时的 branchline-* 条目），
+/// 防止磁盘堆积；正在进行中的进程目录（含其他并行测试进程）不会被误删——
+/// 活跃用例的目录 mtime 一直在变，24 小时阈值只会命中真正的残留。
+#[cfg(test)]
+fn reap_stale_test_directories(current: &Path) {
+    let parent = match current.parent() {
+        Some(parent) => parent,
+        None => return,
+    };
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let deadline = SystemTime::now() - Duration::from_secs(24 * 3600);
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("branchline-") {
+            continue;
+        }
+        let path = entry.path();
+        if path == current {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .map(|modified| modified < deadline)
+            .unwrap_or(false);
+        if stale {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+}
+
 fn command_output<I, S>(path: &Path, args: I) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
@@ -140,6 +243,8 @@ where
 {
     let args: Vec<String> = args.into_iter().map(|value| value.as_ref().to_string_lossy().to_string()).collect();
     let started = SystemTime::now();
+    #[cfg(test)]
+    isolate_test_git_environment();
     let mut command = Command::new("git");
     command.arg("-C").arg(path).args(&args);
     #[cfg(target_os = "windows")]
@@ -166,6 +271,8 @@ where
 {
     let args: Vec<String> = args.into_iter().map(|value| value.as_ref().to_string_lossy().to_string()).collect();
     let started = SystemTime::now();
+    #[cfg(test)]
+    isolate_test_git_environment();
     let mut command = Command::new("git");
     command.arg("-C").arg(path).args(&args);
     #[cfg(target_os = "windows")]
@@ -196,6 +303,8 @@ fn optional_git_output(path: &Path, args: &[&str]) -> String {
 fn global_git_output(args: &[&str]) -> Result<String, String> {
     let args: Vec<String> = args.iter().map(|value| (*value).to_string()).collect();
     let started = SystemTime::now();
+    #[cfg(test)]
+    isolate_test_git_environment();
     let mut command = Command::new("git");
     command.args(&args);
     #[cfg(target_os = "windows")]
@@ -377,6 +486,8 @@ pub fn git_output_owned(path: &Path, args: &[String]) -> Result<String, String> 
 }
 
 fn git_apply_cached(path: &Path, patch: &str, reverse: bool) -> Result<(), String> {
+    #[cfg(test)]
+    isolate_test_git_environment();
     let mut command = Command::new("git");
     command.arg("-C").arg(path).args([
         "apply",
@@ -418,6 +529,8 @@ fn git_apply_cached(path: &Path, patch: &str, reverse: bool) -> Result<(), Strin
 }
 
 fn git_apply_reverse(path: &Path, patch: &str) -> Result<(), String> {
+    #[cfg(test)]
+    isolate_test_git_environment();
     let mut command = Command::new("git");
     command.arg("-C").arg(path).args([
         "apply",
@@ -456,6 +569,8 @@ fn git_apply_reverse(path: &Path, patch: &str) -> Result<(), String> {
 }
 
 fn git_success(path: &Path, args: &[&str]) -> bool {
+    #[cfg(test)]
+    isolate_test_git_environment();
     let mut command = Command::new("git");
     command.arg("-C").arg(path).args(args);
     #[cfg(target_os = "windows")]
@@ -1249,7 +1364,28 @@ pub(crate) fn parse_submodules(path: &Path) -> Vec<RepositorySubmodule> {
 }
 
 fn normalized_path_key(path: &Path) -> String {
-    path.to_string_lossy()
+    // `git worktree list --porcelain` 返回的是 Git 解析符号链接后的真实路径（macOS 的
+    // TMPDIR /var/… 实为 /private/var/… 的链接），而调用方手里的路径往往仍带符号链接段。
+    // 直接做字符串比较会把同一个 worktree 判成“不存在”，导致：
+    //   1) 面板列出 worktree 后，锁定/移除报「Worktree 不存在」；
+    //   2) create_repository_worktree 的重复注册检查失效（该目录已经是 Worktree 判不出来）；
+    //   3) remove_repository_worktree 的「不能移除当前 Worktree」护栏失效——这条最危险，
+    //      用户能在主仓库里移除自身 worktree 目录。
+    // 先尝试 canonicalize：路径本身不存在时（尚未创建或已被删除）退化为对父目录解析后
+    // 再拼接文件名，全部失败才回退到原始字符串归一化。
+    // 写法与本文件既有的 superproject_working_tree 保持一致，用 display_path 收口：
+    // Windows 上 canonicalize 会加 \\?\ 前缀，而 Git 输出的是 C:/… 形式，
+    // 不剥前缀就永远不相等（会把这个 macOS 修复变成 Windows 回归）。
+    let resolved = path.canonicalize().unwrap_or_else(|_| {
+        match (
+            path.file_name(),
+            path.parent().and_then(|parent| parent.canonicalize().ok()),
+        ) {
+            (Some(name), Some(parent)) => parent.join(name),
+            _ => path.to_path_buf(),
+        }
+    });
+    display_path(&resolved)
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_ascii_lowercase()
@@ -2063,6 +2199,25 @@ pub fn merge_repository_reference(repository_path: &str, reference: &str) -> Res
     }
 }
 
+/// 结构性判定“cherry-pick 落入了空提交状态”，刻意不解析 Git 的人话错误文案：
+/// Git 的提示跟随执行环境的 locale（中文机器输出「之前的拣选操作现在是一个空提交…」），
+/// 按英文文案做字符串匹配会在非英文环境必然失效——这是本项目的通用原则。
+///
+/// 三个结构信号缺一不可：
+/// 1. `.git/CHERRY_PICK_HEAD` 存在（拣选状态正在进行，由 git rev-parse --git-path 定位，
+///    兼容 worktree/common dir 等非常规 .git 布局）；
+/// 2. 索引中没有任何未合并路径（排除“真冲突”失败）；
+/// 3. 索引与 HEAD 完全一致（`git diff --cached --quiet` 退出码 0），即确实无内容可提交。
+fn is_empty_cherry_pick_state(root: &Path) -> bool {
+    if !git_internal_path(root, "CHERRY_PICK_HEAD").exists() {
+        return false;
+    }
+    if !unresolved_paths(root).is_empty() {
+        return false;
+    }
+    git_output(root, &["diff", "--cached", "--quiet"]).is_ok()
+}
+
 pub fn cherry_pick_repository_commit(repository_path: &str, commit: &str) -> Result<(), String> {
     cherry_pick_repository_commit_with_mainline(repository_path, commit, None)
 }
@@ -2105,9 +2260,9 @@ pub fn cherry_pick_repository_commit_with_mainline(
     args.extend(["--".into(), commit]);
     match git_output_owned(&root, &args) {
         Ok(_) => Ok(()),
-        Err(error) if error.to_ascii_lowercase().contains("cherry-pick is now empty") => {
-            // A duplicate or already-applied commit leaves CHERRY_PICK_HEAD behind even
-            // though there is nothing to resolve. Treat it as a successful no-op.
+        // 重复拣选/已应用的提交会留下空拣选状态：没有任何内容可提交，但 CHERRY_PICK_HEAD
+        // 仍挂在那里。判定必须走结构信号（见 is_empty_cherry_pick_state），不能匹配错误文案。
+        Err(_) if is_empty_cherry_pick_state(&root) => {
             git_output_owned(
                 &root,
                 &["cherry-pick".into(), "--skip".into()],
@@ -3766,10 +3921,9 @@ pub fn continue_repository_operation(repository_path: &str) -> Result<(), String
     };
     match git_output_owned(&root, &args) {
         Ok(_) => Ok(()),
-        Err(error)
-            if operation.kind == "cherry-pick"
-                && error.to_ascii_lowercase().contains("cherry-pick is now empty") =>
-        {
+        // 与 cherry_pick_repository_commit_with_mainline 同一原则：空拣选状态用
+        // CHERRY_PICK_HEAD + 索引结构判定，不依赖 Git 错误文案的语言。
+        Err(_) if operation.kind == "cherry-pick" && is_empty_cherry_pick_state(&root) => {
             git_output_owned(
                 &root,
                 &["cherry-pick".into(), "--skip".into()],
@@ -4060,38 +4214,107 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    struct TestRepository(PathBuf);
+    /// .0 = 仓库目录，.1 = 本次用例独占的基目录（内含仓库及其同级派生目录，
+    /// 例如 worktree 用例的 repository.linked-worktree），Drop 时整体删除避免堆积。
+    struct TestRepository(PathBuf, PathBuf);
 
-    impl Drop for TestRepository {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+    impl TestRepository {
+        /// bare remote / peer clone / submodule 源这类辅助仓库没有派生的同级目录，
+        /// 基目录即其自身。
+        fn standalone(path: PathBuf) -> Self {
+            let base = path.clone();
+            Self(path, base)
+        }
+
+        /// 在本用例基目录内再开一个唯一子目录（远端 bare 库、协作者克隆等）。
+        /// 放在基目录内部意味着即使句柄泄漏，也会被所属用例的 Drop 一起清掉。
+        fn scratch_dir(&self, label: &str) -> PathBuf {
+            unique_scratch_dir_under(&self.1, label)
         }
     }
 
+    impl Drop for TestRepository {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.1);
+        }
+    }
+
+    /// 测试临时目录的**唯一**分配器（全轨道只此一套，请勿再新增第二套序号/命名）。
+    ///
+    /// 命名：`branchline-<label>-<pid>-<纳秒>-<自增序号>`；抢占方式：`fs::create_dir`
+    /// （目录已存在即报 AlreadyExists）——撞名就换下一个候选名重试，绝不复用已存在目录。
+    /// 三个维度分别覆盖：跨进程（pid）、同进程并发线程（纳秒 + 自增序号）。
+    /// 只用时间戳不够：本机 SystemTime 粒度到微秒级，并行用例曾拿到完全相同的
+    /// pid+时间戳，`create_dir_all` 会静默复用同一目录，表现为随机 `git init` 失败
+    /// （hooks/*.sample: File exists）与 Drop 互删他人工作目录。
+    /// 清理：正常路径由 TestRepository::drop 删除；进程被强杀的残留由
+    /// isolate_test_git_environment 里的 reap_stale_test_directories 兜底。
+    static SCRATCH_DIRECTORY_SEQUENCE: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    fn unique_scratch_dir_under(parent: &Path, label: &str) -> PathBuf {
+        // 配置隔离必须在任何 git 子进程起跑前完成（本函数是绝大多数用例的第一站）。
+        isolate_test_git_environment();
+        loop {
+            let sequence =
+                SCRATCH_DIRECTORY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos();
+            let candidate = parent.join(format!(
+                "branchline-{label}-{}-{nanos}-{sequence}",
+                std::process::id()
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create scratch directory for {label}: {error}"),
+            }
+        }
+    }
+
+    /// 直接在系统临时目录下分配一个独立用例级目录（没有宿主 TestRepository 时用，
+    /// 例如协作者克隆、子模组源仓库）。
+    fn unique_scratch_dir(label: &str) -> PathBuf {
+        unique_scratch_dir_under(&std::env::temp_dir(), label)
+    }
+
     fn test_repository() -> TestRepository {
-        // 这台机器上 SystemTime 只有微秒级粒度：并发用例可能拿到完全相同的
-        // pid+时间戳，于是 git init 会撞进同一个目录（报 hooks/*.sample: File exists）。
-        // 加一个进程内自增序号，保证每个用例独占临时目录。
-        static REPOSITORY_SEQUENCE: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
-        let sequence = REPOSITORY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "branchline-git-test-{}-{unique}-{sequence}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path).expect("create test repository");
-        git_output(&path, &["init"]).expect("git init");
-        git_output(&path, &["config", "user.name", "Branchline Test"]).expect("git user name");
-        git_output(&path, &["config", "user.email", "branchline@example.com"])
-            .expect("git user email");
-        fs::write(path.join("README.md"), "first\n").expect("write initial file");
-        git_output(&path, &["add", "README.md"]).expect("git add");
-        git_output(&path, &["commit", "-m", "初始提交"]).expect("git commit");
-        TestRepository(path)
+        let base = unique_scratch_dir("repo");
+        let path = base.join("repository");
+        // 目录建好之后所有可能失败的步骤都收在 prepare_test_repository 里返回 Result：
+        // 失败时立刻把基目录删掉，绝不留下「有目录没句柄」的游离残留
+        // （负向对照实验里那种先建目录再 expect(git init) 的写法，一批失败就会堆一批目录）。
+        if let Err(error) = prepare_test_repository(&path) {
+            let _ = fs::remove_dir_all(&base);
+            panic!("prepare test repository at {}: {error}", path.display());
+        }
+        TestRepository(path, base)
+    }
+
+    fn prepare_test_repository(path: &Path) -> Result<(), String> {
+        fs::create_dir_all(path).map_err(|error| format!("create directory: {error}"))?;
+        git_output(path, &["init"]).map_err(|error| format!("git init: {error}"))?;
+        git_output(path, &["config", "user.name", TEST_GIT_USER_NAME])
+            .map_err(|error| format!("git user name: {error}"))?;
+        git_output(path, &["config", "user.email", TEST_GIT_USER_EMAIL])
+            .map_err(|error| format!("git user email: {error}"))?;
+        // 仓库本地兜底显式覆盖（即便夹具文件意外缺失也不受开发机全局配置影响）：
+        // 无 GPG 签名、默认（merge 两段）冲突风格、不自动 rebase，保证提交/冲突断言稳定。
+        for (key, value) in [
+            ("commit.gpgsign", "false"),
+            ("merge.conflictstyle", TEST_CONFLICT_STYLE),
+            ("pull.rebase", "false"),
+        ] {
+            git_output(path, &["config", key, value])
+                .map_err(|error| format!("git config {key}: {error}"))?;
+        }
+        fs::write(path.join("README.md"), "first\n").map_err(|error| format!("write README: {error}"))?;
+        git_output(path, &["add", "README.md"]).map_err(|error| format!("git add: {error}"))?;
+        git_output(path, &["commit", "-m", "初始提交"])
+            .map_err(|error| format!("git commit: {error}"))?;
+        Ok(())
     }
 
     #[test]
@@ -4800,6 +5023,217 @@ mod tests {
     }
 
     #[test]
+    fn test_repositories_are_isolated_from_developer_git_config() {
+        // 质量门禁：测试仓库必须只看到隔离夹具的配置，而不是开发机的用户级配置。
+        // 本机实测的全局配置有 pull.rebase=true、merge.conflictstyle=diff3、
+        // core.excludesfile=~/.gitignore_global、commit.template、core.autocrlf=input、
+        // core.pager=delta + interactive.difffilter=delta、个人 user 身份……
+        // 任一项泄漏进临时仓库，都会让同一批用例在不同机器上给出不同结论
+        // （第一波各轨道「基线失败数」从 3 到 8 不等，部分正源于此）。
+        // 断言分两层：先证明「读到的配置值」是夹具值，再证明「git 的实际行为」
+        // 也确实是夹具语义（配置读对不等于行为对）。
+        // 隔离是惰性初始化的（每个 git spawn 点前都会调用），单独跑本用例时它是进程里
+        // 第一个碰 git 的线程，所以这里显式触发一次——不能依赖别的用例先跑过。
+        isolate_test_git_environment();
+        let global_fixture = std::env::var("GIT_CONFIG_GLOBAL").expect("isolation sets GIT_CONFIG_GLOBAL");
+        let system_fixture = std::env::var("GIT_CONFIG_SYSTEM").expect("isolation sets GIT_CONFIG_SYSTEM");
+        assert!(Path::new(&global_fixture).is_file(), "global 夹具文件必须真实存在");
+        assert!(Path::new(&system_fixture).is_file(), "system 夹具文件必须真实存在");
+        assert!(
+            fs::read_to_string(&system_fixture).expect("read system fixture").trim().is_empty(),
+            "system 夹具必须是空文件（屏蔽 /etc/gitconfig）"
+        );
+        assert!(
+            std::env::var("GIT_CONFIG_COUNT").is_err(),
+            "GIT_CONFIG_COUNT 注入通道必须关闭，否则 -c 级配置会从宿主环境漏进来"
+        );
+        assert_eq!(
+            std::env::var("GIT_TERMINAL_PROMPT").as_deref(),
+            Ok("0"),
+            "禁止任何 git 子进程向终端提问（凭据/编辑器）挂住并行用例"
+        );
+
+        let repository = test_repository();
+        let config = |key: &str| -> Option<String> {
+            git_output(&repository.0, &["config", "--get", key])
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| value.trim().to_string())
+        };
+
+        // 1) 关键配置逐项钉死。
+        assert_eq!(config("pull.rebase").as_deref(), Some("false"));
+        assert_eq!(config("merge.conflictstyle").as_deref(), Some(TEST_CONFLICT_STYLE));
+        assert_eq!(config("commit.gpgsign").as_deref(), Some("false"));
+        assert_eq!(config("core.excludesfile").as_deref(), Some("/dev/null"));
+        assert_eq!(config("core.autocrlf").as_deref(), Some("false"));
+        assert_eq!(config("init.defaultBranch").as_deref(), Some(TEST_DEFAULT_BRANCH));
+        assert_eq!(config("user.name").as_deref(), Some(TEST_GIT_USER_NAME));
+        assert_eq!(config("user.email").as_deref(), Some(TEST_GIT_USER_EMAIL));
+        for leaked in ["commit.template", "core.pager", "interactive.difffilter", "credential.helper"] {
+            assert!(
+                config(leaked).is_none(),
+                "{leaked} 不应从开发机全局配置泄漏进测试仓库"
+            );
+        }
+
+        // 2) 全局作用域的每一行配置都必须来自夹具文件（origin 即证据），
+        //    而不是开发机的 ~/.gitconfig 或 ~/.config/git/config。
+        let global_listing =
+            git_output(&repository.0, &["config", "--list", "--global", "--show-origin"])
+                .expect("list global scope with origins");
+        for line in global_listing.lines() {
+            let (origin, _) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("配置行应带 origin：{line}"));
+            let reported = origin
+                .strip_prefix("file:")
+                .unwrap_or(origin);
+            // 逐字比较会因为 macOS 的 /var -> /private/var 符号链接失真，
+            // 这里只关心「origin 是不是那个夹具文件」，所以两边都解析后比较。
+            assert_eq!(
+                Path::new(reported).canonicalize().ok(),
+                Some(Path::new(&global_fixture).canonicalize().expect("fixture readable")),
+                "全局配置行应只来自夹具文件，实际 origin 异常：{line}"
+            );
+        }
+
+        // 3) 行为级证据 a：新建仓库的默认分支由夹具决定，不随机器（无夹具时是 master）。
+        let fresh = repository.scratch_dir("fresh-init");
+        git_output(&fresh, &["init"]).expect("init fresh repository");
+        assert_eq!(
+            git_output(&fresh, &["symbolic-ref", "--short", "HEAD"])
+                .expect("read fresh head")
+                .trim(),
+            TEST_DEFAULT_BRANCH
+        );
+
+        // 4) 行为级证据 b：提交身份来自配置而不是开发机个人身份。
+        assert_eq!(
+            git_output(&repository.0, &["log", "-1", "--format=%an <%ae>"])
+                .expect("read author")
+                .trim(),
+            format!("{TEST_GIT_USER_NAME} <{TEST_GIT_USER_EMAIL}>")
+        );
+
+        // 5) 行为级证据 c：core.excludesfile=/dev/null 真的生效——
+        //    macOS 开发机几乎都在全局 ignore 里写 .DS_Store，泄漏时它会凭空消失。
+        fs::write(repository.0.join(".DS_Store"), "junk\n").expect("write ignored-name file");
+        assert!(
+            git_output(&repository.0, &["status", "--porcelain"])
+                .expect("read status")
+                .lines()
+                .any(|line| line.trim_end().ends_with(".DS_Store")),
+            "全局 ignore 泄漏会让未跟踪文件从状态里消失"
+        );
+
+        // 6) 行为级证据 d：冲突是两段式（无 diff3 的 ||||||| 基线段），
+        //    这是冲突面板/解析类用例最容易被开发机配置打翻的一项。
+        let (conflicted, _) = conflicted_repository();
+        let markers = fs::read_to_string(conflicted.0.join("README.md"))
+            .expect("read conflicted file");
+        assert!(markers.contains("<<<<<<<") && markers.contains("=======\n"), "应存在两段冲突标记：{markers}");
+        assert!(
+            !markers.contains("|||||||"),
+            "开发机 merge.conflictstyle=diff3 泄漏会改变标记结构，冲突解析类断言会整体漂移：{markers}"
+        );
+    }
+
+    #[test]
+    fn empty_cherry_pick_detection_uses_index_state_not_message_text() {
+        // 回归护栏：空拣选判定只许看结构化状态（CHERRY_PICK_HEAD + 索引 + 冲突表），
+        // 不许看 Git 的人话文案——文案随 locale 变化，本机是中文环境，基线的 2 个失败
+        // 正是这么坏的。逐个状态钉住：无拣选进行中 / 停在空拣选 / skip 之后 / 产品函数收敛。
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+
+        // 状态一：没有拣选在进行 —— 即便索引与 HEAD 完全一致也不能判成「空拣选」。
+        assert!(!is_empty_cherry_pick_state(&repository.0));
+
+        // 造一个可挑选的提交。
+        git_output(&repository.0, &["switch", "-c", "feat/empty-detect"])
+            .expect("create detect branch");
+        fs::write(repository.0.join("detect.txt"), "detect\n").expect("write detect file");
+        git_output(&repository.0, &["add", "detect.txt"]).expect("stage detect file");
+        git_output(&repository.0, &["commit", "-m", "可挑选提交"]).expect("commit detect file");
+        let cherry_hash = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read detect hash")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["switch", &base_branch]).expect("switch back to base");
+
+        // 状态二：重复挑选 → CHERRY_PICK_HEAD 在、无未合并路径、索引==HEAD。
+        // 先用原始 CLI 复现「停在空拣选状态」的现场（实测：退出码 1、
+        // CHERRY_PICK_HEAD 存在、git diff --cached --quiet 通过），
+        // 因为产品函数在该现场会自行收敛，直接调它是看不到中间态的。
+        cherry_pick_repository_commit(&path, &cherry_hash).expect("first pick should apply");
+        git_output(&repository.0, &["cherry-pick", &cherry_hash])
+            .expect_err("an already applied pick must fail with an empty commit");
+        assert!(
+            is_empty_cherry_pick_state(&repository.0),
+            "空拣选状态必须由结构信号识别（CHERRY_PICK_HEAD + 索引 + 冲突表），而不是错误文案"
+        );
+        git_output(&repository.0, &["cherry-pick", "--skip"]).expect("clear the empty state");
+        assert!(!is_empty_cherry_pick_state(&repository.0));
+
+        // 同一现场交给产品函数：必须收敛成 no-op 并清空操作状态，
+        // 而不是把 Git 的人话（本机是中文）当作失败抛给用户。
+        cherry_pick_repository_commit(&path, &cherry_hash)
+            .expect("duplicate pick must resolve as an empty no-op");
+        assert!(
+            read_repository(&path)
+                .expect("read after duplicate pick")
+                .operation
+                .is_none(),
+            "空拣选收敛后不应残留操作状态"
+        );
+    }
+
+    #[test]
+    fn conflicted_cherry_pick_is_not_mistaken_for_an_empty_pick() {
+        // 异常分支护栏：真冲突时 CHERRY_PICK_HEAD 也在，但存在未合并路径，
+        // 绝不能被判成「空拣选」而被 --skip 悄悄吃掉用户的冲突。
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let base_branch = git_output(&repository.0, &["branch", "--show-current"])
+            .expect("read base branch")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["switch", "-c", "feat/pick-conflict"])
+            .expect("create pick conflict branch");
+        fs::write(repository.0.join("README.md"), "feature\n").expect("write feature version");
+        git_output(&repository.0, &["commit", "-am", "功能侧冲突"]).expect("commit feature side");
+        let cherry_hash = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read conflict hash")
+            .trim()
+            .to_string();
+        git_output(&repository.0, &["switch", &base_branch]).expect("switch back to base");
+        fs::write(repository.0.join("README.md"), "main\n").expect("write main version");
+        git_output(&repository.0, &["commit", "-am", "主线侧冲突"]).expect("commit main side");
+
+        let error = cherry_pick_repository_commit(&path, &cherry_hash)
+            .expect_err("conflicting pick must surface the conflict");
+        assert!(
+            !unresolved_paths(&repository.0).is_empty(),
+            "冲突必须保留给用户处理：{error}"
+        );
+        assert!(
+            git_internal_path(&repository.0, "CHERRY_PICK_HEAD").is_file(),
+            "冲突中的拣选状态应仍在进行：{error}"
+        );
+        assert!(
+            !is_empty_cherry_pick_state(&repository.0),
+            "有未合并路径时不得判为空拣选（否则 --skip 会吞掉冲突）"
+        );
+        abort_repository_operation(&path).expect("abort the conflicted pick");
+        assert!(!is_empty_cherry_pick_state(&repository.0));
+    }
+
+    #[test]
     fn manages_repository_worktree_lifecycle() {
         let repository = test_repository();
         let path = repository.0.to_string_lossy().to_string();
@@ -5340,14 +5774,7 @@ mod tests {
             .expect("read base branch")
             .trim()
             .to_string();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let remote = TestRepository(
-            std::env::temp_dir().join(format!("branchline-remote-{}-{unique}", std::process::id())),
-        );
-        fs::create_dir_all(&remote.0).expect("create bare remote directory");
+        let remote = TestRepository::standalone(repository.scratch_dir("remote"));
         git_output(&remote.0, &["init", "--bare"]).expect("init bare remote");
         let remote_path = remote.0.to_string_lossy().to_string();
         git_output(&repository.0, &["remote", "add", "origin", &remote_path]).expect("add origin");
@@ -5373,9 +5800,7 @@ mod tests {
             git_output(&remote.0, &["rev-parse", &base_branch]).expect("read remote pushed head");
         assert_eq!(local_head.trim(), remote_head.trim());
 
-        let peer = TestRepository(
-            std::env::temp_dir().join(format!("branchline-peer-{}-{unique}", std::process::id())),
-        );
+        let peer = TestRepository::standalone(repository.scratch_dir("peer"));
         let peer_path = peer.0.to_string_lossy().to_string();
         git_output(&std::env::temp_dir(), &["clone", &remote_path, &peer_path])
             .expect("clone peer");
@@ -5959,20 +6384,10 @@ mod tests {
             .expect("read base branch")
             .trim()
             .to_string();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        static TEMP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let sequence = TEMP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let submodule = TestRepository(std::env::temp_dir().join(format!(
-            "branchline-gitlink-conflict-{}-{unique}-{sequence}",
-            std::process::id()
-        )));
-        fs::create_dir_all(&submodule.0).expect("create submodule directory");
+        let submodule = TestRepository::standalone(repository.scratch_dir("gitlink-conflict"));
         git_output(&submodule.0, &["init"]).expect("init submodule");
-        git_output(&submodule.0, &["config", "user.name", "Branchline Test"]).expect("submodule user");
-        git_output(&submodule.0, &["config", "user.email", "branchline@example.com"])
+        git_output(&submodule.0, &["config", "user.name", TEST_GIT_USER_NAME]).expect("submodule user");
+        git_output(&submodule.0, &["config", "user.email", TEST_GIT_USER_EMAIL])
             .expect("submodule email");
         fs::write(submodule.0.join("plan.md"), "base\n").expect("write submodule base");
         git_output(&submodule.0, &["add", "plan.md"]).expect("stage submodule base");
@@ -6116,23 +6531,14 @@ mod tests {
         git_output(&repository.0, &["config", "pull.rebase", "true"]).expect("set rebase pull");
         git_output(&repository.0, &["config", "pull.ff", "true"]).expect("reset fast-forward pull");
 
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let remote = TestRepository(
-            std::env::temp_dir().join(format!("branchline-remote-{}-{unique}", std::process::id())),
-        );
-        fs::create_dir_all(&remote.0).expect("create bare remote directory");
+        let remote = TestRepository::standalone(repository.scratch_dir("remote"));
         git_output(&remote.0, &["init", "--bare"]).expect("init bare remote");
         let remote_path = remote.0.to_string_lossy().to_string();
         git_output(&repository.0, &["remote", "add", "origin", &remote_path]).expect("add origin");
         git_output(&repository.0, &["push", "-u", "origin", &base_branch])
             .expect("push base branch");
 
-        let peer = TestRepository(
-            std::env::temp_dir().join(format!("branchline-peer-{}-{unique}", std::process::id())),
-        );
+        let peer = TestRepository::standalone(repository.scratch_dir("peer"));
         let peer_path = peer.0.to_string_lossy().to_string();
         git_output(&std::env::temp_dir(), &["clone", &remote_path, &peer_path]).expect("clone peer");
         git_output(&peer.0, &["config", "user.name", "Branchline Peer"]).expect("peer user name");
@@ -6167,26 +6573,10 @@ mod tests {
         assert_eq!(porcelain_file_type(" M"), "M");
     }
 
-    /// 并行测试里仅靠纳秒时间戳仍可能撞名（撞名后 Drop 会互删临时目录），
-    /// 叠加进程内自增序号保证本轨道新建的 remote/peer 目录唯一。
-    static TEST_DIRECTORY_SEQUENCE: std::sync::atomic::AtomicUsize =
-        std::sync::atomic::AtomicUsize::new(0);
-
-    fn unique_tag() -> String {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        format!("{}-{nanos}-{sequence}", std::process::id())
-    }
-
     /// 建一个本地 bare 仓库作为 origin，并挂到被测仓库上。
+    /// 目录建在被测仓库的基目录内（见 TestRepository::scratch_dir），所以随宿主一起清理。
     fn linked_bare_remote(repository: &TestRepository, label: &str) -> (TestRepository, String) {
-        let remote = TestRepository(
-            std::env::temp_dir().join(format!("branchline-{label}-remote-{}", unique_tag())),
-        );
-        fs::create_dir_all(&remote.0).expect("create bare remote directory");
+        let remote = TestRepository::standalone(repository.scratch_dir(&format!("{label}-remote")));
         git_output(&remote.0, &["init", "--bare"]).expect("init bare remote");
         let remote_path = remote.0.to_string_lossy().to_string();
         git_output(&repository.0, &["remote", "add", "origin", &remote_path]).expect("add origin");
@@ -6194,10 +6584,9 @@ mod tests {
     }
 
     /// 从 bare origin 克隆一个协作者仓库，用于制造真实的远端新提交。
-    fn clone_peer(remote_path: &str, label: &str) -> TestRepository {
-        let peer = TestRepository(
-            std::env::temp_dir().join(format!("branchline-{label}-peer-{}", unique_tag())),
-        );
+    /// 同样落在宿主用例的基目录内，避免游离临时目录。
+    fn clone_peer(repository: &TestRepository, remote_path: &str, label: &str) -> TestRepository {
+        let peer = TestRepository::standalone(repository.scratch_dir(&format!("{label}-peer")));
         let peer_path = peer.0.to_string_lossy().to_string();
         git_output(&std::env::temp_dir(), &["clone", remote_path, &peer_path]).expect("clone peer");
         git_output(&peer.0, &["config", "user.name", "Branchline Peer"]).expect("peer user name");
@@ -6221,7 +6610,7 @@ mod tests {
         let (remote, remote_path) = linked_bare_remote(&repository, "ffonly");
         git_output(&repository.0, &["push", "-u", "origin", &base_branch])
             .expect("push base branch");
-        let peer = clone_peer(&remote_path, "ffonly");
+        let peer = clone_peer(&repository, &remote_path, "ffonly");
         fs::write(peer.0.join("remote.txt"), "remote\n").expect("write remote file");
         git_output(&peer.0, &["add", "remote.txt"]).expect("add remote file");
         git_output(&peer.0, &["commit", "-m", "远程更新"]).expect("commit remote file");
@@ -6283,7 +6672,7 @@ mod tests {
         let (_remote, remote_path) = linked_bare_remote(&repository, "mergepull");
         git_output(&repository.0, &["push", "-u", "origin", &base_branch])
             .expect("push base branch");
-        let peer = clone_peer(&remote_path, "mergepull");
+        let peer = clone_peer(&repository, &remote_path, "mergepull");
         fs::write(peer.0.join("remote.txt"), "remote\n").expect("write remote file");
         git_output(&peer.0, &["add", "remote.txt"]).expect("add remote file");
         git_output(&peer.0, &["commit", "-m", "远程更新"]).expect("commit remote file");
@@ -6340,7 +6729,7 @@ mod tests {
         let (_remote, remote_path) = linked_bare_remote(&repository, "rebase-stash");
         git_output(&repository.0, &["push", "-u", "origin", &base_branch])
             .expect("push base branch");
-        let peer = clone_peer(&remote_path, "rebase-stash");
+        let peer = clone_peer(&repository, &remote_path, "rebase-stash");
         fs::write(peer.0.join("README.md"), "line1-remote\nline2\nline3\n")
             .expect("peer edits first line");
         git_output(&peer.0, &["add", "README.md"]).expect("stage peer edit");
@@ -6404,7 +6793,7 @@ mod tests {
         let (_remote, remote_path) = linked_bare_remote(&repository, "rebase-conflict");
         git_output(&repository.0, &["push", "-u", "origin", &base_branch])
             .expect("push base branch");
-        let peer = clone_peer(&remote_path, "rebase-conflict");
+        let peer = clone_peer(&repository, &remote_path, "rebase-conflict");
         fs::write(peer.0.join("README.md"), "line1-remote\n").expect("peer rewrites line1");
         git_output(&peer.0, &["add", "README.md"]).expect("stage peer rewrite");
         git_output(&peer.0, &["commit", "-m", "远程改首行"]).expect("commit peer rewrite");
@@ -6507,7 +6896,7 @@ mod tests {
         push_repository(&path).expect("push local work");
 
         // 协作者推进了远端，而本地 remote-tracking 仍停留在旧值 → lease 过期。
-        let peer = clone_peer(&remote_path, "lease-stale");
+        let peer = clone_peer(&repository, &remote_path, "lease-stale");
         fs::write(peer.0.join("theirs.txt"), "theirs\n").expect("write theirs.txt");
         git_output(&peer.0, &["add", "theirs.txt"]).expect("stage theirs.txt");
         git_output(&peer.0, &["commit", "-m", "协作者提交"]).expect("commit collaborator work");
