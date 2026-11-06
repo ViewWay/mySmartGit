@@ -708,3 +708,56 @@ export async function cloneRepositoryWithSubmodules(
     singleBranch,
   })
 }
+
+// ---------------------------------------------------------------------------
+// W3-1 交互式历史编辑（仅追加；类型块独立以免改动既有 export 列表）
+// ---------------------------------------------------------------------------
+
+export type {
+  HistoryEditActionKind,
+  HistoryEditActionInput,
+  HistoryEditEntry,
+  HistoryEditSequence,
+  HistoryEditImpact,
+  HistoryEditReport,
+  CherryPickOutcome,
+  CherryPickBatchReport,
+} from '@branchline/git-models'
+
+import type {
+  CherryPickBatchReport,
+  HistoryEditActionInput,
+  HistoryEditImpact,
+  HistoryEditReport,
+  HistoryEditSequence,
+} from '@branchline/git-models'
+
+/** 读取 `基点..HEAD` 的可编辑提交序列（先旧后新）。 */
+export async function loadHistoryEditSequence(repositoryPath: string, baseRef: string) {
+  return invoke<HistoryEditSequence>('load_history_edit_sequence', { repositoryPath, baseRef })
+}
+
+/** 应用前的影响预览：会重写多少提交、哪些 ref 掉队、是否需要强推。 */
+export async function previewHistoryEditImpact(repositoryPath: string, baseRef: string, actions: HistoryEditActionInput[]) {
+  return invoke<HistoryEditImpact>('preview_history_edit_impact', { repositoryPath, baseRef, actions })
+}
+
+/** 应用序列编辑（脚本化 GIT_SEQUENCE_EDITOR 注入，绝不依赖交互式终端）。 */
+export async function applyHistoryEditSequence(repositoryPath: string, baseRef: string, actions: HistoryEditActionInput[]) {
+  return invoke<HistoryEditReport>('apply_history_edit_sequence', { repositoryPath, baseRef, actions })
+}
+
+/** 改写任意历史提交的消息（后代提交一并重写，树保持不变）。 */
+export async function rewordHistoryCommit(repositoryPath: string, commit: string, message: string) {
+  return invoke<HistoryEditReport>('reword_history_commit', { repositoryPath, commit, message })
+}
+
+/** 删除（drop）单个非合并提交。 */
+export async function dropHistoryCommit(repositoryPath: string, commit: string) {
+  return invoke<HistoryEditReport>('drop_history_commit', { repositoryPath, commit })
+}
+
+/** 批量 cherry-pick：按「先旧后新」应用，空提交结构化跳过，冲突即停。 */
+export async function cherryPickHistoryCommits(repositoryPath: string, commits: string[], mainline?: number | null) {
+  return invoke<CherryPickBatchReport>('cherry_pick_history_commits', { repositoryPath, commits, mainline: mainline ?? null })
+}
