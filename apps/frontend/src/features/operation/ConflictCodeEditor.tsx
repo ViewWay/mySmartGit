@@ -1,17 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, Save, X } from 'lucide-react'
 import { defaultKeymap } from '@codemirror/commands'
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { javascript } from '@codemirror/lang-javascript'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { rust } from '@codemirror/lang-rust'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
+import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, keymap, lineNumbers, WidgetType, type DecorationSet } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 import { Button } from '../../components/Button'
+import { matchLanguage } from '../../syntax/languages'
 
 export type ConflictBlockRange = {
   index: number
@@ -23,7 +18,27 @@ export type ConflictBlockRange = {
   endOffset: number
 }
 
-type ResolutionStrategy = 'current' | 'incoming' | 'both'
+export type ResolutionStrategy = 'current' | 'incoming' | 'both'
+
+export type ConflictActionLabels = {
+  current: string
+  incoming: string
+  both: string
+}
+
+const defaultActionLabels: ConflictActionLabels = {
+  current: 'Current',
+  incoming: 'Incoming',
+  both: 'Both',
+}
+
+export function buildConflictActions(labels: ConflictActionLabels): Array<[ResolutionStrategy, string]> {
+  return [
+    ['current', labels.current],
+    ['incoming', labels.incoming],
+    ['both', labels.both],
+  ]
+}
 
 type ConflictCodeEditorProps = {
   value: string
@@ -32,6 +47,7 @@ type ConflictCodeEditorProps = {
   activeBlock: number
   resolvedRanges?: Array<{ from: number; to: number }>
   disabled?: boolean
+  labels?: ConflictActionLabels
   onChange: (value: string) => void
   onResolveBlock: (index: number, strategy: ResolutionStrategy) => void
   onSave: () => void
@@ -49,6 +65,7 @@ type ConflictDecorationPayload = {
   activeBlock: number
   resolvedRanges: Array<{ from: number; to: number }>
   disabled: boolean
+  labels: ConflictActionLabels
   onResolve: (index: number, strategy: ResolutionStrategy) => void
   searchMatches: SearchMatch[]
   activeSearchMatch: number
@@ -61,22 +78,23 @@ class ConflictActionsWidget extends WidgetType {
     private readonly index: number,
     private readonly active: boolean,
     private readonly disabled: boolean,
+    private readonly labels: ConflictActionLabels,
     private readonly onResolve: (index: number, strategy: ResolutionStrategy) => void,
   ) { super() }
 
   eq(other: ConflictActionsWidget) {
-    return this.index === other.index && this.active === other.active && this.disabled === other.disabled
+    return this.index === other.index
+      && this.active === other.active
+      && this.disabled === other.disabled
+      && this.labels.current === other.labels.current
+      && this.labels.incoming === other.labels.incoming
+      && this.labels.both === other.labels.both
   }
 
   toDOM() {
     const root = document.createElement('div')
     root.className = `cm-conflict-actions${this.active ? ' active' : ''}`
-    const actions: Array<[ResolutionStrategy, string]> = [
-      ['current', '采用当前更改'],
-      ['incoming', '采用传入的更改'],
-      ['both', '保留双方更改'],
-    ]
-    for (const [strategy, label] of actions) {
+    for (const [strategy, label] of buildConflictActions(this.labels)) {
       const button = document.createElement('button')
       button.type = 'button'
       button.className = 'button button-secondary'
@@ -112,7 +130,7 @@ function conflictDecorations(doc: EditorState['doc'], payload: ConflictDecoratio
       return Array.from({ length: last - first + 1 }, (_, index) => Decoration.line({ class: className }).range(doc.line(first + index).from))
     }
     return [
-      Decoration.widget({ widget: new ConflictActionsWidget(block.index, active, payload.disabled, payload.onResolve), block: true, side: -1 }).range(from),
+      Decoration.widget({ widget: new ConflictActionsWidget(block.index, active, payload.disabled, payload.labels, payload.onResolve), block: true, side: -1 }).range(from),
       ...lineRanges(from, separatorStart, `cm-conflict-current${active ? ' cm-conflict-active' : ''}`),
       ...lineRanges(separatorStart, separatorEnd, 'cm-conflict-separator'),
       ...lineRanges(separatorEnd, to, `cm-conflict-incoming${active ? ' cm-conflict-active' : ''}`),
@@ -173,19 +191,7 @@ const conflictHighlightStyle = HighlightStyle.define([
   { tag: [tags.punctuation, tags.bracket], color: 'var(--muted)' },
 ])
 
-function languageForPath(path: string) {
-  const extension = path.toLowerCase().split('.').pop() ?? ''
-  if (['ts', 'tsx'].includes(extension)) return javascript({ jsx: extension === 'tsx', typescript: true })
-  if (['js', 'jsx', 'mjs', 'cjs'].includes(extension)) return javascript({ jsx: ['jsx'].includes(extension) })
-  if (extension === 'rs') return rust()
-  if (['css', 'scss', 'less'].includes(extension)) return css()
-  if (['json', 'jsonc'].includes(extension)) return json()
-  if (['md', 'mdx'].includes(extension)) return markdown()
-  if (['html', 'htm', 'vue', 'svelte'].includes(extension)) return html()
-  return []
-}
-
-export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictCodeEditorProps>(function ConflictCodeEditor({ value, filePath, blocks, activeBlock, resolvedRanges = [], disabled = false, onChange, onResolveBlock, onSave, saveLabel }, ref) {
+export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictCodeEditorProps>(function ConflictCodeEditor({ value, filePath, blocks, activeBlock, resolvedRanges = [], disabled = false, labels, onChange, onResolveBlock, onSave, saveLabel }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -197,8 +203,28 @@ export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictC
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeSearchMatch, setActiveSearchMatch] = useState(0)
+  const [languageExtension, setLanguageExtension] = useState<Extension>([])
+  const languageDescription = useMemo(() => matchLanguage(filePath), [filePath])
+  const actionLabels = useMemo(() => labels ?? defaultActionLabels, [labels])
   onChangeRef.current = onChange
   onResolveRef.current = onResolveBlock
+
+  useEffect(() => {
+    let cancelled = false
+    setLanguageExtension([])
+    if (!languageDescription) return
+    void languageDescription
+      .load()
+      .then((support) => {
+        if (!cancelled) setLanguageExtension(support)
+      })
+      .catch(() => {
+        if (!cancelled) setLanguageExtension([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [languageDescription])
 
   useImperativeHandle(ref, () => ({
     focusBlock(from, to) {
@@ -223,7 +249,7 @@ export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictC
           conflictEditorTheme,
           syntaxHighlighting(conflictHighlightStyle, { fallback: true }),
           conflictDecorationField,
-          languageCompartment.current.of(languageForPath(filePath)),
+          languageCompartment.current.of([]),
           editableCompartment.current.of(EditorView.editable.of(!disabled)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())
@@ -258,8 +284,8 @@ export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictC
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    view.dispatch({ effects: languageCompartment.current.reconfigure(languageForPath(filePath)) })
-  }, [filePath])
+    view.dispatch({ effects: languageCompartment.current.reconfigure(languageExtension) })
+  }, [languageExtension])
 
   useEffect(() => {
     const view = viewRef.current
@@ -303,11 +329,11 @@ export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictC
     if (!view) return
     const shouldScrollToResolved = previousResolvedRanges.current !== resolvedRanges && resolvedRanges.length > 0
     previousResolvedRanges.current = resolvedRanges
-    const decorationEffect = setConflictDecorations.of({ blocks, activeBlock, resolvedRanges, disabled, searchMatches, activeSearchMatch, onResolve: (index, strategy) => onResolveRef.current(index, strategy) })
+    const decorationEffect = setConflictDecorations.of({ blocks, activeBlock, resolvedRanges, disabled, labels: actionLabels, searchMatches, activeSearchMatch, onResolve: (index, strategy) => onResolveRef.current(index, strategy) })
     view.dispatch({ effects: shouldScrollToResolved
       ? [decorationEffect, EditorView.scrollIntoView(Math.min(resolvedRanges[resolvedRanges.length - 1].from, view.state.doc.length), { y: 'nearest', yMargin: 52 })]
       : decorationEffect })
-  }, [activeBlock, blocks, disabled, resolvedRanges, searchMatches, activeSearchMatch])
+  }, [actionLabels, activeBlock, blocks, disabled, resolvedRanges, searchMatches, activeSearchMatch])
 
   const jumpSearch = (direction: -1 | 1) => {
     if (!searchMatches.length) return

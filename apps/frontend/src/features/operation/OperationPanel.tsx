@@ -5,6 +5,7 @@ import { ThreePaneMergeView } from './ThreePaneMergeView'
 import { abortRepositoryOperation, continueRepositoryOperation, launchConflictMergetool, loadConflictFile, resolveConflictFile, skipRepositoryOperation, type ConflictFileContent, type RepositorySnapshot } from '../../repository'
 import { Button } from '../../components/Button'
 import { useConfirmDialog } from '../../components/ConfirmDialog'
+import { useI18n } from '../../i18n'
 import { acquireOperationLock, releaseOperationLock } from './operationLock'
 import { asPanelKind, canSkipOperation, continueActionLabel, showsStepRoute, stepRouteLabel } from './operationKind'
 import { hasConflictMarkers, isDraftDirty, isSideAvailable, normalizeConflictDraft, parseConflictBlocks, resolveConflictBlockInText, type ResolutionStrategy } from './conflictDraft'
@@ -45,6 +46,12 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
   const [lastResolution, setLastResolution] = useState<{ block: number; strategy: ResolutionStrategy; from: number; to: number } | null>(null)
   const [resolvedRanges, setResolvedRanges] = useState<Array<{ from: number; to: number }>>([])
   const { confirm, confirmDialog } = useConfirmDialog()
+  const { t } = useI18n()
+  const conflictActionLabels = useMemo(() => ({
+    current: t('operation.conflict.useCurrent'),
+    incoming: t('operation.conflict.useIncoming'),
+    both: t('operation.conflict.keepBoth'),
+  }), [t])
   const editorRef = useRef<ConflictCodeEditorHandle>(null)
   const operationLock = useRef(false)
   const unsavedDrafts = useRef(new Map<string, string>())
@@ -310,7 +317,7 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
       {blocks.length > 1 && <><Button variant="secondary" onClick={() => resolveRemaining('current')} disabled={loading} title={`把剩余所有冲突块统一替换为「${mergeLabels.current}」一侧`}>剩余全部采用当前</Button><Button variant="secondary" onClick={() => resolveRemaining('incoming')} disabled={loading} title={`把剩余所有冲突块统一替换为「${mergeLabels.incoming}」一侧`}>剩余全部采用传入</Button><Button variant="secondary" onClick={() => resolveRemaining('both')} disabled={loading}>剩余全部保留双方</Button></>}
       <Button variant="secondary" onClick={restoreConflictState} disabled={loading || draft === originalText} title="丢弃本文件所有手工结果，回到磁盘上的原始冲突标记（可撤销）"><RotateCcw size={13}/>恢复冲突状态</Button>
     </div>
-    <ConflictCodeEditor ref={editorRef} value={draft} filePath={file.path} blocks={blocks} activeBlock={activeBlock} resolvedRanges={resolvedRanges} disabled={loading} onChange={(value) => { commitDraft(value, 'edit'); if (value !== draft) setLastResolution(null) }} onResolveBlock={resolveBlock} onSave={() => resolveFile('result')} saveLabel={blocks.length ? '保存结果' : '标记已解决'}/>
+    <ConflictCodeEditor ref={editorRef} value={draft} filePath={file.path} blocks={blocks} activeBlock={activeBlock} resolvedRanges={resolvedRanges} disabled={loading} onChange={(value) => { commitDraft(value, 'edit'); if (value !== draft) setLastResolution(null) }} onResolveBlock={resolveBlock} onSave={() => resolveFile('result')} saveLabel={blocks.length ? '保存结果' : '标记已解决'} labels={conflictActionLabels}/>
   </div> : null
 
   return <section className={`operation-page workspace-page ${loading ? 'operation-busy' : ''}`} aria-busy={loading} onKeyDown={handlePanelKeyDown}>
