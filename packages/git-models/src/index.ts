@@ -413,3 +413,174 @@ export type RevisionFilePreview = {
   media: MediaBlob | null
   error: string | null
 }
+
+// ---------------------------------------------------------------------------
+// W2-9 历史深度搜索与仓库全文搜索/替换（后端 apps/desktop/src/git_search.rs）
+//
+// 字段名逐一对齐 Rust 侧的 `#[serde(rename_all = "camelCase")]`。
+// 注意：搜索/替换的结果都是**分页且有界**的，`total` 在被上限截断时只表示
+// 「已索引的条数」，因此每个页面都带 `truncated` + `notice`，UI 必须显示，不得静默。
+// ---------------------------------------------------------------------------
+
+/** 历史搜索的目标域，与 Git 的提交筛选参数一一对应。 */
+export type CommitSearchTarget =
+  | 'commitMessage'
+  | 'commitAuthor'
+  | 'commitHash'
+  /** `git log -S<text>`：只命中该字符串出现次数真正增减的提交。 */
+  | 'diffPickaxe'
+  /** `git log -G<regex>`：逐行正则匹配差异内容。 */
+  | 'diffRegex'
+
+export type CommitSearchQuery = {
+  pattern: string
+  target: CommitSearchTarget
+  caseSensitive: boolean
+  wholeWord: boolean
+  /** true 走 Git 扩展正则（-E），false 走固定字符串（-F）。 */
+  regex: boolean
+  /** 限定分支/范围；为空表示 --all。 */
+  revisions: string[]
+  paths: string[]
+  excludePaths: string[]
+  maxCommits?: number | null
+  pageSize: number
+  offset: number
+}
+
+export type CommitSearchItem = {
+  hash: string
+  shortHash: string
+  title: string
+  message: string
+  author: string
+  email: string
+  date: string
+  refs: string[]
+}
+
+export type CommitSearchPage = {
+  searchId: string
+  target: CommitSearchTarget
+  pattern: string
+  total: number
+  offset: number
+  pageSize: number
+  hasMore: boolean
+  truncated: boolean
+  cancelled: boolean
+  items: CommitSearchItem[]
+  notice?: string | null
+}
+
+export type TextSearchQuery = {
+  pattern: string
+  caseSensitive: boolean
+  wholeWord: boolean
+  regex: boolean
+  /** 为空表示工作区；否则搜索该 rev 的树。 */
+  revision?: string | null
+  includes: string[]
+  excludePaths: string[]
+  contextLines: number
+  maxMatches?: number | null
+  pageSize: number
+  offset: number
+}
+
+export type TextSearchMatch = {
+  filePath: string
+  lineNumber: number
+  content: string
+  /** 命中位于二进制/非 UTF-8 文件：内容不展示，但记录保留，不能静默丢弃。 */
+  binary: boolean
+  contextBefore: string[]
+  contextAfter: string[]
+  revision?: string | null
+}
+
+export type TextSearchPage = {
+  searchId: string
+  pattern: string
+  revision?: string | null
+  total: number
+  matchedFiles: number
+  offset: number
+  pageSize: number
+  hasMore: boolean
+  truncated: boolean
+  cancelled: boolean
+  items: TextSearchMatch[]
+  notice?: string | null
+}
+
+export type TextReplaceQuery = {
+  pattern: string
+  replacement: string
+  caseSensitive: boolean
+  wholeWord: boolean
+  regex: boolean
+  includes: string[]
+  excludePaths: string[]
+  maxFiles?: number | null
+}
+
+export type ReplacePreviewFile = {
+  filePath: string
+  occurrences: number
+  sampleLines: number[]
+  sizeBytes: number
+  /** 非空表示该文件被跳过，不会写盘。 */
+  skipped?: string | null
+}
+
+export type ReplacePreview = {
+  previewId: string
+  pattern: string
+  replacement: string
+  files: ReplacePreviewFile[]
+  fileCount: number
+  totalOccurrences: number
+  skippedFiles: number
+  /** 预览范围被上限截断时禁止执行替换（范围不完整时写盘等于误伤）。 */
+  truncated: boolean
+  requiresConfirmation: boolean
+  estimatedBytes: number
+  notice?: string | null
+}
+
+export type ReplaceReport = {
+  replaceId: string
+  executed: boolean
+  filesChanged: string[]
+  occurrences: number
+  warnings: string[]
+  backupPath?: string | null
+  backupAvailable: boolean
+  restoredFiles: string[]
+  skipped: string[]
+  notice?: string | null
+}
+
+export type ReplaceBackupSummary = {
+  replaceId: string
+  createdAtMs: number
+  fileCount: number
+  occurrences: number
+  byteSize: number
+  pattern: string
+  replacement: string
+}
+
+export type RepositoryTextFile = {
+  filePath: string
+  revision?: string | null
+  content: string
+  sizeBytes: number
+  truncated: boolean
+  /** 保存时的乐观并发凭据：不匹配就拒绝覆盖。 */
+  checksum: string
+  lineCount: number
+  binary: boolean
+  notice?: string | null
+}
