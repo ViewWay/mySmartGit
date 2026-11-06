@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { parseConflictBlocks } from './conflictDraft'
 import { blockSections, conflictBlockCount, locateSectionRanges, paneLabels, resolveAllBlocks } from './threePane'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => (zh as Record<string, string>)[key] ?? key
+
+
 const diff3 = [
   'header',
   '<<<<<<< HEAD',
@@ -120,13 +124,13 @@ describe('batch resolution', () => {
 
 describe('pane labels with rebase semantics', () => {
   it('consumes backend labels so rebase can flip the meaning of each side', () => {
-    const labels = paneLabels({ currentLabel: '变基目标（当前）', incomingLabel: '正在应用的提交' })
+    const labels = paneLabels({ currentLabel: '变基目标（当前）', incomingLabel: '正在应用的提交' }, zhT)
     expect(labels.current).toBe('变基目标（当前）')
     expect(labels.incoming).toBe('正在应用的提交')
   })
 
   it('falls back to operation-neutral wording when labels are missing', () => {
-    const labels = paneLabels(null)
+    const labels = paneLabels(null, zhT)
     expect(labels.current).toContain('current')
     expect(labels.incoming).toContain('incoming')
     expect(labels.current).not.toContain('本地')
@@ -134,6 +138,6 @@ describe('pane labels with rebase semantics', () => {
   })
 
   it('ignores blank labels from stale payloads', () => {
-    expect(paneLabels({ currentLabel: '   ', incomingLabel: '' }).current).toContain('current')
+    expect(paneLabels({ currentLabel: '   ', incomingLabel: '' }, zhT).current).toContain('current')
   })
 })

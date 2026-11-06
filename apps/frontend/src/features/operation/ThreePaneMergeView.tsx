@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Info } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -78,7 +79,8 @@ function SidePane({ side, title, bodyRef, segments, activeBlock, blockTotal, emp
 }
 
 export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase, onActivateBlock, onAdoptActive, resultPane }: ThreePaneMergeViewProps) {
-  const labels = paneLabels(file)
+  const { t } = useI18n()
+  const labels = paneLabels(file, t)
   const currentBodyRef = useRef<HTMLDivElement>(null)
   const incomingBodyRef = useRef<HTMLDivElement>(null)
 

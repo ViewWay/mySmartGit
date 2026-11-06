@@ -295,7 +295,7 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
     <div className="stage-file-actions"><button className="stage-file-action force-stage" onClick={() => forceStageConflict(file)} disabled={busy} title={t('stage.forceStageConflicted')} aria-label={t('stage.forceStageConflicted')}><Plus size={14}/></button></div>
   </div>
 
-  const commitButton = commitButtonState({ stagedCount: stagedFiles.length, busy, amend })
+  const commitButton = commitButtonState({ stagedCount: stagedFiles.length, busy, amend }, t)
 
   const workspaceStyle = { '--staging-control-width': `${stagingWidth.value}px` } as CSSProperties
   const resizingClass = filesHeight.resizing ? 'pane-resizing-vertical' : stagingWidth.resizing ? 'pane-resizing' : ''
