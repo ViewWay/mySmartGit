@@ -1,3 +1,5 @@
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 import type {
   CommitSearchQuery,
   CommitSearchTarget,
@@ -88,15 +90,15 @@ export function parseList(value: string | null | undefined): string[] {
  * 表单校验：返回人类可读的错误文案，null 表示可以发起请求。
  * 只做「明显不该发出去」的拦截，语义合法性由后端二次校验（单一事实源）。
  */
-export function validatePattern(pattern: string): string | null {
+export function validatePattern(pattern: string, t: Translate): string | null {
   const trimmed = pattern.trim()
-  if (!trimmed) return '请输入搜索内容'
-  if (trimmed.length > MAX_PATTERN_CHARS) return `搜索内容不能超过 ${MAX_PATTERN_CHARS} 个字符`
-  if (/[\r\n]/.test(pattern)) return '搜索内容不支持换行'
+  if (!trimmed) return t('search.inputRequired')
+  if (trimmed.length > MAX_PATTERN_CHARS) return t('search.patternTooLong', { count: MAX_PATTERN_CHARS })
+  if (/[\r\n]/.test(pattern)) return t('search.noNewlines')
   return null
 }
 
-export function buildCommitSearchQuery(form: CommitSearchForm, offset = 0): CommitSearchQuery {
+export function buildCommitSearchQuery(form: CommitSearchForm, offset = 0, t?: Translate): CommitSearchQuery {
   return {
     pattern: form.pattern.trim(),
     target: form.target,
@@ -112,7 +114,7 @@ export function buildCommitSearchQuery(form: CommitSearchForm, offset = 0): Comm
   }
 }
 
-export function buildTextSearchQuery(form: TextSearchForm, offset = 0): TextSearchQuery {
+export function buildTextSearchQuery(form: TextSearchForm, offset = 0, t?: Translate): TextSearchQuery {
   return {
     pattern: form.pattern.trim(),
     caseSensitive: form.caseSensitive,
@@ -174,11 +176,11 @@ export function goLastPage(cursor: PageCursor): number {
 }
 
 /** 结果区间文案，例如「显示 201-300 / 共 1234 条」。 */
-export function rangeLabel(cursor: PageCursor, loadedCount: number): string {
-  if (cursor.total === 0) return '没有命中'
+export function rangeLabel(cursor: PageCursor, loadedCount: number, t: Translate): string {
+  if (cursor.total === 0) return t('search.noHitsShort')
   const start = cursor.offset + 1
   const end = cursor.offset + Math.max(loadedCount, 0)
-  return `显示 ${start}-${end} / 共 ${cursor.total} 条`
+  return t('search.rangeLabel', { start, end, total: cursor.total })
 }
 
 /** 「第 N/M 个」定位文案；越界或空结果返回 null，由调用方显示空态。 */
@@ -201,9 +203,9 @@ export function resultBanner(page: {
   truncated: boolean
   cancelled: boolean
   notice?: string | null
-}): string | null {
-  if (page.cancelled) return page.notice ?? '搜索已取消，结果不完整'
-  if (page.truncated) return page.notice ?? '命中数量超过上限，结果已被截断，请缩小范围'
+}, t: Translate): string | null {
+  if (page.cancelled) return page.notice ?? t('search.cancelledIncomplete')
+  if (page.truncated) return page.notice ?? t('search.truncatedHits')
   return page.notice ?? null
 }
 
@@ -211,28 +213,34 @@ export function resultBanner(page: {
  * 截断时 `total` 只代表「已索引条数」，不能显示成「共 N 条」。
  * 这个函数给出用于渲染的总数措辞。
  */
-export function totalLabel(page: { total: number; truncated: boolean }): string {
-  return page.truncated ? `已索引 ${page.total} 条（超出上限，已截断）` : `共 ${page.total} 条`
+export function totalLabel(page: { total: number; truncated: boolean }, t: Translate): string {
+  return page.truncated ? t('search.indexedTruncated', { count: page.total }) : t('search.totalLabel', { count: page.total })
 }
 
 /** 提交搜索目标的展示名，供下拉与结果说明复用。 */
-export const COMMIT_TARGET_LABELS: Record<CommitSearchTarget, string> = {
-  commitMessage: '提交信息',
-  commitAuthor: '作者',
-  commitHash: '提交 Hash',
-  diffPickaxe: '差异内容增减（-S pickaxe）',
-  diffRegex: '差异行正则（-G）',
+const COMMIT_TARGET_KEYS: Record<CommitSearchTarget, string> = {
+  commitMessage: 'search.mode.message',
+  commitAuthor: 'search.mode.author',
+  commitHash: 'search.mode.hash',
+  diffPickaxe: 'search.mode.pickaxe',
+  diffRegex: 'search.mode.diffRegex',
+}
+
+export function commitTargetLabel(target: CommitSearchTarget, t: Translate): string {
+  return t(COMMIT_TARGET_KEYS[target])
 }
 
 /** pickaxe 与 -G 的语义差别必须在界面上讲清楚，否则用户会把两者当同一种搜索。 */
-export const COMMIT_TARGET_HINTS: Record<CommitSearchTarget, string> = {
-  commitMessage: '在提交说明（含正文）里查找文本。',
-  commitAuthor: '匹配作者名与邮箱。',
-  commitHash: '按 4-40 位十六进制 Hash 精确定位，不受提交图谱窗口限制。',
-  diffPickaxe:
-    '只命中让这段文本「出现次数发生变化」的提交：新增或删除该文本会命中；同一次提交里一加一减（次数不变）不会命中。',
-  diffRegex:
-    '逐行扫描差异文本，只要某一行的内容匹配正则/关键字就命中，不要求出现次数变化；范围比 pickaxe 宽。',
+const COMMIT_TARGET_HINT_KEYS: Record<CommitSearchTarget, string> = {
+  commitMessage: 'search.mode.messageHint',
+  commitAuthor: 'search.mode.authorHint',
+  commitHash: 'search.mode.hashHint',
+  diffPickaxe: 'search.mode.pickaxeHint',
+  diffRegex: 'search.mode.diffRegexHint',
+}
+
+export function commitTargetHint(target: CommitSearchTarget, t: Translate): string {
+  return t(COMMIT_TARGET_HINT_KEYS[target])
 }
 
 /**
@@ -267,8 +275,8 @@ export function isDiffTarget(target: CommitSearchTarget): boolean {
 }
 
 /** 差异内容搜索时正则开关的措辞差异（-S 走 --pickaxe-regex，-G 本身就是正则）。 */
-export function regexSwitchLabel(target: CommitSearchTarget): string {
-  if (target === 'diffPickaxe') return '把内容当正则（--pickaxe-regex）'
-  if (target === 'diffRegex') return '正则匹配差异行（-E），关闭则按固定字符串（-F）'
-  return '正则（交给 Git 引擎，不在前端解释）'
+export function regexSwitchLabel(target: CommitSearchTarget, t: Translate): string {
+  if (target === 'diffPickaxe') return t('search.pickaxeRegex')
+  if (target === 'diffRegex') return t('search.diffRegexFlag')
+  return t('search.regexEngineNote')
 }

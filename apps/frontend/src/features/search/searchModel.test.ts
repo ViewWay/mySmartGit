@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { CommitSearchPage, TextSearchPage } from '../../repository'
 import {
   COMMIT_PAGE_SIZE,
-  COMMIT_TARGET_HINTS,
   MAX_PATTERN_CHARS,
   TEXT_PAGE_SIZE,
   buildCommitSearchQuery,
@@ -15,6 +14,8 @@ import {
   goLastPage,
   goNextPage,
   goPrevPage,
+  commitTargetHint,
+  commitTargetLabel,
   isDiffTarget,
   matchPosition,
   parseList,
@@ -24,6 +25,14 @@ import {
   totalPages,
   validatePattern,
 } from './searchModel'
+
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
 
 const commitPage = (overrides: Partial<CommitSearchPage> = {}): CommitSearchPage => ({
   searchId: 'search-1',
@@ -93,7 +102,7 @@ describe('查询构造', () => {
   })
 
   it('未填的可选范围留成空数组，让后端走 --all 而不是传个空串过去', () => {
-    const query = buildCommitSearchQuery(defaultCommitSearchForm())
+    const query = buildCommitSearchQuery(defaultCommitSearchForm(), 0, zhT)
     expect(query.revisions).toEqual([])
     expect(query.paths).toEqual([])
     expect(query.excludePaths).toEqual([])
@@ -102,8 +111,8 @@ describe('查询构造', () => {
   })
 
   it('全文搜索的空 revision 归一成 null（表示工作区），不能留成空串让后端误解成一个引用', () => {
-    expect(buildTextSearchQuery({ ...defaultTextSearchForm(), revision: '   ' }).revision).toBeNull()
-    expect(buildTextSearchQuery({ ...defaultTextSearchForm(), revision: ' v1.2.0 ' }).revision).toBe('v1.2.0')
+    expect(buildTextSearchQuery({ ...defaultTextSearchForm(), revision: '   ' }, 0, zhT).revision).toBeNull()
+    expect(buildTextSearchQuery({ ...defaultTextSearchForm(), revision: ' v1.2.0 ' }, 0, zhT).revision).toBe('v1.2.0')
   })
 
   it('差异搜索目标与 pickaxe/-G 的语义说明必须都在，否则界面无法解释两者差别', () => {
@@ -111,19 +120,19 @@ describe('查询构造', () => {
     expect(isDiffTarget('diffRegex')).toBe(true)
     expect(isDiffTarget('commitMessage')).toBe(false)
     // pickaxe 的「出现次数变化」与 -G 的「逐行匹配」是两种语义，说明文案不可缺省。
-    expect(COMMIT_TARGET_HINTS.diffPickaxe).toContain('次数')
-    expect(COMMIT_TARGET_HINTS.diffRegex).toContain('逐行')
-    expect(Object.keys(COMMIT_TARGET_HINTS)).toHaveLength(5)
+    expect(commitTargetHint('diffPickaxe', zhT)).toContain('次数')
+    expect(commitTargetHint('diffRegex', zhT)).toContain('逐行')
+    expect(['commitMessage', 'commitAuthor', 'commitHash', 'diffPickaxe', 'diffRegex'].map((target) => commitTargetHint(target as 'diffPickaxe', zhT))).toHaveLength(5)
   })
 })
 
 describe('输入校验', () => {
   it('空白与超长内容在发起前就被挡住', () => {
-    expect(validatePattern('')).toBe('请输入搜索内容')
-    expect(validatePattern('   ')).toBe('请输入搜索内容')
-    expect(validatePattern('x'.repeat(MAX_PATTERN_CHARS + 1))).toContain(MAX_PATTERN_CHARS.toString())
-    expect(validatePattern('换行\n内容')).toContain('换行')
-    expect(validatePattern('hotfix')).toBeNull()
+    expect(validatePattern('', zhT)).toBe('请输入搜索内容')
+    expect(validatePattern('   ', zhT)).toBe('请输入搜索内容')
+    expect(validatePattern('x'.repeat(MAX_PATTERN_CHARS + 1), zhT)).toContain(MAX_PATTERN_CHARS.toString())
+    expect(validatePattern('换行\n内容', zhT)).toContain('换行')
+    expect(validatePattern('hotfix', zhT)).toBeNull()
   })
 })
 
@@ -157,8 +166,8 @@ describe('分页状态', () => {
   })
 
   it('结果区间与「第 N/M 个」文案按全局序号计算', () => {
-    expect(rangeLabel(cursor, 100)).toBe('显示 201-300 / 共 1234 条')
-    expect(rangeLabel({ offset: 0, pageSize: 100, total: 0 }, 0)).toBe('没有命中')
+    expect(rangeLabel(cursor, 100, zhT)).toBe('显示 201-300 / 共 1234 条')
+    expect(rangeLabel({ offset: 0, pageSize: 100, total: 0 }, 0, zhT)).toBe('没有命中')
     expect(matchPosition(1234, 200, 0)).toEqual({ current: 201, total: 1234 })
     expect(matchPosition(1234, 1200, 33)).toEqual({ current: 1234, total: 1234 })
     expect(matchPosition(10, 20, 0)).toBeNull()
@@ -183,18 +192,18 @@ describe('分页状态', () => {
 describe('有界结果的展示', () => {
   it('截断时必须给出不可忽略的横幅，且不能把已索引条数说成全部命中', () => {
     const capped = textPage({ total: 2000, truncated: true, notice: '命中超过 2000 行上限，结果已截断' })
-    expect(resultBanner(capped)).toContain('截断')
-    expect(totalLabel(capped)).toBe('已索引 2000 条（超出上限，已截断）')
+    expect(resultBanner(capped, zhT)).toContain('截断')
+    expect(totalLabel(capped, zhT)).toBe('已索引 2000 条（超出上限，已截断）')
     // 后端漏发 notice 时也要有兜底文案，不能返回 null 让 UI 安静下来。
-    expect(resultBanner({ ...capped, notice: null })).toContain('截断')
+    expect(resultBanner({ ...capped, notice: null }, zhT)).toContain('截断')
   })
 
   it('取消的结果与完整结果分别有自己的展示口径', () => {
-    expect(resultBanner(commitPage({ cancelled: true, notice: null }))).toContain('取消')
-    expect(resultBanner(commitPage({ total: 3 }))).toBeNull()
-    expect(totalLabel(commitPage({ total: 3 }))).toBe('共 3 条')
+    expect(resultBanner(commitPage({ cancelled: true, notice: null }), zhT)).toContain('取消')
+    expect(resultBanner(commitPage({ total: 3 }), zhT)).toBeNull()
+    expect(totalLabel(commitPage({ total: 3 }), zhT)).toBe('共 3 条')
     // 只有 notice（例如「本次搜索不含二进制文件」）时也要透出来，不能被当成错误。
-    expect(resultBanner(commitPage({ notice: '提示内容' }))).toBe('提示内容')
+    expect(resultBanner(commitPage({ notice: '提示内容' }), zhT)).toBe('提示内容')
   })
 })
 

@@ -1,11 +1,12 @@
+import { useI18n } from '../../i18n'
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Loader2, Search, ShieldAlert } from 'lucide-react'
 import { Button } from '../../components/Button'
 import type { CommitSearchTarget } from '../../repository'
 import {
   COMMIT_PAGE_SIZE,
-  COMMIT_TARGET_HINTS,
-  COMMIT_TARGET_LABELS,
+  commitTargetHint,
+  commitTargetLabel,
   buildCommitSearchQuery,
   currentPage,
   defaultCommitSearchForm,
@@ -35,16 +36,17 @@ const TARGETS: CommitSearchTarget[] = ['commitMessage', 'commitAuthor', 'commitH
 
 /** 历史深度搜索面板：后端驱动、全量历史、分页 + 「第 N/M 个」。 */
 export function DeepSearchPanel({ runner, onSelectCommit }: DeepSearchPanelProps) {
+  const { t } = useI18n()
   const [form, setForm] = useState<CommitSearchForm>(defaultCommitSearchForm)
   const [submitted, setSubmitted] = useState<CommitSearchForm | null>(null)
   const [invalid, setInvalid] = useState<string | null>(null)
   const page = runner.commitPage
-  const banner = page ? resultBanner(page) : null
+  const banner = page ? resultBanner(page, t) : null
 
   const patch = (changes: Partial<CommitSearchForm>) => setForm((current) => ({ ...current, ...changes }))
 
   const submit = async (offset = 0) => {
-    const invalid = validatePattern(form.pattern)
+    const invalid = validatePattern(form.pattern, t)
     setInvalid(invalid)
     if (invalid) return
     setSubmitted(form)
@@ -59,51 +61,51 @@ export function DeepSearchPanel({ runner, onSelectCommit }: DeepSearchPanelProps
   return <section className="search-panel">
     <div className="search-form">
       <label className="search-field search-field-grow">
-        <span>关键字</span>
+        <span>{t('search.keyword')}</span>
         <input
           value={form.pattern}
-          placeholder={form.target === 'commitHash' ? '4-40 位十六进制 Hash' : '在全部历史中查找…'}
+          placeholder={form.target === 'commitHash' ? t('search.hashPlaceholder') : t('search.historyPlaceholder')}
           onChange={(event) => patch({ pattern: event.target.value })}
           onKeyDown={(event) => { if (event.key === 'Enter') void submit(0) }}
         />
       </label>
       <label className="search-field">
-        <span>搜索范围</span>
+        <span>{t('search.searchScope')}</span>
         <select value={form.target} onChange={(event) => patch({ target: event.target.value as CommitSearchTarget })}>
-          {TARGETS.map((target) => <option key={target} value={target}>{COMMIT_TARGET_LABELS[target]}</option>)}
+          {TARGETS.map((target) => <option key={target} value={target}>{commitTargetLabel(target, t)}</option>)}
         </select>
       </label>
       <Button variant="primary" disabled={runner.busy || !form.pattern.trim()} onClick={() => void submit(0)}>
-        {runner.busy ? <Loader2 size={14} className="spin" /> : <Search size={14} />}深度搜索
+        {runner.busy ? <Loader2 size={14} className="spin" /> : <Search size={14} />}{t('search.deepSearch')}
       </Button>
-      {runner.busy && <Button variant="secondary" onClick={() => void runner.stop()}>中止</Button>}
+      {runner.busy && <Button variant="secondary" onClick={() => void runner.stop()}>{t('search.abort')}</Button>}
     </div>
 
-    <p className="search-target-hint">{COMMIT_TARGET_HINTS[form.target]}</p>
+    <p className="search-target-hint">{commitTargetHint(form.target, t)}</p>
 
     <div className="search-options">
-      <label><input type="checkbox" checked={form.caseSensitive} onChange={(event) => patch({ caseSensitive: event.target.checked })}/><span>区分大小写</span></label>
-      <label><input type="checkbox" checked={form.wholeWord} onChange={(event) => patch({ wholeWord: event.target.checked })}/><span>整词</span></label>
-      <label><input type="checkbox" checked={form.regex} onChange={(event) => patch({ regex: event.target.checked })}/><span>{regexSwitchLabel(form.target)}</span></label>
+      <label><input type="checkbox" checked={form.caseSensitive} onChange={(event) => patch({ caseSensitive: event.target.checked })}/><span>{t('search.caseSensitive')}</span></label>
+      <label><input type="checkbox" checked={form.wholeWord} onChange={(event) => patch({ wholeWord: event.target.checked })}/><span>{t('search.wholeWord')}</span></label>
+      <label><input type="checkbox" checked={form.regex} onChange={(event) => patch({ regex: event.target.checked })}/><span>{regexSwitchLabel(form.target, t)}</span></label>
     </div>
 
     <details className="search-scope">
-      <summary>限定分支与路径范围</summary>
+      <summary>{t('search.limitBranchesAndPaths')}</summary>
       <div className="search-form search-form-stacked">
         <label className="search-field">
-          <span>分支/提交范围（换行或逗号分隔，留空为全部分支）</span>
+          <span>{t('search.branchScopePlaceholder')}</span>
           <input value={form.revisions} placeholder="main, release/2.x..HEAD" onChange={(event) => patch({ revisions: event.target.value })}/>
         </label>
         <label className="search-field">
-          <span>只在这些路径中搜索</span>
+          <span>{t('search.searchIncludePaths')}</span>
           <textarea rows={2} value={form.paths} placeholder={'apps/desktop/**\nREADME.md'} onChange={(event) => patch({ paths: event.target.value })}/>
         </label>
         <label className="search-field">
-          <span>排除这些路径</span>
+          <span>{t('search.excludePaths')}</span>
           <textarea rows={2} value={form.excludePaths} placeholder="node_modules/**" onChange={(event) => patch({ excludePaths: event.target.value })}/>
         </label>
         <label className="search-field">
-          <span>扫描上限（提交条数，留空用默认 50000）</span>
+          <span>{t('search.scanLimit')}</span>
           <input
             type="number"
             min={1}
@@ -114,25 +116,25 @@ export function DeepSearchPanel({ runner, onSelectCommit }: DeepSearchPanelProps
       </div>
     </details>
 
-    {!submitted && !form.pattern.trim() && <p className="search-empty">输入关键字后开始搜索。深度搜索直接读仓库历史，不受提交图谱已加载条数的限制。</p>}
+    {!submitted && !form.pattern.trim() && <p className="search-empty">{t('search.deepIdleHint')}</p>}
     {invalid && <p className="search-error">{invalid}</p>}
     {runner.error && <p className="search-error">{runner.error}</p>}
 
     {page && cursor && <div className="search-results">
       <header className="search-results-header">
-        <span>{submitted?.pattern ?? page.pattern}｜{COMMIT_TARGET_LABELS[page.target]}｜{totalLabel(page)}</span>
+        <span>{submitted?.pattern ?? page.pattern}｜{commitTargetLabel(page.target, t)}｜{totalLabel(page, t)}</span>
         <span className="search-pager">
           <Button size="compact" variant="icon" disabled={cursor.offset <= 0} onClick={() => void runner.loadCommitPage(page.searchId, goPrevPage(cursor), cursor.pageSize)}><ChevronLeft size={14}/></Button>
           <span>{pages ? `${currentPage(cursor)} / ${pages}` : '0 / 0'}</span>
-          <span>{rangeLabel(cursor, page.items.length)}</span>
+          <span>{rangeLabel(cursor, page.items.length, t)}</span>
           <Button size="compact" variant="icon" disabled={!page.hasMore} onClick={() => void runner.loadCommitPage(page.searchId, goNextPage(cursor), cursor.pageSize)}><ChevronRight size={14}/></Button>
-          <Button size="compact" variant="secondary" disabled={pages <= 1} onClick={() => void runner.loadCommitPage(page.searchId, goLastPage(cursor), cursor.pageSize)}>末页</Button>
+          <Button size="compact" variant="secondary" disabled={pages <= 1} onClick={() => void runner.loadCommitPage(page.searchId, goLastPage(cursor), cursor.pageSize)}>{t('search.lastPage')}</Button>
         </span>
       </header>
 
       {banner && <p className="search-banner"><ShieldAlert size={13}/>{banner}</p>}
 
-      {page.items.length === 0 && !banner && <p className="search-empty">没有命中提交。</p>}
+      {page.items.length === 0 && !banner && <p className="search-empty">{t('search.noCommitHits')}</p>}
       <ul className="search-list">
         {page.items.map((item, index) => {
           const position = matchPosition(page.total, page.offset, index)
