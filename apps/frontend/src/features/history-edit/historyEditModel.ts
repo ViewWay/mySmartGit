@@ -1,17 +1,23 @@
 import type { HistoryEditActionInput, HistoryEditActionKind, HistoryEditEntry } from '../../repository'
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 // 纯逻辑层：与后端 validate_plan 同规则，保证「前端所见 = 后端所得」。
 // 拖拽/按钮重排、动作映射、校验与 todo 预览全部在这里，组件只做渲染。
 
 export const HISTORY_EDIT_ACTIONS: HistoryEditActionKind[] = ['pick', 'reword', 'drop', 'fixup', 'squash', 'edit']
 
-export const ACTION_LABELS: Record<HistoryEditActionKind, string> = {
-  pick: '保留 (pick)',
-  reword: '改写消息 (reword)',
-  drop: '丢弃 (drop)',
-  fixup: '折叠并保留目标消息 (fixup)',
-  squash: '折叠并合并消息 (squash)',
-  edit: '暂停以便编辑 (edit)',
+const ACTION_KEYS: Record<HistoryEditActionKind, string> = {
+  pick: 'historyEdit.actionPick',
+  reword: 'historyEdit.actionReword',
+  drop: 'historyEdit.actionDrop',
+  fixup: 'historyEdit.actionFixup',
+  squash: 'historyEdit.actionSquash',
+  edit: 'historyEdit.actionEdit',
+}
+
+export function historyEditActionLabel(kind: HistoryEditActionKind, t: Translate): string {
+  return t(ACTION_KEYS[kind])
 }
 
 /** 动作行的本地状态：条目 + 动作 + 消息草稿。 */
@@ -53,9 +59,9 @@ export function requiresMessage(row: HistoryEditRow): boolean {
  *  - squash/fixup 之前必须已有保留提交（被 drop 的前任不算）；
  *  - reword 消息非空；
  *  - 空序列直接报错。 */
-export function validateRows(rows: HistoryEditRow[]): string[] {
+export function validateRows(rows: HistoryEditRow[], t: Translate): string[] {
   const errors: string[] = []
-  if (rows.length === 0) return ['序列为空：没有可编辑的提交。']
+  if (rows.length === 0) return [t('historyEdit.empty')]
   let hasPrevKept = false
   rows.forEach((row, index) => {
     const at = `第 ${index + 1} 行（${row.entry.shortHash} ${row.entry.title}）`

@@ -1,5 +1,7 @@
 import type { CommandRunReport, PipelineCommand, TerminalOutput } from '../../repository'
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 /**
  * 内置终端与命令流水线面板的纯逻辑。
  *
@@ -58,11 +60,10 @@ export function terminalPasteData(raw: string): string {
 export type TerminalExitTone = 'running' | 'success' | 'failure' | 'neutral'
 
 export function formatTerminalExit(
-  output: Pick<TerminalOutput, 'alive'> & { exitCode?: number | null },
-): string {
-  if (output.alive) return '运行中'
-  if (output.exitCode === null || output.exitCode === undefined) return '进程已退出'
-  return `进程已退出（代码 ${output.exitCode}）`
+  output: Pick<TerminalOutput, 'alive'> & { exitCode?: number | null }, t: Translate) {
+  if (output.alive) return t('terminal.running')
+  if (output.exitCode === null || output.exitCode === undefined) return t('terminal.exited')
+  return t('terminal.exitedWithCode', { code: output.exitCode })
 }
 
 export function terminalExitTone(
@@ -75,12 +76,12 @@ export function terminalExitTone(
 }
 
 /** 截断提示只显示一次；未截断时返回 null。 */
-export function terminalTruncatedNotice(truncated: boolean): string | null {
-  return truncated ? '终端输出超过 256 KiB 缓冲上限，较早内容已被丢弃。' : null
+export function terminalTruncatedNotice(truncated: boolean, t: Translate) {
+  return truncated ? t('terminal.bufferOverflow') : null
 }
 
 /** Shell 展示名：绝对路径只保留最后一段，裸名字原样返回。 */
-export function terminalShellLabel(shell: string): string {
+export function terminalShellLabel(shell: string, t: Translate) {
   const trimmed = shell.trim()
   if (!trimmed) return 'Shell'
   const segments = trimmed.split(/[\\/]/)
@@ -98,11 +99,11 @@ export function formatRunDuration(durationMs: number): string {
 
 export type CommandRunTone = 'success' | 'danger' | 'warning' | 'neutral'
 
-export function formatCommandRunExit(report: CommandRunReport): string {
-  if (report.cancelled) return '已取消'
-  if (report.timedOut) return '已超时'
-  if (report.exitCode === 0) return '成功（代码 0）'
-  if (report.exitCode === null || report.exitCode === undefined) return '已结束（无退出码）'
+export function formatCommandRunExit(report: CommandRunReport, t: Translate) {
+  if (report.cancelled) return t('terminal.cancelled')
+  if (report.timedOut) return t('terminal.timedOut')
+  if (report.exitCode === 0) return t('terminal.successZero')
+  if (report.exitCode === null || report.exitCode === undefined) return t('terminal.finishedNoCode')
   return `失败（代码 ${report.exitCode}）`
 }
 
@@ -114,9 +115,9 @@ export function commandRunTone(report: CommandRunReport): CommandRunTone {
   return 'danger'
 }
 
-export function commandRunSummary(report: CommandRunReport): string {
-  const parts = [formatCommandRunExit(report), `用时 ${formatRunDuration(report.durationMs)}`]
-  if (report.truncated) parts.push('输出已截断')
+export function commandRunSummary(report: CommandRunReport, t: Translate) {
+  const parts = [formatCommandRunExit(report, t), `用时 ${formatRunDuration(report.durationMs)}`]
+  if (report.truncated) parts.push(t('terminal.outputTruncated'))
   return parts.join(' · ')
 }
 
@@ -153,43 +154,43 @@ function isAbsoluteLikePath(value: string): boolean {
 }
 
 /** 返回 null 表示工作目录合法；否则是给用户看的错误文案。 */
-export function validatePipelineCwd(raw: string): string | null {
+export function validatePipelineCwd(raw: string, t: Translate) {
   const value = raw.trim()
   if (!value) return null
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(value)) return '工作目录不能包含控制字符'
-  if (isAbsoluteLikePath(value)) return '工作目录必须是仓库内的相对路径，不能是绝对路径'
+  if (/[\u0000-\u001f\u007f]/.test(value)) return t('terminal.cwdControlChars')
+  if (isAbsoluteLikePath(value)) return t('terminal.cwdRelative')
   const segments = value.split(/[\\/]+/)
   if (segments.some((segment) => segment === '..')) {
-    return '工作目录不能包含 ..，必须位于仓库内'
+    return t('terminal.cwdNoParent')
   }
   return null
 }
 
 /** 输入框下方的安全说明；非法时直接给出错误，合法时解释后端约束。 */
-export function pipelineCwdSafetyNote(raw: string): string {
+export function pipelineCwdSafetyNote(raw: string, t: Translate): string {
   const value = raw.trim()
-  if (!value) return '留空表示在仓库根目录运行。'
-  const invalid = validatePipelineCwd(value)
+  if (!value) return t('terminal.cwdHint')
+  const invalid = validatePipelineCwd(value, t)
   if (invalid) return invalid
-  return '相对仓库根目录；后端还会拒绝符号链接逃逸。'
+  return t('terminal.cwdPlaceholder')
 }
 
-export function validatePipelineDraft(draft: PipelineDraft): string | null {
+export function validatePipelineDraft(draft: PipelineDraft, t: Translate): string | null {
   const name = draft.name.trim()
   const program = draft.program.trim()
-  if (!name) return '命令名称不能为空'
+  if (!name) return t('terminal.nameRequired')
   if (charCount(name) > PIPELINE_MAX_NAME_CHARS) {
     return `命令名称过长（上限 ${PIPELINE_MAX_NAME_CHARS} 字符）`
   }
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(name)) return '命令名称不能包含控制字符'
+  if (/[\u0000-\u001f\u007f]/.test(name)) return t('terminal.nameControlChars')
   if (charCount(draft.description.trim()) > PIPELINE_MAX_DESCRIPTION_CHARS) {
     return `命令描述过长（上限 ${PIPELINE_MAX_DESCRIPTION_CHARS} 字符）`
   }
-  if (!program) return '程序不能为空'
+  if (!program) return t('terminal.programRequired')
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(program)) return '程序不能包含控制字符'
+  if (/[\u0000-\u001f\u007f]/.test(program)) return t('terminal.programControlChars')
   const args = parsePipelineArgs(draft.argsText)
   if (args.length > PIPELINE_MAX_ARGS) {
     return `参数过多（上限 ${PIPELINE_MAX_ARGS} 个，一行一个）`
@@ -198,9 +199,9 @@ export function validatePipelineDraft(draft: PipelineDraft): string | null {
     if (charCount(argument) > PIPELINE_MAX_ARG_CHARS) {
       return `单个参数过长（上限 ${PIPELINE_MAX_ARG_CHARS} 字符）`
     }
-    if (argument.includes('\0')) return '参数不能包含 NUL'
+    if (argument.includes('\0')) return t('terminal.argsNoNul')
   }
-  return validatePipelineCwd(draft.cwdRelative)
+  return validatePipelineCwd(draft.cwdRelative, t)
 }
 
 export function pipelineCommandFromDraft(draft: PipelineDraft, id: string): PipelineCommand {
@@ -243,34 +244,34 @@ export function pipelineCommandPreview(command: PipelineCommand): string {
     .join(' ')
 }
 
-export function pipelineCommandsSummary(commands: PipelineCommand[]): string {
-  if (!commands.length) return '还没有自定义命令，可在下方新建。'
+export function pipelineCommandsSummary(commands: PipelineCommand[], t: Translate): string {
+  if (!commands.length) return t('terminal.noCommands')
   return `共 ${commands.length} 条命令；运行时不经过 shell，参数按字面值传递。`
 }
 
 /** 内置示例只用于「填入编辑器」，不会自动保存或执行。 */
-export function builtinPipelineCommands(): PipelineCommand[] {
+export function builtinPipelineCommands(t: Translate): PipelineCommand[] {
   return [
     {
       id: 'builtin-status',
-      name: 'Git 状态',
-      description: '查看当前分支与工作区改动',
+      name: t('terminal.presetGitStatus'),
+      description: t('terminal.presetGitStatusHint'),
       program: 'git',
       args: ['status', '--short', '--branch'],
       cwdRelative: null,
     },
     {
       id: 'builtin-log',
-      name: '最近提交',
-      description: '列出最近 20 条提交标题',
+      name: t('terminal.presetRecentCommits'),
+      description: t('terminal.presetRecentCommitsHint'),
       program: 'git',
       args: ['log', '--oneline', '-n', '20'],
       cwdRelative: null,
     },
     {
       id: 'builtin-diff-stat',
-      name: '改动统计',
-      description: '按文件统计工作区改动行数',
+      name: t('terminal.presetDiffStat'),
+      description: t('terminal.presetDiffStatHint'),
       program: 'git',
       args: ['diff', '--stat'],
       cwdRelative: null,

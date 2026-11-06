@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowDown, ArrowUp, History, Loader2, X } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -10,7 +11,6 @@ import {
   type HistoryEditSequence,
 } from '../../repository'
 import {
-  ACTION_LABELS,
   HISTORY_EDIT_ACTIONS,
   buildActionPayload,
   createRows,
@@ -21,6 +21,7 @@ import {
   summarizeWithReorder,
   validateRows,
   type HistoryEditRow,
+  historyEditActionLabel,
 } from './historyEditModel'
 import './historyEdit.css'
 
@@ -37,6 +38,7 @@ type SequenceEditorProps = {
 /** 交互式历史编辑序列编辑器：重排 / drop / squash / fixup / reword / edit，
  * 应用前展示后端影响预览，危险操作需显式确认。 */
 export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChanged }: SequenceEditorProps) {
+  const { t } = useI18n()
   const [sequence, setSequence] = useState<HistoryEditSequence | null>(null)
   const [rows, setRows] = useState<HistoryEditRow[]>([])
   const [impact, setImpact] = useState<HistoryEditImpact | null>(null)
@@ -66,7 +68,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
   }, [open, repositoryPath, baseRef])
 
   const payload = useMemo(() => buildActionPayload(rows), [rows])
-  const errors = useMemo(() => validateRows(rows), [rows])
+  const errors = useMemo(() => validateRows(rows, t), [rows, t])
   const summary = useMemo(() => (sequence ? summarizeWithReorder(sequence.entries, rows) : null), [sequence, rows])
 
   useEffect(() => {
@@ -135,7 +137,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
                   aria-label={`提交 ${row.entry.shortHash} 的动作`}
                   onChange={(event) => setRows((prev) => setRowAction(prev, index, event.target.value as HistoryEditRow['action']))}
                 >
-                  {HISTORY_EDIT_ACTIONS.map((action) => <option key={action} value={action}>{ACTION_LABELS[action]}</option>)}
+                  {HISTORY_EDIT_ACTIONS.map((action) => <option key={action} value={action}>{historyEditActionLabel(action, t)}</option>)}
                 </select>
               </div>
               {(row.action === 'reword' || row.action === 'squash') && (

@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, GitBranch, GitMerge, Plus, RefreshCw, Save, Settings, Tag, X } from 'lucide-react'
 import type { ConfirmDialogOptions } from '../../components/ConfirmDialog'
@@ -55,6 +56,7 @@ type StartDialog = { kind: GitflowKind; name: string; base: string }
 type FinishDialog = { kind: GitflowKind; name: string }
 
 export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: GitflowPanelProps) {
+  const { t } = useI18n()
   const [config, setConfig] = useState<GitflowConfig | null>(null)
   const [draft, setDraft] = useState<GitflowConfig | null>(null)
   const [branches, setBranches] = useState<GitflowBranches | null>(null)
@@ -105,7 +107,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
 
   const saveConfig = async () => {
     if (!draft) return
-    const errors = validateGitflowConfig(draft)
+    const errors = validateGitflowConfig(draft, t)
     if (errors.length) {
       setError(errors.join('；'))
       return
@@ -127,14 +129,14 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
 
   const submitStart = async () => {
     if (!startDialog || !config) return
-    const invalid = validateGitflowLeafName(config, startDialog.kind, startDialog.name)
+    const invalid = validateGitflowLeafName(config, startDialog.kind, startDialog.name, t)
     if (invalid) {
       setError(invalid)
       return
     }
     const base = startDialog.base.trim()
     if (base) {
-      const baseError = validateGitflowBranchName(base)
+      const baseError = validateGitflowBranchName(base, t)
       if (baseError) {
         setError(`基础分支：${baseError}`)
         return
@@ -160,7 +162,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
     const kind = finishDialog.kind
     const tagEnabled = canTagGitflow(kind) && tag
     if (tagEnabled) {
-      const tagError = validateGitflowTagName(config, finishDialog.name)
+      const tagError = validateGitflowTagName(config, finishDialog.name, t)
       if (tagError) {
         setError(`标签：${tagError}`)
         return
@@ -168,7 +170,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
     }
     const target = gitflowTagName(config, finishDialog.name)
     const accepted = await ask({
-      title: `完成 ${gitflowKindLabel(kind)} ${finishDialog.name}`,
+      title: `完成 ${gitflowKindLabel(kind, t)} ${finishDialog.name}`,
       message: `将把 ${finishDialog.name} 以 --no-ff 合并到${kind === 'feature' ? ' develop' : ' main 与 develop'}${tagEnabled ? `，并创建标签 ${target}` : ''}，最后删除本地分支。不会推送远端。${kind === 'release' || kind === 'hotfix' ? '发生冲突时会保留合并状态，需要你手动继续或中止。' : ''}`,
       confirmLabel: '开始合并',
       variant: 'primary',
@@ -213,11 +215,11 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
     hotfixPrefix: 'hotfix/',
     supportPrefix: 'support/',
     tagPrefix: '',
-  })
-  const configErrors = draft ? validateGitflowConfig(draft) : []
-  const startInvalid = startDialog && config ? validateGitflowLeafName(config, startDialog.kind, startDialog.name) : null
+  }, t)
+  const configErrors = draft ? validateGitflowConfig(draft, t) : []
+  const startInvalid = startDialog && config ? validateGitflowLeafName(config, startDialog.kind, startDialog.name, t) : null
   const tagInvalid = finishDialog && config && canTagGitflow(finishDialog.kind) && tag
-    ? validateGitflowTagName(config, finishDialog.name)
+    ? validateGitflowTagName(config, finishDialog.name, t)
     : null
   const disabled = loading || busy !== null
   const reportTone = report ? finishReportTone(report) : null
@@ -280,7 +282,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
             variant="secondary"
             disabled={disabled || !config}
             onClick={() => { setStartDialog({ kind, name: '', base: '' }); setFinishDialog(null); setError('') }}
-          ><Plus size={13}/>{gitflowKindLabel(kind)}</Button>)}
+          ><Plus size={13}/>{gitflowKindLabel(kind, t)}</Button>)}
         </div>
       </article>
     </div>
@@ -319,7 +321,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
       </div>
       <ul className="flow-report-steps">
         {report.steps.map((step, index) => <li key={`${step.action}:${index}`} className={`flow-step-${step.status}`}>
-          <span>{stepStatusLabel(step.status)}</span><code>{step.action}</code>{step.detail && <small>{step.detail}</small>}
+          <span>{stepStatusLabel(step.status, t)}</span><code>{step.action}</code>{step.detail && <small>{step.detail}</small>}
         </li>)}
       </ul>
       {report.guidance && <p className="flow-guidance"><AlertTriangle size={14}/>{report.guidance}</p>}
@@ -330,7 +332,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
       <section className="branch-dialog flow-dialog" role="dialog" aria-modal="true" aria-labelledby="flow-start-title" onPointerDown={(event) => event.stopPropagation()}>
         <div className="branch-dialog-heading">
           <span className="branch-dialog-icon"><GitBranch size={17}/></span>
-          <div><h2 id="flow-start-title">新建{gitflowKindLabel(startDialog.kind)}</h2><p>默认基于 <strong>{gitflowDefaultBase(config, startDialog.kind)}</strong>；留空使用默认基础分支。</p></div>
+          <div><h2 id="flow-start-title">新建{gitflowKindLabel(startDialog.kind, t)}</h2><p>默认基于 <strong>{gitflowDefaultBase(config, startDialog.kind)}</strong>；留空使用默认基础分支。</p></div>
           <Button variant="icon" onClick={() => setStartDialog(null)} disabled={busy !== null} title="关闭"><X size={16}/></Button>
         </div>
         <form onSubmit={(event) => { event.preventDefault(); void submitStart() }}>
@@ -340,7 +342,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
           </div>
           <p className="branch-dialog-hint">{startInvalid ?? `将创建 ${gitflowPrefix(config, startDialog.kind)}${gitflowLeafName(config, startDialog.kind, startDialog.name) || '…'}`}</p>
           <label>基础分支（可选）</label>
-          <div className={startDialog.base && validateGitflowBranchName(startDialog.base) ? 'branch-name-input invalid' : 'branch-name-input'}>
+          <div className={startDialog.base && validateGitflowBranchName(startDialog.base, t) ? 'branch-name-input invalid' : 'branch-name-input'}>
             <input value={startDialog.base} spellCheck={false} placeholder={gitflowDefaultBase(config, startDialog.kind)} onChange={(event) => setStartDialog({ ...startDialog, base: event.target.value })}/>
           </div>
           <p className="branch-dialog-hint">基础分支必须已存在；创建不会推送远端。</p>
@@ -356,7 +358,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
       <section className="branch-dialog flow-dialog" role="dialog" aria-modal="true" aria-labelledby="flow-finish-title" onPointerDown={(event) => event.stopPropagation()}>
         <div className="branch-dialog-heading">
           <span className="branch-dialog-icon"><GitMerge size={17}/></span>
-          <div><h2 id="flow-finish-title">完成{gitflowKindLabel(finishDialog.kind)}</h2><p><strong>{finishDialog.name}</strong> 将以 --no-ff 合并，完成后删除本地分支；不会 push。</p></div>
+          <div><h2 id="flow-finish-title">完成{gitflowKindLabel(finishDialog.kind, t)}</h2><p><strong>{finishDialog.name}</strong> 将以 --no-ff 合并，完成后删除本地分支；不会 push。</p></div>
           <Button variant="icon" onClick={() => setFinishDialog(null)} disabled={busy !== null} title="关闭"><X size={16}/></Button>
         </div>
         <form onSubmit={(event) => { event.preventDefault(); void submitFinish() }}>

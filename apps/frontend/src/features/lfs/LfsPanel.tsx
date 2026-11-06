@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Check, Download, FileArchive, HardDrive, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import type { ConfirmDialogOptions } from '../../components/ConfirmDialog'
@@ -49,6 +50,7 @@ export type LfsPanelProps = {
 }
 
 export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPanelProps) {
+  const { t } = useI18n()
   const [status, setStatus] = useState<LfsStatus | null>(null)
   const [files, setFiles] = useState<LfsFilesPage | null>(null)
   const [pattern, setPattern] = useState('')
@@ -81,7 +83,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
   }, [reload])
 
   const ask = async (action: LfsAction): Promise<boolean> => {
-    const options = lfsActionConfirmation(action, repositoryPath)
+    const options = lfsActionConfirmation(action, repositoryPath, t)
     if (confirm) return confirm(options)
     return window.confirm(`${options.title}\n\n${options.message}`)
   }
@@ -102,7 +104,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
   }
 
   const addPattern = async () => {
-    const invalid = validateLfsPattern(pattern)
+    const invalid = validateLfsPattern(pattern, t)
     if (invalid) {
       setError(invalid)
       return
@@ -151,7 +153,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
         : action === 'pull'
           ? await pullLfsObjects(repositoryPath)
           : await pruneLfsObjects(repositoryPath)
-      notify(lfsOperationNotice(report))
+      notify(lfsOperationNotice(report, t))
       await reload()
       onChanged?.()
     } catch (reason) {
@@ -173,7 +175,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
       <div>
         <span className="eyebrow">大文件存储</span>
         <h2>Git LFS</h2>
-        <p>{lfsStatusDescription(status)}</p>
+        <p>{lfsStatusDescription(status, t)}</p>
       </div>
       <div className="structure-actions">
         <Button variant="secondary" disabled={disabled} onClick={() => void reload()}><RefreshCw size={14} className={loading ? 'spin' : ''}/>{loading ? '读取中…' : '刷新'}</Button>
@@ -184,7 +186,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
     </div>
 
     <div className={`lfs-status-card lfs-status-${tone}`}>
-      <span className="lfs-status-badge">{tone === 'unavailable' ? <AlertTriangle size={15}/> : <Check size={15}/>}{lfsStatusLabel(status)}</span>
+      <span className="lfs-status-badge">{tone === 'unavailable' ? <AlertTriangle size={15}/> : <Check size={15}/>}{lfsStatusLabel(status, t)}</span>
       <dl>
         <div><dt>git-lfs 版本</dt><dd>{status?.version ?? '不可用'}</dd></div>
         <div><dt>本地安装</dt><dd>{status?.installedLocally ? '已启用' : '未启用'}</dd></div>
@@ -229,13 +231,13 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
           <Button variant="secondary" disabled={disabled || !status?.available} onClick={() => void runOperation('pull')}><RefreshCw size={14}/>{busy === 'pull' ? '拉取中…' : 'Pull 并检出'}</Button>
           <Button variant="danger" disabled={disabled || !status?.available} onClick={() => void runOperation('prune')}><Trash2 size={14}/>{busy === 'prune' ? '清理中…' : 'Prune 缓存'}</Button>
         </div>
-        <p className="lfs-action-labels">{(['fetch', 'pull', 'prune'] as LfsAction[]).map((action) => lfsActionLabel(action)).join(' · ')}</p>
+        <p className="lfs-action-labels">{(['fetch', 'pull', 'prune'] as LfsAction[]).map((action) => lfsActionLabel(action, t)).join(' · ')}</p>
       </article>
     </div>
 
     <article className="structure-detail-card lfs-files-card">
       <h3><FileArchive size={15}/>LFS 文件</h3>
-      <p className="lfs-card-hint">{lfsFilesSummary(files)}</p>
+      <p className="lfs-card-hint">{lfsFilesSummary(files, t)}</p>
       {files?.truncated && <p className="lfs-truncated"><AlertTriangle size={14}/>结果已截断：仅展示前 {files.files.length} 个文件，完整列表请用命令行查看。</p>}
       {files && files.files.length > 0 && <div className="lfs-file-table-wrap">
         <table className="lfs-file-table">
@@ -245,7 +247,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
               <td title={file.path}>{file.path}</td>
               <td>{formatLfsBytes(file.size)}</td>
               <td><code>{shortLfsOid(file.oid)}</code></td>
-              <td><span className={file.downloaded ? 'lfs-downloaded' : 'lfs-pointer'}>{lfsDownloadLabel(file)}</span></td>
+              <td><span className={file.downloaded ? 'lfs-downloaded' : 'lfs-pointer'}>{lfsDownloadLabel(file, t)}</span></td>
             </tr>)}
           </tbody>
         </table>

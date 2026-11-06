@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -75,6 +76,7 @@ function describeError(reason: unknown): string {
 }
 
 export function TerminalPanel({ repositoryPath, onNotice }: TerminalPanelProps) {
+  const { t } = useI18n()
   const [tab, setTab] = useState<'terminal' | 'pipeline'>('terminal')
 
   if (!repositoryPath) {
@@ -160,6 +162,7 @@ function TerminalTab({
   onNotice?: (message: string) => void
   visible: boolean
 }) {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -204,7 +207,7 @@ function TerminalTab({
         setExitCode(output.exitCode ?? null)
         if (output.truncated && !truncatedNotifiedRef.current) {
           truncatedNotifiedRef.current = true
-          const notice = terminalTruncatedNotice(true)
+          const notice = terminalTruncatedNotice(true, t)
           if (notice) noticeRef.current?.(notice)
         }
         if (!output.alive) {
@@ -442,8 +445,8 @@ function TerminalTab({
     : phase === 'running'
       ? '运行中'
       : phase === 'error'
-        ? '连接失败'
-        : formatTerminalExit({ alive: false, exitCode })
+        ? t('terminal.connectFailed')
+        : formatTerminalExit({ alive: false, exitCode }, t)
 
   return (
     <div className="terminal-shell">
@@ -452,7 +455,7 @@ function TerminalTab({
           <span className={`terminal-status terminal-status-${tone}`}>{statusLabel}</span>
           {session && (
             <>
-              <code className="terminal-shell-name">{terminalShellLabel(session.shell)}</code>
+              <code className="terminal-shell-name">{terminalShellLabel(session.shell, t)}</code>
               <span className="terminal-cwd" title={session.cwd}>{session.cwd}</span>
             </>
           )}
@@ -499,6 +502,7 @@ function PipelineTab({
   repositoryPath: string
   onNotice?: (message: string) => void
 }) {
+  const { t } = useI18n()
   const [commands, setCommands] = useState<PipelineCommand[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState<PipelineDraft>(emptyPipelineDraft)
@@ -564,7 +568,7 @@ function PipelineTab({
   }
 
   const saveDraft = async () => {
-    const invalid = validatePipelineDraft(draft)
+    const invalid = validatePipelineDraft(draft, t)
     if (invalid) {
       setFormError(invalid)
       return
@@ -605,7 +609,7 @@ function PipelineTab({
     try {
       const result = await runPipelineCommand(repositoryPath, command.id, null, runId)
       setReport(result)
-      noticeRef.current?.(commandRunSummary(result))
+      noticeRef.current?.(commandRunSummary(result, t))
     } catch (reason) {
       setRunError(describeError(reason))
     } finally {
@@ -634,7 +638,7 @@ function PipelineTab({
   }
 
   const selected = commands.find((command) => command.id === selectedId) ?? null
-  const builtins = builtinPipelineCommands()
+  const builtins = builtinPipelineCommands(t)
 
   return (
     <div className="pipeline-shell">
@@ -644,7 +648,7 @@ function PipelineTab({
             <h3>自定义命令</h3>
             <span className="pipeline-count">{commands.length}</span>
           </div>
-          <p className="pipeline-card-hint">{pipelineCommandsSummary(commands)}</p>
+          <p className="pipeline-card-hint">{pipelineCommandsSummary(commands, t)}</p>
           {loading ? (
             <p className="pipeline-empty"><Loader2 size={14} className="spin" />正在读取命令配置…</p>
           ) : commands.length === 0 ? (
@@ -762,8 +766,8 @@ function PipelineTab({
               disabled={saving}
               onChange={(event) => setDraft({ ...draft, cwdRelative: event.target.value })}
             />
-            <p className={validatePipelineCwd(draft.cwdRelative) ? 'pipeline-form-error' : 'pipeline-form-note'}>
-              {pipelineCwdSafetyNote(draft.cwdRelative)}
+            <p className={validatePipelineCwd(draft.cwdRelative, t) ? 'pipeline-form-error' : 'pipeline-form-note'}>
+              {pipelineCwdSafetyNote(draft.cwdRelative, t)}
             </p>
 
             {formError && <div className="pipeline-form-error" role="alert"><AlertTriangle size={14} />{formError}</div>}
@@ -816,7 +820,7 @@ function PipelineTab({
         {report && (
           <div className="pipeline-report">
             <div className={`pipeline-run-badge pipeline-run-${commandRunTone(report)}`}>
-              {formatCommandRunExit(report)}
+              {formatCommandRunExit(report, t)}
             </div>
             <span className="pipeline-run-duration">用时 {formatRunDuration(report.durationMs)}</span>
             <span className="pipeline-run-id">run: {report.runId}</span>
