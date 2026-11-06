@@ -1,0 +1,16 @@
+export const common = {
+  'language.switch': 'English',
+  'language.title': '切换界面语言 / Switch language',
+  'common.refresh': '刷新',
+  'common.close': '关闭',
+  'common.cancel': '取消',
+  'common.confirm': '确认',
+  'common.save': '保存',
+  'common.delete': '删除',
+  'common.collapseSidebar': '收起左侧面板',
+  'common.expandSidebar': '展开左侧面板',
+  'common.language': '切换界面语言',
+  'common.unknown': '未知',
+  'common.none': '无',
+  'common.loading': '加载中…',
+} as const

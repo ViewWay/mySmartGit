@@ -1,0 +1,16 @@
+export const common = {
+  'language.switch': '中文',
+  'language.title': 'Switch language / 切换界面语言',
+  'common.refresh': 'Refresh',
+  'common.close': 'Close',
+  'common.cancel': 'Cancel',
+  'common.confirm': 'Confirm',
+  'common.save': 'Save',
+  'common.delete': 'Delete',
+  'common.collapseSidebar': 'Collapse sidebar',
+  'common.expandSidebar': 'Expand sidebar',
+  'common.language': 'Switch language',
+  'common.unknown': 'Unknown',
+  'common.none': 'None',
+  'common.loading': 'Loading…',
+} satisfies Record<keyof typeof import('../zh/common').common, string>
