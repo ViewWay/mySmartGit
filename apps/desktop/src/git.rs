@@ -2,8 +2,8 @@ use crate::models::{
     BlameLine, CommandLogEntry, ConflictFileContent, DiffLine, FileHistoryEntry, GitUserConfig, MergeCandidate,
     MergeQueueSnapshot, RebasePreview, RepositoryBranchTracking, RepositoryCommit,
     RepositoryCommitStats, RepositoryCommitTemplate, RepositoryComparison, RepositoryFile,
-    RepositoryOperationState, RepositoryOperationStep, RepositorySnapshot, RepositoryStash,
-    RepositorySubmodule, RepositoryWorktree,
+    RepositoryHistoryPage, RepositoryOperationState, RepositoryOperationStep, RepositorySnapshot,
+    RepositoryStash, RepositorySubmodule, RepositoryWorktree,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -11,11 +11,12 @@ use std::{
     fs,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -668,6 +669,125 @@ fn assign_lanes(commits: &mut [RepositoryCommit]) {
 const COMMIT_GRAPH_LIMIT: usize = 2_000;
 const MAX_COMMIT_GRAPH_LIMIT: usize = 20_000;
 
+/// 图谱记录的 `--pretty` 字段布局（W3-3：批读与流式分页共用一套格式）。
+const HISTORY_GRAPH_FORMAT: &str =
+    "--pretty=format:%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%aI%x1f%cI%x1f%D%x1f%B";
+
+/// 单条图谱记录 → RepositoryCommit。`truncated` 出参标记 title/正文超出
+/// 字符预算被显式截断（README 红线：不得静默丢内容，超限必须可见）。
+fn commit_from_record(record: &str, truncated: &mut bool) -> Option<RepositoryCommit> {
+    let record = record.trim_matches(&['\r', '\n'][..]);
+    if record.is_empty() {
+        return None;
+    }
+    let fields: Vec<&str> = record.split('\x1f').collect();
+    if fields.len() < 10 {
+        return None;
+    }
+    let full_hash = fields[0].to_string();
+    let parents: Vec<String> = fields[1]
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect();
+    let raw_message = fields[9].trim().to_string();
+    let mut message = raw_message;
+    if message.chars().count() > HISTORY_MAX_MESSAGE_CHARS {
+        message = message.chars().take(HISTORY_MAX_MESSAGE_CHARS).collect();
+        message.push('\u{2026}');
+        *truncated = true;
+    }
+    let raw_title = message.lines().next().unwrap_or("无提交信息").to_string();
+    let mut title = raw_title;
+    if title.chars().count() > HISTORY_MAX_TITLE_CHARS {
+        title = title.chars().take(HISTORY_MAX_TITLE_CHARS).collect();
+        title.push('\u{2026}');
+        *truncated = true;
+    }
+    let branches = decorations(fields[8]);
+    let is_stash = branches.iter().any(|reference| reference == "refs/stash");
+    Some(RepositoryCommit {
+        id: full_hash.chars().take(7).collect(),
+        full_hash,
+        parent: parents.first().cloned(),
+        parents: parents.clone(),
+        lane: 0,
+        color: LANE_COLORS[0].into(),
+        title,
+        message,
+        author: fields[2].to_string(),
+        email: fields[3].to_string(),
+        committer: fields[4].to_string(),
+        committer_email: fields[5].to_string(),
+        avatar: initials(fields[2]),
+        time: fields[7].to_string(),
+        author_time: fields[6].to_string(),
+        commit_time: fields[7].to_string(),
+        branches,
+        status: if is_stash {
+            Some("stash".into())
+        } else if parents.len() > 1 {
+            Some("merge".into())
+        } else {
+            None
+        },
+        files: 0,
+        additions: 0,
+        deletions: 0,
+    })
+}
+
+/// stash 辅助提交（index/未跟踪残留）的流式剪枝判定：
+/// 返回 Some(true) 表示该提交应剪枝跳过。`stash_helper_parents` 在遇到
+/// stash 提交时登记其第二父，之后凡命中集合且无分支装饰的提交都被剔除——
+/// 与批读模型「先全量收集再 retain」的语义等价，但可以逐条流式执行。
+fn stash_prune_decision(
+    commit: &RepositoryCommit,
+    stash_helper_parents: &mut HashSet<String>,
+) -> bool {
+    if commit.status.as_deref() == Some("stash") {
+        stash_helper_parents.extend(commit.parents.iter().skip(1).cloned());
+        return false;
+    }
+    stash_helper_parents.contains(&commit.full_hash) && commit.branches.is_empty()
+}
+
+/// 跨页一致的流式 lane 分配：等价于对「全量历史」执行 `assign_lanes`。
+/// 依据：`git log --date-order` 保证父提交排在子提交之后，因此处理任意
+/// 前缀时，为本条全部父预留轨道与全量视图里「父在 known 集合中」的语义
+/// 一致；`active` 状态跨页携带，已发行的 lane 永不随翻页漂移。
+/// stash 提交只为第一父预留（index 父已被剪枝），与批读 retain 后再分道等价。
+fn assign_lane_streaming(active: &mut HashMap<String, usize>, commit: &mut RepositoryCommit) {
+    let occupied: HashSet<usize> = active.values().copied().collect();
+    let lane = active.remove(&commit.full_hash).unwrap_or_else(|| {
+        (0..)
+            .find(|candidate| !occupied.contains(candidate))
+            .unwrap_or(0)
+    });
+    commit.lane = lane;
+    commit.color = LANE_COLORS[lane % LANE_COLORS.len()].into();
+
+    let mut reserved: HashSet<usize> = active.values().copied().collect();
+    let parents: &[String] = if commit.status.as_deref() == Some("stash") {
+        commit.parents.first().map(|_| &commit.parents[..1]).unwrap_or(&[])
+    } else {
+        &commit.parents
+    };
+    for (index, parent) in parents.iter().enumerate() {
+        if active.contains_key(parent) {
+            continue;
+        }
+        let parent_lane = if index == 0 && !reserved.contains(&lane) {
+            lane
+        } else {
+            (0..)
+                .find(|candidate| !reserved.contains(candidate))
+                .unwrap_or(0)
+        };
+        active.insert(parent.clone(), parent_lane);
+        reserved.insert(parent_lane);
+    }
+}
+
 fn parse_commits(path: &Path, limit: usize) -> Vec<RepositoryCommit> {
     let max_count = format!("--max-count={}", limit.clamp(COMMIT_GRAPH_LIMIT, MAX_COMMIT_GRAPH_LIMIT));
     let output = optional_git_output(
@@ -683,71 +803,474 @@ fn parse_commits(path: &Path, limit: usize) -> Vec<RepositoryCommit> {
             "--date-order",
             &max_count,
             "--date=iso-strict",
-            "--pretty=format:%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%aI%x1f%cI%x1f%D%x1f%B",
+            HISTORY_GRAPH_FORMAT,
         ],
     );
 
+    let mut truncation_seen = false;
     let mut commits: Vec<RepositoryCommit> = output
         .split('\x1e')
-        .filter_map(|record| {
-            let record = record.trim_matches(&['\r', '\n'][..]);
-            if record.is_empty() {
-                return None;
-            }
-            let fields: Vec<&str> = record.split('\x1f').collect();
-            if fields.len() < 10 {
-                return None;
-            }
-            let full_hash = fields[0].to_string();
-            let parents: Vec<String> = fields[1]
-                .split_whitespace()
-                .map(ToString::to_string)
-                .collect();
-            let message = fields[9].trim().to_string();
-            let title = message.lines().next().unwrap_or("无提交信息").to_string();
-            let branches = decorations(fields[8]);
-            let is_stash = branches.iter().any(|reference| reference == "refs/stash");
-            Some(RepositoryCommit {
-                id: full_hash.chars().take(7).collect(),
-                full_hash,
-                parent: parents.first().cloned(),
-                parents: parents.clone(),
-                lane: 0,
-                color: LANE_COLORS[0].into(),
-                title,
-                message,
-                author: fields[2].to_string(),
-                email: fields[3].to_string(),
-                committer: fields[4].to_string(),
-                committer_email: fields[5].to_string(),
-                avatar: initials(fields[2]),
-                time: fields[7].to_string(),
-                author_time: fields[6].to_string(),
-                commit_time: fields[7].to_string(),
-                branches,
-                status: if is_stash {
-                    Some("stash".into())
-                } else if parents.len() > 1 {
-                    Some("merge".into())
-                } else {
-                    None
-                },
-                files: 0,
-                additions: 0,
-                deletions: 0,
-            })
-        })
+        .filter_map(|record| commit_from_record(record, &mut truncation_seen))
         .collect();
-    let stash_helper_parents: HashSet<String> = commits
-        .iter()
-        .filter(|commit| commit.status.as_deref() == Some("stash"))
-        .flat_map(|commit| commit.parents.iter().skip(1).cloned())
-        .collect();
-    commits.retain(|commit| {
-        !stash_helper_parents.contains(&commit.full_hash) || !commit.branches.is_empty()
-    });
+    let mut stash_helper_parents: HashSet<String> = HashSet::new();
+    commits.retain(|commit| !stash_prune_decision(commit, &mut stash_helper_parents));
     assign_lanes(&mut commits);
     commits
+}
+
+// ---------------------------------------------------------------------------
+// W3-3 游标式流式历史：分页续读 / 跨页 lane 一致 / 有界 / 可取消
+//
+// 模型：一次「开始」= 一个持续读取中的 `git log` 子进程会话（不带 --max-count）。
+// `git log` 在启动时解析引用并锁定遍历快照，因此翻页期间新产生的提交不会插入
+// 已发行部分——游标即「同一进程已读到的位置」，天然稳定、不重不漏。取消 = kill
+// 子进程并 wait 回收（不留僵尸）。有界性：每页受条数上限与字节预算双控；字节
+// 预算只推迟记录（留在管道里，下一页继续读），绝不丢数据；单条记录的
+// title/message 超字符预算时显式截断并置 `truncated` + `notice`。
+// ---------------------------------------------------------------------------
+
+const HISTORY_PAGE_DEFAULT: usize = 500;
+const HISTORY_PAGE_MAX: usize = 2_000;
+/// 单次 IPC 响应的字节预算（README：缓存条数与字节双上限）。
+const HISTORY_PAGE_MAX_BYTES: usize = 1024 * 1024;
+const HISTORY_MAX_TITLE_CHARS: usize = 400;
+const HISTORY_MAX_MESSAGE_CHARS: usize = 4_000;
+/// 全仓库并存的流会话上限：超限按最早创建淘汰（kill + wait）。
+/// 取 24：桌面端同时最多 4 仓库 × 3 类流 = 12，再留一倍余量给并行集成测试，
+/// 避免淘汰误伤其他会话。
+const HISTORY_MAX_SESSIONS: usize = 24;
+
+const HISTORY_FILE_FORMAT: &str =
+    "--pretty=format:%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%s%x1f%B%x1d";
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum HistoryStreamKind {
+    Graph,
+    File,
+    Line,
+}
+
+impl HistoryStreamKind {
+    fn label(self) -> &'static str {
+        match self {
+            HistoryStreamKind::Graph => "graph",
+            HistoryStreamKind::File => "file",
+            HistoryStreamKind::Line => "line",
+        }
+    }
+}
+
+struct HistoryStream {
+    id: String,
+    sequence: u64,
+    root: PathBuf,
+    kind: HistoryStreamKind,
+    child: std::process::Child,
+    reader: BufReader<std::process::ChildStdout>,
+    stderr: Option<std::process::ChildStderr>,
+    /// Graph 流跨页 lane 状态（等价于对全量历史执行 `assign_lanes`）。
+    lanes: HashMap<String, usize>,
+    /// Graph 流式剪枝：stash 辅助提交集合。
+    stash_helper_parents: HashSet<String>,
+    emitted: usize,
+    finished: bool,
+    exit_notice: Option<String>,
+}
+
+impl HistoryStream {
+    /// 读取下一条 `\x1e` 分隔记录（不含分隔符）。None = EOF 且无残留记录。
+    /// 未读的字节留在管道/BufReader 中，因此「按预算停页」不丢任何数据。
+    fn read_record(&mut self) -> Option<Vec<u8>> {
+        if self.finished {
+            return None;
+        }
+        enum Step {
+            End,
+            Take(usize),
+            Keep(usize),
+        }
+        let mut record: Vec<u8> = Vec::new();
+        loop {
+            let step = match self.reader.fill_buf() {
+                Ok(chunk) if chunk.is_empty() => Step::End,
+                Ok(chunk) => match chunk.iter().position(|byte| *byte == b'\x1e') {
+                    Some(position) => Step::Take(position),
+                    None => Step::Keep(chunk.len()),
+                },
+                Err(_) => Step::End,
+            };
+            match step {
+                Step::Take(position) => {
+                    if let Ok(chunk) = self.reader.fill_buf() {
+                        record.extend_from_slice(&chunk[..position]);
+                        self.reader.consume(position + 1);
+                    }
+                    return Some(record);
+                }
+                Step::Keep(length) => {
+                    let mut consumed = false;
+                    if let Ok(chunk) = self.reader.fill_buf() {
+                        record.extend_from_slice(chunk);
+                        self.reader.consume(length);
+                        consumed = true;
+                    }
+                    if !consumed {
+                        return if record.is_empty() { None } else { Some(record) };
+                    }
+                }
+                Step::End => {
+                    self.finish();
+                    return if record.is_empty() { None } else { Some(record) };
+                }
+            }
+        }
+    }
+
+    /// EOF 收尾：先抽干 stderr（防子进程被写满的 stderr 管道卡住），再 wait 回收。
+    fn finish(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        let stderr_text = self
+            .stderr
+            .take()
+            .map(|mut pipe| {
+                let mut text = String::new();
+                let _ = pipe.read_to_string(&mut text);
+                text.trim().to_string()
+            })
+            .unwrap_or_default();
+        let exited = self.child.wait();
+        let failed = exited.map(|status| !status.success()).unwrap_or(false);
+        if failed && self.emitted == 0 && !stderr_text.is_empty() {
+            self.exit_notice = Some(format!("无法读取提交历史：{stderr_text}"));
+        }
+    }
+
+    /// 中止：kill + wait，确保子进程被回收、不留僵尸。
+    fn abort(&mut self) {
+        let already_reaped = self.finished;
+        self.finished = true;
+        let _ = self.child.kill();
+        if !already_reaped {
+            let _ = self.child.wait();
+        }
+    }
+
+    fn page_shell(&self) -> RepositoryHistoryPage {
+        RepositoryHistoryPage {
+            session_id: self.id.clone(),
+            kind: self.kind.label().to_string(),
+            commits: Vec::new(),
+            entries: Vec::new(),
+            emitted: self.emitted,
+            has_more: !self.finished,
+            truncated: false,
+            notice: None,
+            page_bytes: 0,
+        }
+    }
+}
+
+impl Drop for HistoryStream {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+static HISTORY_STREAM_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static HISTORY_STREAMS: OnceLock<Mutex<HashMap<String, HistoryStream>>> = OnceLock::new();
+
+fn history_streams() -> &'static Mutex<HashMap<String, HistoryStream>> {
+    HISTORY_STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn clamp_history_page(requested: Option<usize>) -> usize {
+    requested.unwrap_or(HISTORY_PAGE_DEFAULT).clamp(1, HISTORY_PAGE_MAX)
+}
+
+/// 启动（或替换）一个历史流会话：同仓库同类型的旧流先被 kill+wait——
+/// 「发新请求即中止旧任务」的落点；再按创建序淘汰超限的最老会话。
+fn begin_history_stream(
+    root: PathBuf,
+    kind: HistoryStreamKind,
+    args: &[String],
+) -> Result<String, String> {
+    #[cfg(test)]
+    isolate_test_git_environment();
+    let mut command = Command::new("git");
+    command.arg("-C").arg(&root).args(args);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动 Git 历史流：{error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "无法接管 Git 历史流输出".to_string())?;
+    let stderr = child.stderr.take();
+    let sequence = HISTORY_STREAM_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+    let id = format!("hist-{sequence}");
+    let stream = HistoryStream {
+        id: id.clone(),
+        sequence,
+        root: root.clone(),
+        kind,
+        child,
+        reader: BufReader::new(stdout),
+        stderr,
+        lanes: HashMap::new(),
+        stash_helper_parents: HashSet::new(),
+        emitted: 0,
+        finished: false,
+        exit_notice: None,
+    };
+    let mut registry = history_streams()
+        .lock()
+        .map_err(|_| "历史流注册表锁失效".to_string())?;
+    let stale: Vec<String> = registry
+        .iter()
+        .filter(|(_, existing)| existing.root == root && existing.kind == kind)
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in stale {
+        if let Some(mut old) = registry.remove(&key) {
+            old.abort();
+        }
+    }
+    while registry.len() >= HISTORY_MAX_SESSIONS {
+        let oldest = registry
+            .iter()
+            .min_by_key(|(_, existing)| existing.sequence)
+            .map(|(key, _)| key.clone());
+        match oldest {
+            Some(key) => {
+                if let Some(mut evicted) = registry.remove(&key) {
+                    evicted.abort();
+                }
+            }
+            None => break,
+        }
+    }
+    registry.insert(id.clone(), stream);
+    Ok(id)
+}
+
+/// 从会话续取一页（Graph 流：流式剪枝 + 跨页 lane + 字节预算）。
+fn fill_graph_page(stream: &mut HistoryStream, page_size: usize) -> RepositoryHistoryPage {
+    let mut page = stream.page_shell();
+    let mut truncated = false;
+    let mut bytes = 0usize;
+    let target = stream.emitted + page_size;
+    while stream.emitted < target && bytes < HISTORY_PAGE_MAX_BYTES {
+        let Some(record) = stream.read_record() else {
+            page.has_more = false;
+            page.notice = stream.exit_notice.clone();
+            break;
+        };
+        bytes += record.len();
+        let Some(mut commit) =
+            commit_from_record(&String::from_utf8_lossy(&record), &mut truncated)
+        else {
+            continue;
+        };
+        if stash_prune_decision(&commit, &mut stream.stash_helper_parents) {
+            continue;
+        }
+        assign_lane_streaming(&mut stream.lanes, &mut commit);
+        stream.emitted += 1;
+        page.commits.push(commit);
+    }
+    page.emitted = stream.emitted;
+    page.truncated = truncated;
+    if truncated && page.notice.is_none() {
+        page.notice = Some("部分提交标题/正文超出字符预算，已显式截断（单条上限 400/4000 字符）".into());
+    }
+    page.page_bytes = bytes;
+    page
+}
+
+/// 从会话续取一页（File/Line 流：无 lane，保留 --follow / -L 语义）。
+fn fill_entry_page(stream: &mut HistoryStream, page_size: usize) -> RepositoryHistoryPage {
+    let mut page = stream.page_shell();
+    let mut truncated = false;
+    let mut bytes = 0usize;
+    let target = stream.emitted + page_size;
+    while stream.emitted < target && bytes < HISTORY_PAGE_MAX_BYTES {
+        let Some(record) = stream.read_record() else {
+            page.has_more = false;
+            page.notice = stream.exit_notice.clone();
+            break;
+        };
+        bytes += record.len();
+        let text = String::from_utf8_lossy(&record).to_string();
+        let Some(entry) = file_history_entry_from_record(&text, &mut truncated) else {
+            continue;
+        };
+        stream.emitted += 1;
+        page.entries.push(entry);
+    }
+    page.emitted = stream.emitted;
+    page.truncated = truncated;
+    if truncated && page.notice.is_none() {
+        page.notice = Some("部分提交标题/正文超出字符预算，已显式截断（单条上限 400/4000 字符）".into());
+    }
+    page.page_bytes = bytes;
+    page
+}
+
+fn history_page(
+    session_id: &str,
+    expected: HistoryStreamKind,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    let limit = clamp_history_page(page_size);
+    let mut registry = history_streams()
+        .lock()
+        .map_err(|_| "历史流注册表锁失效".to_string())?;
+    let stream = registry
+        .get_mut(session_id)
+        .ok_or_else(|| format!("历史流会话 {session_id} 不存在或已结束"))?;
+    if stream.kind != expected {
+        return Err(format!(
+            "历史流类型不匹配：会话是 {}，翻页接口要求 {}",
+            stream.kind.label(),
+            expected.label()
+        ));
+    }
+    Ok(match stream.kind {
+        HistoryStreamKind::Graph => fill_graph_page(stream, limit),
+        HistoryStreamKind::File | HistoryStreamKind::Line => fill_entry_page(stream, limit),
+    })
+}
+
+pub fn start_repository_history_stream(
+    repository_path: &str,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    let root = repository_root(repository_path)?;
+    let args: Vec<String> = [
+        "-c".into(),
+        "core.quotepath=false".into(),
+        "log".into(),
+        "--all".into(),
+        // 与批读模型同一排序不变量：父提交一定排在子提交之后（游标与 lane 前提）。
+        "--date-order".into(),
+        "--date=iso-strict".into(),
+        HISTORY_GRAPH_FORMAT.into(),
+    ].to_vec();
+    let id = begin_history_stream(root, HistoryStreamKind::Graph, &args)?;
+    history_page(&id, HistoryStreamKind::Graph, page_size)
+}
+
+pub fn load_repository_history_next_page(
+    session_id: &str,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    history_page(session_id, HistoryStreamKind::Graph, page_size)
+}
+
+pub fn start_repository_file_history_stream(
+    repository_path: &str,
+    file_path: &str,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    let root = repository_root(repository_path)?;
+    let file_path = validated_file_path(file_path)?;
+    let args: Vec<String> = [
+        "-c".into(),
+        "core.quotepath=false".into(),
+        "log".into(),
+        "--all".into(),
+        "--date-order".into(),
+        // --follow 保留：重命名跨越页边界时仍可继续追踪。
+        "--follow".into(),
+        "--date=iso-strict".into(),
+        HISTORY_FILE_FORMAT.into(),
+        "--".into(),
+        file_path,
+    ].to_vec();
+    let id = begin_history_stream(root, HistoryStreamKind::File, &args)?;
+    history_page(&id, HistoryStreamKind::File, page_size)
+}
+
+pub fn load_repository_file_history_next_page(
+    session_id: &str,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    history_page(session_id, HistoryStreamKind::File, page_size)
+}
+
+pub fn start_repository_line_history_stream(
+    repository_path: &str,
+    file_path: &str,
+    line: usize,
+    revision: Option<&str>,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    if line == 0 || line > 10_000_000 {
+        return Err("行号必须在 1 到 10000000 之间".into());
+    }
+    let root = repository_root(repository_path)?;
+    let file_path = validated_file_path(file_path)?;
+    let revision = resolve_commit(&root, revision.unwrap_or("HEAD").trim())?;
+    let line_range = format!("{line},{line}:{file_path}");
+    let args: Vec<String> = [
+        "-c".into(),
+        "core.quotepath=false".into(),
+        "log".into(),
+        "--date=iso-strict".into(),
+        "--no-color".into(),
+        HISTORY_FILE_FORMAT.into(),
+        revision,
+        "-L".into(),
+        line_range,
+    ].to_vec();
+    let id = begin_history_stream(root, HistoryStreamKind::Line, &args)?;
+    history_page(&id, HistoryStreamKind::Line, page_size)
+}
+
+pub fn load_repository_line_history_next_page(
+    session_id: &str,
+    page_size: Option<usize>,
+) -> Result<RepositoryHistoryPage, String> {
+    history_page(session_id, HistoryStreamKind::Line, page_size)
+}
+
+/// 取消单个流会话：kill + wait（不留僵尸），返回会话是否存在过。
+pub fn cancel_repository_history_stream(session_id: &str) -> bool {
+    if let Ok(mut registry) = history_streams().lock() {
+        if let Some(mut stream) = registry.remove(session_id) {
+            stream.abort();
+            return true;
+        }
+    }
+    false
+}
+
+/// 取消该仓库的全部流会话（切仓库/换分支时前端必须先调用）。
+pub fn cancel_repository_history(repository_path: &str) -> usize {
+    let Ok(root) = repository_root(repository_path) else {
+        return 0;
+    };
+    let Ok(mut registry) = history_streams().lock() else {
+        return 0;
+    };
+    let stale: Vec<String> = registry
+        .iter()
+        .filter(|(_, stream)| stream.root == root)
+        .map(|(key, _)| key.clone())
+        .collect();
+    let count = stale.len();
+    for key in stale {
+        if let Some(mut stream) = registry.remove(&key) {
+            stream.abort();
+        }
+    }
+    count
 }
 
 fn collect_numstat(path: &Path, args: &[&str], stats: &mut HashMap<String, (usize, usize)>) {
@@ -4126,35 +4649,60 @@ pub fn abort_repository_operation(repository_path: &str) -> Result<(), String> {
     git_output_owned(&root, &[command.into(), "--abort".into()]).map(|_| ())
 }
 
+/// 单条文件/行历史记录 → FileHistoryEntry（W3-3：批读与流式分页共用）。
+/// 记录格式 `%x1e…%x1d<diff>`：元数据段在 `\x1d` 之前，`-L` 输出附带的 diff
+/// 不进入 IPC 响应，只在流内被消费掉。超预算的 title/正文显式截断并标记。
+fn file_history_entry_from_record(record: &str, truncated: &mut bool) -> Option<FileHistoryEntry> {
+    let metadata = record
+        .split_once('\x1d')
+        .map(|(metadata, _)| metadata)
+        .unwrap_or(record);
+    let fields: Vec<&str> = metadata.trim().split('\x1f').collect();
+    if fields.len() < 10 {
+        return None;
+    }
+    let mut title = fields[8].to_string();
+    if title.chars().count() > HISTORY_MAX_TITLE_CHARS {
+        title = title.chars().take(HISTORY_MAX_TITLE_CHARS).collect();
+        title.push('\u{2026}');
+        *truncated = true;
+    }
+    let mut message = fields[9].trim().to_string();
+    if message.chars().count() > HISTORY_MAX_MESSAGE_CHARS {
+        message = message.chars().take(HISTORY_MAX_MESSAGE_CHARS).collect();
+        message.push('\u{2026}');
+        *truncated = true;
+    }
+    Some(FileHistoryEntry {
+        hash: fields[0].to_string(),
+        short_hash: fields[0].chars().take(7).collect(),
+        parents: fields[1]
+            .split_whitespace()
+            .map(ToString::to_string)
+            .collect(),
+        author: fields[2].to_string(),
+        email: fields[3].to_string(),
+        time: fields[4].to_string(),
+        committer: fields[5].to_string(),
+        committer_email: fields[6].to_string(),
+        commit_time: fields[7].to_string(),
+        title,
+        message,
+    })
+}
+
 fn parse_file_history_entries(output: &str) -> Vec<FileHistoryEntry> {
+    let mut truncated = false;
     output
         .split('\x1e')
-        .filter_map(|record| {
-            let metadata = record
-                .split_once('\x1d')
-                .map(|(metadata, _)| metadata)
-                .unwrap_or(record);
-            let fields: Vec<&str> = metadata.trim().split('\x1f').collect();
-            (fields.len() >= 10).then(|| FileHistoryEntry {
-                hash: fields[0].to_string(),
-                short_hash: fields[0].chars().take(7).collect(),
-                parents: fields[1]
-                    .split_whitespace()
-                    .map(ToString::to_string)
-                    .collect(),
-                author: fields[2].to_string(),
-                email: fields[3].to_string(),
-                time: fields[4].to_string(),
-                committer: fields[5].to_string(),
-                committer_email: fields[6].to_string(),
-                commit_time: fields[7].to_string(),
-                title: fields[8].to_string(),
-                message: fields[9].trim().to_string(),
-            })
-        })
+        .filter_map(|record| file_history_entry_from_record(record, &mut truncated))
         .collect()
 }
 
+/// 旧版单批文件历史（硬上限 200 条）。W3-3 起由
+/// `start_repository_file_history_stream` + `load_repository_file_history_next_page`
+/// 取代（无硬上限、可续取、可取消）；保留仅供尚未接线的旧命令注册过渡，
+/// 接线完成后应连同 commands.rs/lib.rs 的注册一起删除。
 pub fn load_file_history(
     repository_path: &str,
     file_path: &str,
@@ -7404,5 +7952,569 @@ mod tests {
             remote_head.trim(),
             "remote must keep the collaborator commit after a refused forced push"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // W3-3 流式历史：游标分页不重不漏 / 并发新提交下稳定 / 跨页 lane 一致 /
+    // 取消不留僵尸 / 文件与行历史去硬上限 / 截断显式标记
+    // ---------------------------------------------------------------------
+
+    fn stream_commit_file(path: &Path, name: &str, content: &str, message: &str) {
+        fs::write(path.join(name), content).expect("write tracked file");
+        git_output(path, &["add", "--", name]).expect("stage file");
+        git_output(path, &["commit", "-m", message]).expect("commit file");
+    }
+
+    fn current_branch(path: &Path) -> String {
+        git_output(path, &["branch", "--show-current"])
+            .expect("read branch")
+            .trim()
+            .to_string()
+    }
+
+    /// 多分支 + --no-ff 合并 + stash 的混合拓扑夹具（约 30+ 条提交）。
+    fn merge_heavy_repository() -> TestRepository {
+        let repository = test_repository();
+        let path = repository.0.as_path();
+        let base = current_branch(path);
+        for round in 0..5 {
+            stream_commit_file(path, "main.txt", &format!("main {round}\n"), &format!("主线第 {round} 步"));
+            let feature = format!("feature/{round}");
+            git_output(path, &["checkout", "-b", feature.as_str()]).expect("create feature branch");
+            stream_commit_file(path, "feature.txt", &format!("f{round} a\n"), &format!("{feature} 第一步"));
+            stream_commit_file(path, "feature.txt", &format!("f{round} b\n"), &format!("{feature} 第二步"));
+            git_output(path, &["checkout", base.as_str()]).expect("back to base branch");
+            git_output(path, &["merge", "--no-ff", "--no-edit", feature.as_str()])
+                .expect("merge feature branch");
+        }
+        // stash 提交：验证流式剪枝（index 辅助提交必须被剔除且 lane 只跟第一父）。
+        // 保留 refs/stash 引用本身——drop 会让 stash 提交脱离 --all，夹具就失去意义了。
+        fs::write(path.join("dirty.txt"), "dirty\n").expect("write dirty.txt");
+        git_output(path, &["add", "dirty.txt"]).expect("stage dirty.txt");
+        git_output(path, &["stash", "push", "-m", "草稿"]).expect("stash work in progress");
+        repository
+    }
+
+    fn drain_graph_stream(first: RepositoryHistoryPage) -> Vec<(String, usize)> {
+        let mut rows: Vec<(String, usize)> = first
+            .commits
+            .iter()
+            .map(|commit| (commit.full_hash.clone(), commit.lane))
+            .collect();
+        let mut page = first;
+        while page.has_more {
+            page = load_repository_history_next_page(&page.session_id, Some(7))
+                .expect("continue graph stream");
+            for commit in &page.commits {
+                rows.push((commit.full_hash.clone(), commit.lane));
+            }
+        }
+        rows
+    }
+
+    fn drain_file_stream(first: RepositoryHistoryPage) -> Vec<String> {
+        let mut hashes: Vec<String> =
+            first.entries.iter().map(|entry| entry.hash.clone()).collect();
+        let mut page = first;
+        while page.has_more {
+            page = load_repository_file_history_next_page(&page.session_id, Some(5))
+                .expect("continue file stream");
+            hashes.extend(page.entries.iter().map(|entry| entry.hash.clone()));
+        }
+        hashes
+    }
+
+    #[test]
+    fn history_stream_pages_cover_history_without_dupes_or_gaps() {
+        let repository = merge_heavy_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let first = start_repository_history_stream(&path, Some(7)).expect("start graph stream");
+        assert_eq!(first.kind, "graph");
+        assert_eq!(first.emitted, first.commits.len());
+        assert!(first.has_more, "fixture must be deeper than one page");
+        let streamed = drain_graph_stream(first);
+        // 基线：单次全量批读（窗口远大于夹具规模），序列必须完全一致。
+        let baseline = parse_commits(&repository.0, MAX_COMMIT_GRAPH_LIMIT);
+        let expected: Vec<String> = baseline
+            .iter()
+            .map(|commit| commit.full_hash.clone())
+            .collect();
+        let actual: Vec<String> = streamed.iter().map(|row| row.0.clone()).collect();
+        assert!(actual.len() >= 20, "fixture too small to prove paging: {actual:?}");
+        assert_eq!(actual, expected, "pages must reproduce the full log order exactly");
+        let unique: HashSet<&String> = actual.iter().collect();
+        assert_eq!(unique.len(), actual.len(), "no duplicated commit across pages");
+    }
+
+    #[test]
+    fn history_stream_lanes_match_the_full_history_lane_assignment() {
+        let repository = merge_heavy_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let first = start_repository_history_stream(&path, Some(3)).expect("start graph stream");
+        let streamed = drain_graph_stream(first);
+        let baseline = parse_commits(&repository.0, MAX_COMMIT_GRAPH_LIMIT);
+        let actual: Vec<(String, usize)> = streamed;
+        let expected: Vec<(String, usize)> = baseline
+            .iter()
+            .map(|commit| (commit.full_hash.clone(), commit.lane))
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "per-page streaming lanes must equal one-shot assign_lanes over the whole history"
+        );
+    }
+
+    #[test]
+    fn history_stream_cursor_is_stable_under_concurrent_new_commits() {
+        let repository = merge_heavy_repository();
+        let path_str = repository.0.to_string_lossy().to_string();
+        let page = start_repository_history_stream(&path_str, Some(4)).expect("start graph stream");
+        let head_snapshot: Vec<String> = page
+            .commits
+            .iter()
+            .map(|commit| commit.full_hash.clone())
+            .collect();
+        // 翻页期间并发写入新提交：进程快照已锁定引用，新提交不得插入已发行部分。
+        stream_commit_file(&repository.0, "late.txt", "late\n", "翻页期间的新提交");
+        let late_head = git_output(&repository.0, &["rev-parse", "HEAD"])
+            .expect("read late head")
+            .trim()
+            .to_string();
+        let all = drain_graph_stream(page);
+        let hashes: Vec<String> = all.iter().map(|row| row.0.clone()).collect();
+        assert!(!hashes.contains(&late_head), "new commits must not leak into the snapshot");
+        assert_eq!(&hashes[..4], head_snapshot.as_slice(), "already-emitted prefix must stay identical");
+        let unique: HashSet<&String> = hashes.iter().collect();
+        assert_eq!(unique.len(), hashes.len());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_stream_cancel_kills_and_reaps_the_git_child_process() {
+        let repository = merge_heavy_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let page = start_repository_history_stream(&path, Some(1)).expect("start graph stream");
+        let session_id = page.session_id.clone();
+        let pid = {
+            let registry = history_streams().lock().expect("registry lock");
+            registry.get(&session_id).expect("session present").child.id()
+        };
+        assert!(cancel_repository_history_stream(&session_id));
+        // kill -0 成功意味着进程仍存在（含僵尸态）；必须已被 wait 回收。
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        assert!(!alive, "cancelled stream must not leave a running or zombie git process");
+        assert!(!cancel_repository_history_stream(&session_id), "second cancel is a no-op");
+        assert!(
+            load_repository_history_next_page(&session_id, None).is_err(),
+            "reading a cancelled session must fail explicitly"
+        );
+    }
+
+    #[test]
+    fn starting_a_new_stream_replaces_the_previous_session_for_the_same_repository() {
+        let repository = merge_heavy_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let old = start_repository_history_stream(&path, Some(2)).expect("first stream");
+        let new = start_repository_history_stream(&path, Some(2)).expect("second stream");
+        assert_ne!(old.session_id, new.session_id);
+        assert!(
+            load_repository_history_next_page(&old.session_id, None).is_err(),
+            "superseded session must be gone"
+        );
+        assert!(!cancel_repository_history_stream(&old.session_id));
+        assert!(cancel_repository_history_stream(&new.session_id));
+    }
+
+    #[test]
+    fn cancel_repository_history_stops_graph_and_file_streams_together() {
+        let repository = merge_heavy_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let graph = start_repository_history_stream(&path, Some(2)).expect("graph stream");
+        let file =
+            start_repository_file_history_stream(&path, "main.txt", Some(2)).expect("file stream");
+        assert_eq!(graph.has_more, true);
+        let cancelled = cancel_repository_history(&path);
+        assert!(cancelled >= 2, "both sessions must be cancelled, got {cancelled}");
+        assert!(load_repository_history_next_page(&graph.session_id, None).is_err());
+        assert!(load_repository_file_history_next_page(&file.session_id, None).is_err());
+    }
+
+    #[test]
+    fn file_history_stream_pages_through_followed_renames_without_limits() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        for index in 0..12 {
+            stream_commit_file(
+                &repository.0,
+                "old-name.txt",
+                &format!("before rename {index}\n"),
+                &format!("重命名前 {index}"),
+            );
+        }
+        git_output(&repository.0, &["mv", "old-name.txt", "new-name.txt"]).expect("git mv");
+        git_output(&repository.0, &["commit", "-m", "重命名文件"]).expect("commit rename");
+        for index in 0..12 {
+            stream_commit_file(
+                &repository.0,
+                "new-name.txt",
+                &format!("after rename {index}\n"),
+                &format!("重命名后 {index}"),
+            );
+        }
+        let first =
+            start_repository_file_history_stream(&path, "new-name.txt", Some(5)).expect("file stream");
+        assert_eq!(first.kind, "file");
+        let hashes = drain_file_stream(first);
+        // 去硬上限契约：全量覆盖、无重复、跨重命名（--follow 语义保留）。
+        let expected: Vec<String> = git_output(
+            &repository.0,
+            &[
+                "-c", "core.quotepath=false", "log", "--all", "--date-order", "--follow",
+                "--format=%H", "--", "new-name.txt",
+            ],
+        )
+        .expect("baseline follow log")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(hashes, expected, "file history pages must equal the full --follow log");
+        assert_eq!(hashes.len(), 25, "25 commits touch this file across the rename");
+        let unique: HashSet<&String> = hashes.iter().collect();
+        assert_eq!(unique.len(), hashes.len());
+        let mut probe =
+            start_repository_file_history_stream(&path, "new-name.txt", Some(5)).expect("probe");
+        let mut titles: Vec<String> =
+            probe.entries.iter().map(|entry| entry.title.clone()).collect();
+        while probe.has_more {
+            probe = load_repository_file_history_next_page(&probe.session_id, Some(5)).expect("cont");
+            titles.extend(probe.entries.iter().map(|entry| entry.title.clone()));
+        }
+        assert!(titles.iter().any(|title| title.contains("重命名前 11")));
+        assert!(titles.iter().any(|title| title.contains("重命名后 0")));
+    }
+
+    #[test]
+    fn line_history_stream_pages_beyond_the_old_hard_limit() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        fs::write(repository.0.join("trace.txt"), "v0\nsecond\n").expect("write trace.txt");
+        git_output(&repository.0, &["add", "trace.txt"]).expect("stage");
+        git_output(&repository.0, &["commit", "-m", "引入 trace.txt"]).expect("commit");
+        for index in 1..=20 {
+            fs::write(repository.0.join("trace.txt"), format!("v{index}\nsecond\n")).expect("edit line 1");
+            git_output(&repository.0, &["commit", "-am", &format!("修改第 1 行 {index}")]).expect("commit edit");
+        }
+        let mut page =
+            start_repository_line_history_stream(&path, "trace.txt", 1, None, Some(6)).expect("line stream");
+        assert_eq!(page.kind, "line");
+        let mut hashes = page.entries.iter().map(|entry| entry.hash.clone()).collect::<Vec<_>>();
+        let mut rounds = 1;
+        while page.has_more {
+            page = load_repository_line_history_next_page(&page.session_id, Some(6)).expect("cont");
+            hashes.extend(page.entries.iter().map(|entry| entry.hash.clone()));
+            rounds += 1;
+        }
+        assert!(rounds >= 4, "21+ line-history commits must span at least 4 pages of 6");
+        let unique: HashSet<&String> = hashes.iter().collect();
+        assert_eq!(unique.len(), hashes.len(), "line history pages must not repeat commits");
+        assert!(hashes.len() >= 20, "expected >=20 commits touching line 1, got {}", hashes.len());
+    }
+
+    #[test]
+    fn history_page_marks_oversized_messages_as_truncated() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let huge = "长正文测试。".repeat(2_000); // 12000 字符 > 4000 预算
+        fs::write(repository.0.join("MSG.txt"), &huge).expect("write message file");
+        git_output(&repository.0, &["commit", "--allow-empty", "-F", "MSG.txt"]).expect("huge commit");
+        let page = start_repository_history_stream(&path, Some(50)).expect("graph stream");
+        assert!(page.truncated, "oversized body must be flagged explicitly");
+        assert!(page.notice.as_deref().unwrap_or_default().contains("截断"));
+        let longest = page
+            .commits
+            .iter()
+            .map(|commit| commit.message.chars().count())
+            .max()
+            .unwrap_or_default();
+        assert!(longest <= HISTORY_MAX_MESSAGE_CHARS + 1, "message must be capped, got {longest}");
+    }
+
+    #[test]
+    fn history_byte_budget_defers_records_instead_of_dropping_them() {
+        let repository = test_repository();
+        let path = repository.0.to_string_lossy().to_string();
+        let fat = "字节预算测试".repeat(1_500); // 每条 raw 记录 ~27KB，远超单页预算均摊
+        for index in 0..150 {
+            // -F 与 -m 互斥：标题写进消息文件首行，保证每条提交可区分。
+            fs::write(repository.0.join("FAT.txt"), format!("肥记录 {index}\n\n{fat}\n"))
+                .expect("write fat body");
+            git_output(&repository.0, &["commit", "--allow-empty", "-F", "FAT.txt"])
+                .expect("fat commit");
+        }
+        let mut page = start_repository_history_stream(&path, Some(2_000)).expect("big first page");
+        let mut total = page.commits.len();
+        assert!(
+            total < 150,
+            "byte budget must cap the response below the full 151 commits, got {total}"
+        );
+        assert!(page.has_more, "budget stop must report continuation, not end");
+        while page.has_more {
+            page = load_repository_history_next_page(&page.session_id, Some(2_000)).expect("cont");
+            total += page.commits.len();
+        }
+        assert_eq!(total, 151, "every commit must arrive eventually: nothing dropped by budget");
+    }
+
+    // ---------------------------------------------------------------------
+    // W3-3 大仓库基准（#[ignore]：手动 `cargo test --release -- --ignored
+    // --nocapture` 运行，用 git fast-import 现造上万提交临时仓库，出真实数字）
+    // ---------------------------------------------------------------------
+
+    fn commit_payload_bytes(commits: &[RepositoryCommit]) -> usize {
+        commits.iter().map(|commit| {
+            commit.full_hash.len() + commit.title.len() + commit.message.len()
+                + commit.author.len() + commit.email.len() + commit.committer.len()
+                + commit.committer_email.len() + commit.time.len() + commit.author_time.len()
+                + commit.commit_time.len() + commit.avatar.len() + commit.color.len()
+                + commit.branches.iter().map(String::len).sum::<usize>()
+                + commit.parents.iter().map(String::len).sum::<usize>()
+        }).sum()
+    }
+
+    fn entry_payload_bytes(entries: &[FileHistoryEntry]) -> usize {
+        entries.iter().map(|entry| {
+            entry.hash.len() + entry.title.len() + entry.message.len() + entry.author.len()
+                + entry.email.len() + entry.committer.len() + entry.committer_email.len()
+                + entry.time.len() + entry.commit_time.len()
+                + entry.parents.iter().map(String::len).sum::<usize>()
+        }).sum()
+    }
+
+    /// fast-import 的 `data` 语法：`data <字节数> LF <原文> LF`（原文不带尾换行）。
+    fn fi_data(writer: &mut impl Write, text: &str) {
+        writeln!(writer, "data {}\n{}", text.len(), text).unwrap();
+    }
+
+    fn fi_blob(writer: &mut impl Write, mark_no: usize, text: &str) {
+        writeln!(writer, "blob\nmark :{mark_no}").unwrap();
+        // blob 记录在 data 内容后直接结束（不留空行）；commit 记录才以空行收尾。
+        fi_data(writer, text);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fi_commit(
+        writer: &mut impl Write,
+        branch: &str,
+        mark_no: usize,
+        message: &str,
+        from: Option<usize>,
+        merge: Option<usize>,
+        file_mark: usize,
+        file_path: &str,
+    ) {
+        writeln!(writer, "commit {branch}\nmark :{mark_no}").unwrap();
+        writeln!(writer, "committer Benchmark Bot <bench@example.com> 1760000000 +0800").unwrap();
+        fi_data(writer, message);
+        if let Some(parent) = from {
+            writeln!(writer, "from :{parent}").unwrap();
+        }
+        if let Some(other) = merge {
+            writeln!(writer, "merge :{other}").unwrap();
+        }
+        writeln!(writer, "M 100644 :{file_mark} {file_path}\n").unwrap();
+    }
+
+    /// `git fast-import` 生成线性主干 + 每 100 提交一次 feature 分支合并的夹具；
+    /// 每个主干提交都改 f.txt，文件历史与提交数同规模，直接压测分页链路。
+    fn fast_import_repository(path: &Path, count: usize) {
+        let mut command = Command::new("git");
+        command.arg("-C").arg(path).args(["fast-import", "--quiet"]);
+        command.stdin(Stdio::piped());
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        let mut child = command.spawn().expect("spawn git fast-import");
+        {
+            use std::io::BufWriter;
+            let mut writer = BufWriter::new(child.stdin.take().expect("fast-import stdin"));
+            let mut mark: usize = 0;
+            let mut alloc = || {
+                mark += 1;
+                mark
+            };
+            let mut main_tip: Option<usize> = None;
+            for index in 0..count {
+                let blob = alloc();
+                let commit = alloc();
+                fi_blob(&mut writer, blob, &format!("v{index} benchmark payload"));
+                if index % 100 == 99 && index + 1 < count {
+                    let feature_blob = alloc();
+                    let feature_commit = alloc();
+                    fi_blob(&mut writer, feature_blob, "feature payload");
+                    // 每段 feature 从当时主干顶端重新开线；reset 记录以 `from` 行 +
+                    // 恰好一个空行收尾（多一个空行会被当成空命令而崩溃）。
+                    writeln!(writer, "reset refs/heads/feature\nfrom :{}\n", main_tip.unwrap_or(0)).unwrap();
+                    fi_commit(
+                        &mut writer,
+                        "refs/heads/feature",
+                        feature_commit,
+                        &format!("feature {index:06}"),
+                        main_tip,
+                        None,
+                        feature_blob,
+                        "g.txt",
+                    );
+                    fi_commit(
+                        &mut writer,
+                        "refs/heads/main",
+                        commit,
+                        &format!("merge feature at {index:06}"),
+                        main_tip,
+                        Some(feature_commit),
+                        blob,
+                        "f.txt",
+                    );
+                } else {
+                    fi_commit(
+                        &mut writer,
+                        "refs/heads/main",
+                        commit,
+                        &format!("c{index:06} 常规提交 benchmark"),
+                        main_tip,
+                        None,
+                        blob,
+                        "f.txt",
+                    );
+                }
+                main_tip = Some(commit);
+            }
+            writer.flush().unwrap();
+        }
+        let status = child.wait().expect("wait fast-import");
+        assert!(status.success(), "git fast-import failed");
+    }
+
+    #[test]
+    #[ignore = "大仓库基准：cargo test --release -- --ignored --nocapture"]
+    fn large_repository_history_stream_benchmark() {
+        const COUNT: usize = 20_000;
+        let base = unique_scratch_dir("bench");
+        let repo = base.join("repository");
+        fs::create_dir_all(&repo).expect("create bench repo dir");
+        git_output(&repo, &["init"]).expect("git init");
+        git_output(&repo, &["config", "user.name", "bench"]).expect("config name");
+        git_output(&repo, &["config", "user.email", "bench@example.com"]).expect("config email");
+
+        let build_start = std::time::Instant::now();
+        fast_import_repository(&repo, COUNT);
+        let total_head = git_output(&repo, &["rev-list", "--count", "--all"]).expect("count commits");
+        let total: usize = total_head.trim().parse().expect("count");
+        println!("[bench] fixture: {total} commits built in {:?}", build_start.elapsed());
+
+        // ---- 改造前：单次批读模型（旧首次可读 = 2000 窗口；旧最深 = 20000） ----
+        let old_first_start = std::time::Instant::now();
+        let old_window = parse_commits(&repo, COMMIT_GRAPH_LIMIT);
+        let old_first = old_first_start.elapsed();
+        let old_first_bytes = commit_payload_bytes(&old_window);
+        let old_deep_start = std::time::Instant::now();
+        let old_deep = parse_commits(&repo, MAX_COMMIT_GRAPH_LIMIT);
+        let old_deep_elapsed = old_deep_start.elapsed();
+        let old_deep_bytes = commit_payload_bytes(&old_deep);
+        println!(
+            "[bench] OLD  single-read first window: {} commits in {old_first:?}, payload {old_first_bytes} bytes",
+            old_window.len()
+        );
+        println!(
+            "[bench] OLD  deepest ×5 expansion (20000 cap): {} commits in {old_deep_elapsed:?}, payload {old_deep_bytes} bytes — 超过 20000 条的历史永远读不到",
+            old_deep.len()
+        );
+
+        // ---- 改造后：流式分页 ----
+        let stream_start = std::time::Instant::now();
+        let mut page = start_repository_history_stream(&repo.to_string_lossy(), Some(500)).expect("bench stream");
+        let new_first = stream_start.elapsed();
+        let first_page_count = page.commits.len();
+        let first_page_payload = commit_payload_bytes(&page.commits);
+        let mut total_count = page.commits.len();
+        let mut max_page_bytes = page.page_bytes;
+        let mut max_payload = first_page_payload;
+        let mut pages = 1usize;
+        let drain_start = std::time::Instant::now();
+        while page.has_more {
+            page = load_repository_history_next_page(&page.session_id, Some(500)).expect("bench page");
+            total_count += page.commits.len();
+            max_page_bytes = max_page_bytes.max(page.page_bytes);
+            max_payload = max_payload.max(commit_payload_bytes(&page.commits));
+            pages += 1;
+        }
+        let drain_elapsed = drain_start.elapsed();
+        println!(
+            "[bench] NEW  first page: {first_page_count} commits in {new_first:?}, payload {first_page_payload} bytes; all-page peak raw {max_page_bytes} / payload {max_payload} bytes"
+        );
+        println!(
+            "[bench] NEW  full drain: {total_count} commits via {pages} pages in {drain_elapsed:?}; per-page avg {:?}",
+            drain_elapsed / pages as u32
+        );
+        assert_eq!(total_count, total, "stream must cover the whole history");
+        // 时钟断言不放进契约（机器噪声大）；这里断言确定性更强的载荷边界：
+        // 有界首页必须显著小于旧 2000 条批读窗口，而全量覆盖不再有 20000 天花板。
+        assert!(
+            first_page_payload < old_first_bytes,
+            "bounded first page ({first_page_payload}B) should be smaller than old 2000-window ({old_first_bytes}B)"
+        );
+        assert!(old_deep.len() < total, "old model hard-caps depth at MAX_COMMIT_GRAPH_LIMIT");
+
+        // ---- 规模线性度：半量仓库的首屏耗时对比（首屏只付一次启动成本） ----
+        let half = base.join("half");
+        fs::create_dir_all(&half).expect("create half dir");
+        git_output(&half, &["init"]).expect("git init half");
+        git_output(&half, &["config", "user.name", "bench"]).expect("config");
+        git_output(&half, &["config", "user.email", "bench@example.com"]).expect("config");
+        fast_import_repository(&half, COUNT / 4);
+        let old_small_start = std::time::Instant::now();
+        let old_small = parse_commits(&half, COMMIT_GRAPH_LIMIT);
+        let old_small_elapsed = old_small_start.elapsed();
+        let new_small_start = std::time::Instant::now();
+        let new_small = start_repository_history_stream(&half.to_string_lossy(), Some(500)).expect("half stream");
+        let new_small_elapsed = new_small_start.elapsed();
+        println!(
+            "[bench] SCALE 2k-repo OLD window({} commits): {old_small_elapsed:?}; NEW first page({} commits): {new_small_elapsed:?} — 首屏耗时不随仓库规模恶化",
+            old_small.len(), new_small.commits.len()
+        );
+        cancel_repository_history_stream(&new_small.session_id);
+        cancel_repository_history_stream(&page.session_id);
+
+        // ---- 文件历史：旧 200 硬上限 vs 流式全覆盖 ----
+        let old_file_start = std::time::Instant::now();
+        let old_file = load_file_history(&half.to_string_lossy(), "f.txt").expect("old file history");
+        let old_file_elapsed = old_file_start.elapsed();
+        let file_start = std::time::Instant::now();
+        let mut file_page =
+            start_repository_file_history_stream(&repo.to_string_lossy(), "f.txt", Some(500)).expect("file stream");
+        let file_first = file_start.elapsed();
+        let mut file_count = file_page.entries.len();
+        let mut file_bytes = entry_payload_bytes(&file_page.entries);
+        while file_page.has_more {
+            file_page = load_repository_file_history_next_page(&file_page.session_id, Some(500)).expect("file page");
+            file_count += file_page.entries.len();
+            file_bytes = file_bytes.max(entry_payload_bytes(&file_page.entries));
+        }
+        let expected_file = git_output(&repo, &["log", "--all", "--follow", "--format=%H", "--", "f.txt"])
+            .expect("baseline file log")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        println!(
+            "[bench] FILE baseline full log: {expected_file} entries; NEW stream drained {file_count} in pages of 500 (first page {file_first:?}, peak payload {file_bytes} bytes); OLD model caps at {} with a hard 200 limit in {old_file_elapsed:?}",
+            old_file.len()
+        );
+        assert_eq!(file_count, expected_file, "file history stream must equal the full --follow log");
+        assert_eq!(old_file.len(), 200, "old model is hard-capped at 200");
+        let _ = fs::remove_dir_all(&base);
     }
 }
