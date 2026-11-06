@@ -114,7 +114,9 @@ describe('semantic style architecture', () => {
     expect(features).toContain('flex-direction: column; align-items: center; overflow: hidden;')
     expect(features).toContain('.diff-block-actions > button { position: static; width: 24px; height: 20px;')
     expect(diffPanel).toContain('className={`split-code-side')
-    expect(diffPanel).toContain('style={{ height: virtualRowHeight }}')
+    // Rows are sized from the measured wrap heights, including split action rows.
+    expect(diffPanel).toContain('style={{ height: heights[index] }}')
+    expect(diffPanel).toContain("split-action-row\" style={{ height: heights[index] }}")
     expect(components).toContain('.line-action-add:hover, .line-action-add:focus-visible')
     expect(components).toContain('.line-action-del:hover, .line-action-del:focus-visible')
   })
