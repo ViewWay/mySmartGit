@@ -674,3 +674,97 @@ export type SubmoduleOperationReport = {
   snapshot?: RepositorySnapshot | null
 }
 
+// ---------------------------------------------------------------------------
+// W3-1 交互式历史编辑（git_history_edit.rs 的 TS 镜像，仅追加）
+// ---------------------------------------------------------------------------
+
+/** 交互式序列编辑的动作取值域；与后端 ALL_ACTIONS 常量一一对应。 */
+export type HistoryEditActionKind = 'pick' | 'reword' | 'drop' | 'fixup' | 'squash' | 'edit'
+
+/** 单条序列动作输入：一条对应 `基点..HEAD` 内的一个提交，数组顺序即新历史顺序。 */
+export type HistoryEditActionInput = {
+  /** 提交完整哈希（40 位十六进制），集合内必须恰好出现一次。 */
+  hash: string
+  action: HistoryEditActionKind
+  /** reword 必填；squash 可选（缺省自动生成合并消息）；其余动作忽略。 */
+  message?: string | null
+}
+
+/** 序列编辑器单行的提交元数据。 */
+export type HistoryEditEntry = {
+  hash: string
+  shortHash: string
+  title: string
+  /** 完整提交信息，供 reword 预填。 */
+  message: string
+  author: string
+  email: string
+  commitTime: string
+  parents: string[]
+  isMerge: boolean
+  /** 提交树对象，reword 前后必须一致。 */
+  tree: string
+}
+
+/** `load_history_edit_sequence` 的结果：可编辑提交序列（先旧后新）。 */
+export type HistoryEditSequence = {
+  repositoryPath: string
+  branch: string
+  baseRef: string
+  baseHash: string
+  head: string
+  entries: HistoryEditEntry[]
+  warnings: string[]
+}
+
+/** 应用前影响预览：重写规模、掉队分支/标签、强推风险。 */
+export type HistoryEditImpact = {
+  branch: string
+  baseHash: string
+  headBefore: string
+  total: number
+  dropped: number
+  folded: number
+  reworded: number
+  rewrittenUpper: number
+  expectedResultCount: number
+  branchesLeftBehind: string[]
+  tagsOnRewritten: string[]
+  upstream?: string | null
+  published: boolean
+  dangerous: boolean
+  warnings: string[]
+}
+
+/** 序列应用报告；status 机器枚举。 */
+export type HistoryEditReport = {
+  status: 'completed' | 'stopped'
+  branch: string
+  baseHash: string
+  headBefore: string
+  headAfter: string
+  resultCount: number
+  recovery?: string | null
+  notice?: string | null
+}
+
+/** 批量 cherry-pick 单条结果；status 机器枚举（空提交为结构化跳过）。 */
+export type CherryPickOutcome = {
+  hash: string
+  shortHash: string
+  title: string
+  status: 'applied' | 'skippedEmpty' | 'conflict' | 'failed'
+  detail?: string | null
+}
+
+/** 批量 cherry-pick 报告：先旧后新应用，冲突即停并给出恢复指引。 */
+export type CherryPickBatchReport = {
+  requested: number
+  applied: number
+  skippedEmpty: number
+  outcomes: CherryPickOutcome[]
+  stoppedAt?: string | null
+  recovery?: string | null
+  headBefore: string
+  headAfter: string
+}

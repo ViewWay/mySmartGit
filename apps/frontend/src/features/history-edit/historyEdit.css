@@ -1,0 +1,43 @@
+/* W3-1 交互式历史编辑样式（仅作用于 features/history-edit，不改动全局样式表）。 */
+
+.history-edit-dialog { width: min(760px, 92vw); max-height: 86vh; overflow: auto; display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.history-edit-heading { display: flex; align-items: flex-start; gap: 10px; }
+.history-edit-heading h2 { margin: 0; font-size: 14px; }
+.history-edit-heading p { margin: 2px 0 0; color: var(--faint); font-size: 11px; }
+.history-edit-heading > div { flex: 1; min-width: 0; }
+.history-edit-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--accent); background: var(--accent-dim); }
+
+.history-edit-error { margin: 0; padding: 7px 9px; border-radius: 8px; color: var(--danger); background: var(--danger-dim, rgba(220, 80, 80, 0.12)); font-size: 11px; white-space: pre-wrap; }
+.history-edit-warning { margin: 0; color: var(--muted); font-size: 11px; }
+.history-edit-notice { margin: 0; color: var(--faint); font-size: 11px; }
+
+.history-edit-rows { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.history-edit-rows li { display: grid; gap: 5px; padding: 7px 8px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel-2); }
+.history-edit-rows li.dropped { opacity: 0.55; }
+.history-edit-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.history-edit-row-tools { display: flex; gap: 2px; }
+.history-edit-row-hash { color: var(--accent); font-size: 11px; }
+.history-edit-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.history-edit-row-main select { height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font-size: 11px; }
+.history-edit-row-message { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; font-size: 11px; resize: vertical; }
+
+.history-edit-errors { margin: 0; padding-left: 18px; color: var(--danger); font-size: 11px; display: grid; gap: 3px; }
+.history-edit-summary { margin: 0; color: var(--muted); font-size: 11px; }
+
+.history-edit-todo summary { color: var(--faint); font-size: 11px; cursor: pointer; }
+.history-edit-todo pre { margin: 6px 0 0; padding: 8px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 10px; overflow: auto; }
+
+.history-edit-impact { display: grid; gap: 4px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; }
+.history-edit-impact.dangerous { border-color: var(--danger); }
+.history-edit-impact h3 { margin: 0; font-size: 12px; }
+.history-edit-impact p { margin: 0; color: var(--muted); }
+.history-edit-confirm { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--danger); font-size: 11px; cursor: pointer; }
+.history-edit-confirm span { display: inline-flex; align-items: center; gap: 4px; }
+
+.history-edit-report { display: grid; gap: 5px; padding: 9px 10px; border-radius: 8px; font-size: 11px; border: 1px solid var(--line); }
+.history-edit-report.completed { border-color: var(--accent); }
+.history-edit-report.stopped { border-color: var(--danger); }
+.history-edit-report p { margin: 0; }
+.history-edit-report pre { margin: 0; padding: 7px; border-radius: 6px; background: var(--panel-2); color: var(--muted); font-size: 10px; white-space: pre-wrap; }
+
+.history-edit-footer { display: flex; justify-content: flex-end; gap: 8px; }

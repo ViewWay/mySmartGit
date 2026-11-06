@@ -898,3 +898,137 @@ pub struct RepositoryTextFile {
     pub binary: bool,
     pub notice: Option<String>,
 }
+
+// ---------------------------------------------------------------------------
+// W3-1 交互式历史编辑（apps/desktop/src/git_history_edit.rs）
+//
+// 与 W2-9 的约定相同：输入结构需要反序列化，这里显式写全路径 `serde::Deserialize`，
+// 不修改文件顶部的 `use` 行，避免与其他并行轨道产生合并冲突。
+// 语义约定：
+// - `action` 是用户选择的序列动作，取值域 "pick" | "reword" | "drop" | "fixup" | "squash" | "edit"；
+// - `message` 仅对 reword（必填）与 squash（可选，缺省自动生成合并消息）有意义；
+// - 所有 status/kind 字段都是机器可判定的枚举字符串，前端绝不按文案匹配分支。
+// ---------------------------------------------------------------------------
+
+/// 交互式序列编辑的单条动作输入（一条 = 一个 `base..HEAD` 内的提交）。
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEditActionInput {
+    /// 提交完整哈希（40 位十六进制），必须覆盖序列中的每个提交且恰好一次。
+    pub hash: String,
+    /// 动作：pick / reword / drop / fixup / squash / edit。
+    pub action: String,
+    /// reword 的新消息（必填）；squash 的合并后消息（可选）。其余动作忽略。
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// 序列编辑器里的单行：提交元数据 + 缺省动作建议。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEditEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub title: String,
+    /// 完整提交信息（%B），供 reword 预填。
+    pub message: String,
+    pub author: String,
+    pub email: String,
+    pub commit_time: String,
+    pub parents: Vec<String>,
+    pub is_merge: bool,
+    /// 提交树对象（w042111），reword 前后必须一致。
+    pub tree: String,
+}
+
+/// `load_history_edit_sequence` 的结果：onto..HEAD 的可编辑提交序列（先旧后新）。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEditSequence {
+    pub repository_path: String,
+    /// 当前分支短名（detached 时该序列不可编辑，预校验会拒绝）。
+    pub branch: String,
+    pub base_ref: String,
+    pub base_hash: String,
+    pub head: String,
+    pub entries: Vec<HistoryEditEntry>,
+    /// 只读提示（如范围内存在合并提交，序列编辑会被拒绝）。
+    pub warnings: Vec<String>,
+}
+
+/// 应用序列前的影响预览：谁会重写、谁会掉队、是否危险。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEditImpact {
+    pub branch: String,
+    pub base_hash: String,
+    pub head_before: String,
+    /// 范围内提交总数。
+    pub total: usize,
+    /// drop 掉的提交数。
+    pub dropped: usize,
+    /// fixup + squash 折叠掉的提交数（结果并入前一条）。
+    pub folded: usize,
+    /// reword 条数。
+    pub reworded: usize,
+    /// 预期重写（哈希改变）的提交数上界：kept + folded。
+    pub rewritten_upper: usize,
+    /// 预期结果历史相对 base 的提交数。
+    pub expected_result_count: usize,
+    /// 指向范围内提交的其它本地分支：rebase 只移动当前分支，这些会掉队。
+    pub branches_left_behind: Vec<String>,
+    /// 指向范围内提交的标签：不会随重写移动，需人工处置。
+    pub tags_on_rewritten: Vec<String>,
+    /// 当前分支的上游（存在则重写后需要强制推送）。
+    pub upstream: Option<String>,
+    /// 上游已包含范围内提交：重写属于公共历史改写，必须向用户显式确认。
+    pub published: bool,
+    /// drop/折叠/公共历史任一为 true：前端要求危险确认。
+    pub dangerous: bool,
+    pub warnings: Vec<String>,
+}
+
+/// 序列应用的执行报告。status 为机器枚举："completed" | "stopped"。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEditReport {
+    pub status: String,
+    pub branch: String,
+    pub base_hash: String,
+    pub head_before: String,
+    /// completed 时为新的 HEAD；stopped 时为变基过程中的 HEAD。
+    pub head_after: String,
+    /// 结果历史相对 base 的提交数。
+    pub result_count: usize,
+    /// stopped（冲突或 edit 暂停）时的恢复指引；completed 时为空。
+    pub recovery: Option<String>,
+    pub notice: Option<String>,
+}
+
+/// 批量 cherry-pick 的单条结果。status："applied" | "skippedEmpty" | "failed"。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CherryPickOutcome {
+    pub hash: String,
+    pub short_hash: String,
+    pub title: String,
+    pub status: String,
+    pub detail: Option<String>,
+}
+
+/// 批量 cherry-pick 报告。空提交跳过走结构化判定（CHERRY_PICK_HEAD + 无未合并路径
+/// + diff --cached），绝不匹配 Git 的本地化错误文案。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CherryPickBatchReport {
+    pub requested: usize,
+    pub applied: usize,
+    pub skipped_empty: usize,
+    pub outcomes: Vec<CherryPickOutcome>,
+    /// 中途失败时停在哪个提交（其拣选状态保留给用户处置）。
+    pub stopped_at: Option<String>,
+    /// 失败时的恢复指引（continue / skip / abort 三条路）。
+    pub recovery: Option<String>,
+    pub head_before: String,
+    pub head_after: String,
+}
