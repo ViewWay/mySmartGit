@@ -1,7 +1,8 @@
 import { useCallback } from 'react'
+import { translate, getLanguage } from '../../i18n'
 import type { ConfirmDialogOptions } from '../../components/ConfirmDialog'
 import type { RemoteOperationReport, RepositorySnapshot } from '../../repository'
-import { CANCELLED_NOTICE, confirmationMessage, isSilentNoop, needsConfirmation } from './remotePanelState'
+import { cancelledNotice, confirmationMessage, isSilentNoop, needsConfirmation } from './remotePanelState'
 
 export type ExecuteReportedActionResult = {
   /** 最终报告；用户在确认框取消时为 null（仓库一定没被改动）。 */
@@ -18,6 +19,8 @@ export type ExecuteReportedActionResult = {
  * 4. 取消时绝不发起第二次调用，并播报「仓库未发生改动」。
  * `applySnapshot` / `notices` 让调用方决定如何落地副作用。
  */
+const zhT = (key: string, params?: Record<string, string | number>) => translate(getLanguage(), key, params)
+
 export async function executeReportedAction({
   action,
   confirm,
@@ -45,12 +48,12 @@ export async function executeReportedAction({
   if (needsConfirmation(preview)) {
     const accepted = await confirm({
       title: `确认${title}`,
-      message: confirmationMessage(preview),
-      confirmLabel: '确认执行',
+      message: confirmationMessage(preview, zhT),
+      confirmLabel: zhT('repository.report.confirm'),
       variant: 'danger',
     })
     if (!accepted) {
-      notices.push(CANCELLED_NOTICE)
+      notices.push(cancelledNotice(zhT))
       return { report: null, cancelled: true, notices }
     }
     return finish(await action(true))

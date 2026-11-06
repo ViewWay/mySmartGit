@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronRight, Cloud, Plus, RefreshCw, Tag } from 'lucide-react'
 import {
@@ -34,6 +35,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
   onSnapshot: (snapshot: RepositorySnapshot) => void
   onNotice: (message: string) => void
 }) {
+  const { t } = useI18n()
   const [tags, setTags] = useState<RepositoryTagDetail[]>([])
   const [remotes, setRemotes] = useState<RepositoryRemoteDetail[]>([])
   const [targets, setTargets] = useState<Record<string, string>>({})
@@ -55,7 +57,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
       ])
       setTags(details)
       setRemotes(remoteList)
-      const notice = remoteList.map(credentialNotice).find(Boolean)
+      const notice = remoteList.map((remote) => credentialNotice(remote, t)).find(Boolean)
       if (notice) onNotice(notice)
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
@@ -78,7 +80,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
       (confirmFlag) => (payload.signed
         ? createRepositorySignedTag(repository.path, payload.tag, payload.commit, payload.message, payload.signingKey ?? null, payload.force, confirmFlag)
         : createRepositoryAnnotatedTag(repository.path, payload.tag, payload.commit, payload.message, payload.force, confirmFlag)),
-      '创建标签',
+      t('repository.tag.create'),
       `已创建标签：${payload.tag}`,
     )
     applyReport(report)
@@ -89,7 +91,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
   const push = async (tag: string) => {
     const remote = targets[tag] ?? defaultRemote
     if (!remote) {
-      onNotice('当前仓库没有可用远程，请先在「远程管理」添加远程')
+      onNotice(t('repository.tag.noRemoteForCreate'))
       return
     }
     setBusy(`push:${tag}`)
@@ -108,7 +110,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
     setBusy(`delete:${tag}`)
     applyReport(await run(
       (confirmFlag) => deleteRepositoryTag(repository.path, tag, confirmFlag),
-      '删除本地标签',
+      t('repository.tag.deleteLocalTitle'),
       `已删除本地标签：${tag}`,
     ))
     setBusy(null)
@@ -117,7 +119,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
   const removeRemote = async (tag: string) => {
     const remote = targets[tag] ?? defaultRemote
     if (!remote) {
-      onNotice('当前仓库没有可用远程，无法删除远端标签')
+      onNotice(t('repository.tag.noRemoteForDelete'))
       return
     }
     setBusy(`delete-remote:${tag}`)
@@ -133,39 +135,39 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
 
   return <section className="structure-panel workspace-page">
     <div className="workspace-page-heading">
-      <div><span className="eyebrow">仓库结构</span><h2>标签</h2><p>{`共 ${tags.length} 个标签。注释标签记录打标签人与说明，签名标签可用 GPG 校验。`}</p></div>
+      <div><span className="eyebrow">{t('repository.tree.title')}</span><h2>{t('nav.tags')}</h2><p>{`共 ${tags.length} 个标签。注释标签记录打标签人与说明，签名标签可用 GPG 校验。`}</p></div>
       <div className="structure-actions">
-        <Button variant="secondary" disabled={loading || busy !== null} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'spin' : ''}/>{loading ? '刷新中…' : '刷新'}</Button>
-        <Button variant="primary" className="structure-heading-action" onClick={() => setCreateOpen(true)}><Plus size={14}/>创建标签</Button>
+        <Button variant="secondary" disabled={loading || busy !== null} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'spin' : ''}/>{loading ? t('repository.tag.refreshing') : t('repository.tag.refresh')}</Button>
+        <Button variant="primary" className="structure-heading-action" onClick={() => setCreateOpen(true)}><Plus size={14}/>{t('repository.tag.create')}</Button>
       </div>
     </div>
     <div className="structure-list">
       {visible.map((tag) => {
-        const risk = tagRiskText(tag)
+        const risk = tagRiskText(tag, t)
         const remote = targets[tag.name] ?? defaultRemote
         return <div key={tag.name}>
           <button className="tag-row" onClick={() => onOpenTag(tag.name)} title={`定位到标签 ${tag.name} 指向的提交`}>
             <span className="structure-icon"><Tag size={15}/></span>
             <span>
               <strong>{tag.name}</strong>
-              <small>{`${tagKindLabel(tag.kind)}${tag.signed ? ' · 已签名' : ''} · 指向 ${tag.target || '—'} · ${tag.date || '无日期'}${tag.tagger ? ` · ${tag.tagger}` : ''}`}</small>
-              <code>{tag.subject || '（无说明）'}</code>
+              <small>{`${tagKindLabel(tag.kind, t)}${tag.signed ? t('repository.tag.signed') : ''} · 指向 ${tag.target || '—'} · ${tag.date || t('repository.tag.noDate')}${tag.tagger ? ` · ${tag.tagger}` : ''}`}</small>
+              <code>{tag.subject || t('repository.tag.noMessage')}</code>
             </span>
-            {tag.onBranch ? <i>在分支上</i> : <i className="warn">不在任何分支</i>}
+            {tag.onBranch ? <i>{t('repository.tag.onBranch')}</i> : <i className="warn">{t('repository.tag.notOnBranch')}</i>}
             <ChevronRight size={15}/>
           </button>
           <div className="structure-actions tag-row-actions">
             {risk && <span className="tag-row-risk">{risk}</span>}
-            {remoteNames.length > 0 && <CompactSelect className="tag-remote-select" value={remote} options={remoteNames.map((name) => ({ value: name, label: name }))} onChange={(value) => setTargets((current) => ({ ...current, [tag.name]: value }))} ariaLabel="选择标签操作的远程"/>}
-            <Button variant="secondary" disabled={busy !== null || !remoteNames.length} onClick={() => void push(tag.name)}><Cloud size={13}/>{busy === `push:${tag.name}` ? '推送中…' : '推送'}</Button>
-            <Button variant="danger" disabled={busy !== null || !remoteNames.length} onClick={() => void removeRemote(tag.name)}>删远端</Button>
-            <Button variant="danger" disabled={busy !== null} onClick={() => void removeLocal(tag.name)}>删本地</Button>
+            {remoteNames.length > 0 && <CompactSelect className="tag-remote-select" value={remote} options={remoteNames.map((name) => ({ value: name, label: name }))} onChange={(value) => setTargets((current) => ({ ...current, [tag.name]: value }))} ariaLabel={t('repository.tag.pickRemote')}/>}
+            <Button variant="secondary" disabled={busy !== null || !remoteNames.length} onClick={() => void push(tag.name)}><Cloud size={13}/>{busy === `push:${tag.name}` ? t('repository.tag.pushing') : t('repository.tag.push')}</Button>
+            <Button variant="danger" disabled={busy !== null || !remoteNames.length} onClick={() => void removeRemote(tag.name)}>{t('repository.tag.deleteRemoteShort')}</Button>
+            <Button variant="danger" disabled={busy !== null} onClick={() => void removeLocal(tag.name)}>{t('repository.tag.deleteLocalShort')}</Button>
           </div>
         </div>
       })}
-      {tags.length === 0 && !loading && <div className="workspace-hint"><Tag size={26}/><strong>没有标签</strong><span>用「创建标签」建立带说明的注释标签或签名标签。</span></div>}
-      {tags.length > 0 && visible.length === 0 && <div className="workspace-hint"><Tag size={26}/><strong>没有匹配的标签</strong><span>换个标签名或说明关键词试试。</span></div>}
-      {!remoteNames.length && tags.length > 0 && <div className="workspace-hint"><Cloud size={24}/><strong>没有远程仓库</strong><span>推送标签与删除远端标签需要先在「远程管理」里添加远程。</span></div>}
+      {tags.length === 0 && !loading && <div className="workspace-hint"><Tag size={26}/><strong>{t('repository.tag.none')}</strong><span>{t('repository.tag.emptyHint')}</span></div>}
+      {tags.length > 0 && visible.length === 0 && <div className="workspace-hint"><Tag size={26}/><strong>{t('repository.tag.noSearchMatch')}</strong><span>{t('repository.tag.noSearchMatchHint')}</span></div>}
+      {!remoteNames.length && tags.length > 0 && <div className="workspace-hint"><Cloud size={24}/><strong>{t('repository.tag.noRemote')}</strong><span>{t('repository.tag.remoteRequiredHint')}</span></div>}
     </div>
     {createOpen && <CreateTagDialog existingTags={tags.map((tag) => tag.name)} defaultCommit={repository.branch || 'HEAD'} busy={busy === 'create-tag'} onClose={() => setCreateOpen(false)} onSubmit={create}/>}
     {confirmDialog}

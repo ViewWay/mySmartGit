@@ -152,8 +152,8 @@ export function RemotePanel({ repository, onSnapshot, onNotice }: {
         <span className="structure-icon"><Cloud size={18}/></span>
         <h3>{remote.name}</h3>
         <dl>
-          <DetailField label={t('repository.remote.fetchUrls')}><code>{fetchUrlText(remote)}</code></DetailField>
-          <DetailField label={t('repository.remote.pushUrls')}><code>{pushUrlText(remote)}</code></DetailField>
+          <DetailField label={t('repository.remote.fetchUrls')}><code>{fetchUrlText(remote, t)}</code></DetailField>
+          <DetailField label={t('repository.remote.pushUrls')}><code>{pushUrlText(remote, t)}</code></DetailField>
           <DetailField label={t('repository.remote.fetchRefspec')}>{remote.fetchRefspecs.length ? <code>{remote.fetchRefspecs.join(' ')}</code> : t('repository.remote.fetchRefspecMissing')}</DetailField>
           <DetailField label={t('repository.remote.pushRefspec')}>{remote.pushRefspecs.length ? <code>{remote.pushRefspecs.join(' ')}</code> : t('repository.remote.pushRefspecDefault')}</DetailField>
           <DetailField label={t('repository.remote.remoteHead')}>{remote.headBranch ?? t('repository.remote.remoteHeadUnknown')}</DetailField>
