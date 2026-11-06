@@ -986,3 +986,69 @@ export type CredentialHelperReport = {
   configuredHelpers: string[]
   notice?: string | null
 }
+
+// ---------------------------------------------------------------------------
+// W4-1 GitHub / GitLab 托管 —— 与 git_hosting.rs 同名结构对齐
+//
+// 访问令牌只保存在后端 hosting.json（0600），设置对象只暴露 tokenConfigured。
+// 列表请求不做 N+1 检查请求，ciStatus 在列表中固定为 unknown；详情才汇总 CI。
+// ---------------------------------------------------------------------------
+
+export type HostingProvider = 'github' | 'gitlab'
+
+/** 汇总后的 CI 状态：success / failure / pending / unknown。 */
+export type HostingCiStatus = 'success' | 'failure' | 'pending' | 'unknown'
+
+/** 暴露给前端的托管设置；host 为 null 时使用提供商默认主机。 */
+export type HostingSettings = {
+  provider: HostingProvider
+  host: string | null
+  tokenConfigured: boolean
+}
+
+/** 从 origin 远端识别出的托管仓库。 */
+export type HostingRepository = {
+  provider: HostingProvider
+  host: string
+  /** GitHub 为 owner/repo，GitLab 为 group/sub/repo。 */
+  projectPath: string
+  webUrl: string
+}
+
+/** 列表与详情共用的 PR/MR 摘要。 */
+export type HostingPullRequest = {
+  number: number
+  title: string
+  author: string
+  state: string
+  draft: boolean
+  sourceBranch: string
+  targetBranch: string
+  webUrl: string
+  updatedAt: string
+  ciStatus: HostingCiStatus
+}
+
+/** 单条 CI 检查（GitHub check-run 或 GitLab 最近一条 pipeline）。 */
+export type HostingCheck = {
+  name: string
+  status: string
+  conclusion: string | null
+  webUrl: string | null
+}
+
+/** PR/MR 详情：正文、检查列表与可合并提示。 */
+export type HostingPullRequestDetail = HostingPullRequest & {
+  body: string | null
+  checks: HostingCheck[]
+  mergeable: boolean | null
+}
+
+/** 新建 PR/MR 的输入；GitLab 的 Draft 前缀由后端处理。 */
+export type CreatePullRequestInput = {
+  title: string
+  body: string
+  sourceBranch: string
+  targetBranch: string
+  draft: boolean
+}
