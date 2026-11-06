@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { Box, ChevronDown, ChevronRight, ExternalLink, FileText, Folder, Link2 } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -25,11 +26,12 @@ export type CommitTreeSummaryProps = {
 
 /** 概览条。partial 时 nodeCount 只是后端有界扫描的下界，文案必须说「≥」而不是「共」。 */
 export function CommitTreeSummary({ loading, loaded, nodeCount, partial, visibleRows }: CommitTreeSummaryProps) {
+  const { t } = useI18n()
   return <div className="commit-tree-summary">
     {loaded
-      ? <>已扫描 {partial ? <>≥ </> : ''}{nodeCount} 个条目{partial ? <> · <span className="commit-tree-lazy-flag">超出一次成树上限，已切换懒加载</span></> : ' · 已完整成树'}</>
-      : loading ? '正在读取文件树…' : '尚未读取'}
-    {visibleRows > 0 && <>{' · 可视 '}{visibleRows}</>}
+      ? <>{t('repository.tree.scanCount', { count: partial ? `≥ ${nodeCount}` : nodeCount })}{partial ? <> · <span className="commit-tree-lazy-flag">{t('repository.tree.lazyFallback')}</span></> : t('repository.tree.completeTree')}</>
+      : loading ? t('repository.tree.loading') : t('repository.tree.notLoaded')}
+    {visibleRows > 0 && <>{t('repository.tree.visibleRows')}{visibleRows}</>}
   </div>
 }
 
@@ -57,6 +59,7 @@ function rowIcon(kind: string) {
  * 渲染的永远只是可视区 + overscan，几万个节点也不会进 DOM。
  */
 export function CommitTreeRowList({ rows, selected, error, loading, hasIndex, query, label, onActivate }: CommitTreeRowListProps) {
+  const { t } = useI18n()
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(480)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -80,8 +83,8 @@ export function CommitTreeRowList({ rows, selected, error, loading, hasIndex, qu
     onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
   >
     {error && <div className="commit-tree-error">{error}</div>}
-    {loading && <div className="commit-tree-empty">正在读取文件树…</div>}
-    {!loading && hasIndex && rows.length === 0 && <div className="commit-tree-empty">{query ? <>没有匹配「{query}」的节点。</> : '该版本没有已跟踪的文件。'}</div>}
+    {loading && <div className="commit-tree-empty">{t('repository.tree.loading')}</div>}
+    {!loading && hasIndex && rows.length === 0 && <div className="commit-tree-empty">{query ? <>{t('repository.tree.noMatchPrefix')}{query}{t('repository.tree.noMatchSuffix')}</> : t('repository.tree.noTrackedFiles')}</div>}
     {rows.length > 0 && <>
       <div style={{ height: `${window.topSpacer}px` }}/>
       {visible.map((row) => <div
@@ -101,12 +104,12 @@ export function CommitTreeRowList({ rows, selected, error, loading, hasIndex, qu
           : <span className="tree-expander" aria-hidden="true"/>}
         {rowIcon(row.kind)}
         <span className="commit-tree-name">{row.name}</span>
-        {row.loadingChildren && <span className="commit-tree-state">读取中…</span>}
-        {row.emptyChildren && row.hasChildren && <span className="commit-tree-state">空目录</span>}
+        {row.loadingChildren && <span className="commit-tree-state">{t('repository.tree.reading')}</span>}
+        {row.emptyChildren && row.hasChildren && <span className="commit-tree-state">{t('repository.tree.emptyDirectory')}</span>}
         {row.sizeBytes != null && <span className="commit-tree-size">{formatByteSize(row.sizeBytes)}</span>}
       </div>)}
       <div style={{ height: `${window.bottomSpacer}px` }}/>
-      {window.end - window.start < rows.length && <div className="commit-tree-virtual-hint">窗口化渲染：当前只画 {window.end - window.start} / {rows.length} 行（滚动以加载其余部分）</div>}
+      {window.end - window.start < rows.length && <div className="commit-tree-virtual-hint">{t('repository.tree.windowedPrefix')}{window.end - window.start} / {rows.length}{t('repository.tree.windowedSuffix')}</div>}
     </>}
   </div>
 }
@@ -126,36 +129,37 @@ export type CommitTreePreviewProps = {
  * 二进制、超大、目录、子模组各有一句人话，而不是甩一个后端错误。
  */
 export function CommitTreePreview({ selected, kind, preview, loading, error, onOpenExternally }: CommitTreePreviewProps) {
+  const { t } = useI18n()
   const imagePair: ImageFileDiff | null = preview?.media
     ? { path: preview.path, fromReference: '', toReference: preview.reference, before: null, after: preview.media, identical: false, error: null }
     : null
   const note = !selected
-    ? '点击左侧任意文件查看该版本下的内容；图片与 SVG 会直接预览。'
+    ? t('repository.tree.selectHint')
     : kind === 'tree'
-      ? '目录没有内容可预览，请展开后选择其中的文件。'
+      ? t('repository.tree.directoryHint')
       : kind === 'commit'
-        ? '这是子模组指针（gitlink），指向另一个仓库的提交，本身没有文件内容。'
+        ? t('repository.tree.gitlinkHint')
         : null
   return <div className="commit-tree-preview">
     <div className="commit-tree-preview-header">
       <FileText size={13}/>
-      <code title={selected ?? undefined}>{selected ?? '选择左侧文件查看内容'}</code>
-      {kind === 'tree' && <span>目录不可预览</span>}
-      {kind === 'commit' && <span>子模组指针</span>}
-      {preview && <span>{formatByteSize(preview.sizeBytes)}{preview.truncated ? ' · 已截断' : ''}</span>}
+      <code title={selected ?? undefined}>{selected ?? t('repository.tree.selectFile')}</code>
+      {kind === 'tree' && <span>{t('repository.tree.directoryNotPreviewable')}</span>}
+      {kind === 'commit' && <span>{t('repository.tree.gitlink')}</span>}
+      {preview && <span>{formatByteSize(preview.sizeBytes)}{preview.truncated ? t('repository.tree.truncated') : ''}</span>}
       <span className="commit-tree-spacer"/>
-      {selected && onOpenExternally && isPreviewableRow({ kind: kind ?? '' }) && <Button size="compact" onClick={() => onOpenExternally(selected)} title="用系统默认程序打开"><ExternalLink size={13}/><span>外部打开</span></Button>}
+      {selected && onOpenExternally && isPreviewableRow({ kind: kind ?? '' }) && <Button size="compact" onClick={() => onOpenExternally(selected)} title={t('repository.tree.openExternally')}><ExternalLink size={13}/><span>{t('repository.tree.externalOpen')}</span></Button>}
     </div>
     <div className="commit-tree-preview-body">
       {note && <div className="commit-tree-preview-note">{note}</div>}
-      {selected && loading && <div className="commit-tree-preview-note">正在读取内容…</div>}
+      {selected && loading && <div className="commit-tree-preview-note">{t('repository.tree.loadingContent')}</div>}
       {selected && !loading && error && <div className="commit-tree-error">{error}</div>}
       {selected && !loading && !note && preview?.kind === 'text' && <pre>{preview.text ?? ''}</pre>}
       {selected && !loading && !note && preview && !preview.media && (preview.kind === 'binary' || preview.kind === 'too_large') && (
         <div className="commit-tree-preview-note">
           {preview.kind === 'too_large'
-            ? <>文件超过预览上限（只读了元数据），不适合内联展示，可用外部程序打开。</>
-            : <>{preview.error ?? '该文件不适合内联预览，可用外部程序打开。'}</>}
+            ? <>{t('repository.tree.tooLargeHint')}</>
+            : <>{preview.error ?? t('repository.tree.notInlineHint')}</>}
         </div>
       )}
       {selected && !loading && !note && preview?.media && <ImageDiffViewer
