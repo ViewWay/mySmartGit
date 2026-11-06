@@ -426,6 +426,7 @@ export const repository = {
   'repository.compare.swap': '交换比较方向',
   'repository.compare.selectFirst': '选择引用后开始比较',
   'repository.compare.selectHint': '支持本地分支、远程分支以及仓库中的提交引用。',
+  'repository.compare.openHint': '打开本地仓库后，可选择两个引用并查看完整 Diff。',
   'repository.compare.changedFiles': '变更文件',
   'repository.compare.ahead': '领先提交',
   'repository.compare.behind': '落后提交',

@@ -426,6 +426,7 @@ export const repository = {
   'repository.compare.swap': 'Swap compare direction',
   'repository.compare.selectFirst': 'Pick references to start comparing',
   'repository.compare.selectHint': 'Local branches, remote branches, and commit references in the repository are supported.',
+  'repository.compare.openHint': 'Open a local repository to pick two references and see the full diff.',
   'repository.compare.changedFiles': 'Changed files',
   'repository.compare.ahead': 'Ahead commits',
   'repository.compare.behind': 'Behind commits',
