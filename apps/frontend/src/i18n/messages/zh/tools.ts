@@ -212,4 +212,10 @@ export const tools = {
   'reset.mode.mixedHint': 'mixed：移动分支指针并重置暂存区，工作区修改保留。',
   'reset.mode.hardHint': 'hard：分支指针、暂存区、工作区全部回退，未提交修改将丢失（危险）。',
   'report.confirm': '确认执行',
+  'recovery.operationBusyLabel': '{{label}}进行中：恢复类操作会被拒绝，请先在操作中心处理',
+  'reflog.restore.checkout': '将检出 {{entry}} 并进入分离 HEAD。当前分支不会移动；工作区必须干净。',
+  'reflog.restore.branch': '将在 {{entry}} 上新建分支，当前分支与工作区不受影响。',
+  'reflog.restore.reset': '将把当前分支移动到 {{entry}}。选择 hard 模式时，之后的提交、暂存与工作区修改都会被丢弃；旧提交只能通过 Reflog / Bisect 面板找回。',
+  'reflog.newBranch': '新分支：{{name}}',
+  'reflog.resetModeNote': '将在 Reset 对话框中选择 soft / mixed / hard 模式。',
 } as const

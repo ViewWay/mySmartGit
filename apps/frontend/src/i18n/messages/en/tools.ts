@@ -212,4 +212,10 @@ export const tools = {
   'reset.mode.mixedHint': 'mixed: moves the branch pointer and resets the index; working tree modifications kept.',
   'reset.mode.hardHint': 'hard: branch pointer, index, and working tree all rewind; uncommitted changes are lost (dangerous).',
   'report.confirm': 'Confirm',
+  'recovery.operationBusyLabel': '{{label}} in progress: recovery actions are refused; handle it in the operation center first',
+  'reflog.restore.checkout': 'Checks out {{entry}} into a detached HEAD. The current branch does not move; the working tree must be clean.',
+  'reflog.restore.branch': 'Creates a new branch at {{entry}}; the current branch and working tree are unaffected.',
+  'reflog.restore.reset': 'Moves the current branch to {{entry}}. In hard mode, later commits, staged changes, and working tree modifications are discarded; old commits are only recoverable via the Reflog / Bisect panels.',
+  'reflog.newBranch': 'New branch: {{name}}',
+  'reflog.resetModeNote': 'The soft / mixed / hard mode is chosen in the Reset dialog.',
 } satisfies Record<keyof typeof import('../zh/tools').tools, string>

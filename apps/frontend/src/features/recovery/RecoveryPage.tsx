@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useState } from 'react'
 import { GitCompareArrows, History, RotateCcw, ScanSearch } from 'lucide-react'
 import type { ReflogEntry, RepositorySnapshot } from '../../repository'
@@ -17,6 +18,7 @@ type RecoveryTab = 'reflog' | 'bisect'
 
 /** 恢复与问题定位入口：Reflog 浏览 / Bisect 排查 / 按模式 Reset。 */
 export function RecoveryPage({ repository, onSnapshot, onNotice }: RecoveryPageProps) {
+  const { t } = useI18n()
   const [tab, setTab] = useState<RecoveryTab>('reflog')
   const [busy, setBusy] = useState(false)
   const [resetDialog, setResetDialog] = useState<{ commit: string; mode: 'soft' | 'mixed' | 'hard' } | null>(null)
@@ -25,14 +27,14 @@ export function RecoveryPage({ repository, onSnapshot, onNotice }: RecoveryPageP
 
   return <section className="workspace-page recovery-page">
     <div className="workspace-page-heading">
-      <div><span className="eyebrow">恢复与问题定位</span><h2>历史找回与故障排查</h2><p>Reflog 记录分支与 HEAD 的每一次移动；被重写、被回退的提交即使不在提交图谱中，也能在这里直接打开并恢复。</p></div>
-      <Button variant="secondary" disabled={!repository || busy} onClick={() => setResetDialog({ commit: 'HEAD', mode: 'mixed' })}><RotateCcw size={14}/>按模式 Reset…</Button>
+      <div><span className="eyebrow">{t('recovery.title')}</span><h2>{t('recovery.subtitle')}</h2><p>{t('recovery.description')}</p></div>
+      <Button variant="secondary" disabled={!repository || busy} onClick={() => setResetDialog({ commit: 'HEAD', mode: 'mixed' })}><RotateCcw size={14}/>{t('recovery.resetAction')}</Button>
     </div>
     <div className="recovery-tabs">
-      <button className={tab === 'reflog' ? 'active' : ''} onClick={() => setTab('reflog')}><History size={14}/><span>Reflog 浏览与恢复</span></button>
-      <button className={tab === 'bisect' ? 'active' : ''} onClick={() => setTab('bisect')}><ScanSearch size={14}/><span>Bisect 问题定位</span></button>
+      <button className={tab === 'reflog' ? 'active' : ''} onClick={() => setTab('reflog')}><History size={14}/><span>{t('recovery.reflogCard')}</span></button>
+      <button className={tab === 'bisect' ? 'active' : ''} onClick={() => setTab('bisect')}><ScanSearch size={14}/><span>{t('recovery.bisectCard')}</span></button>
       <span className="tab-spacer"/>
-      {repository?.operation && <small className="recovery-lock"><GitCompareArrows size={12}/>{repository.operation.label}进行中：恢复类操作会被拒绝，请先在操作中心处理</small>}
+      {repository?.operation && <small className="recovery-lock"><GitCompareArrows size={12}/>{t('recovery.operationBusyLabel', { label: repository.operation.label })}</small>}
     </div>
     {tab === 'reflog' && <ReflogPanel
       repository={repository}
