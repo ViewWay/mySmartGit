@@ -2,132 +2,213 @@
 
 :root {
   color-scheme: dark;
-  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif;
-  color: #f0f0f0;
-  background: #141414;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  background: var(--surface-app);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
-  /* Legacy aliases kept for feature styles that have not migrated yet. */
-  --bg: #141414;
-  --panel: #1f1f1f;
-  --panel-2: #262626;
-  --panel-3: #303030;
-  --line: #434343;
-  --line-soft: #303030;
-  --text: #f0f0f0;
-  --muted: #bfbfbf;
-  --faint: #8c8c8c;
-  --accent: #1677ff;
-  --accent-dim: #111a2c;
-  --violet: #b37feb;
-  --orange: #faad14;
-  --danger: #ff7875;
-  --syntax-comment: #6a9955;
-  --syntax-keyword: #c586c0;
-  --syntax-string: #ce9178;
-  --syntax-number: #b5cea8;
-  --syntax-type: #4ec9b0;
-  --font-code: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, "Microsoft YaHei UI", "Microsoft YaHei", NSimSun, "Liberation Mono", monospace;
+  /* Semantic surfaces. */
+  --surface-app: #151719;
+  --surface-sidebar: #1a1d20;
+  --surface-content: #202326;
+  --surface-elevated: #272b2f;
+  --surface-control: #2d3237;
+  --surface-hover: #343a40;
+  --surface-active: #3b4249;
+  --surface-sunken: #101214;
+  --surface-base: var(--surface-app);
+  --surface-chrome: var(--surface-sidebar);
+  --surface-raised: var(--surface-elevated);
 
-  /* Semantic surface, content, state, and elevation tokens. */
-  --surface-base: var(--bg);
-  --surface-chrome: var(--panel);
-  --surface-control: var(--panel-2);
-  --surface-raised: var(--panel);
-  --surface-hover: var(--panel-3);
-  --surface-sunken: var(--panel-3);
-  --border-strong: var(--line);
-  --border: var(--line);
-  --border-subtle: var(--line-soft);
-  --text-primary: var(--text);
-  --text-secondary: var(--muted);
-  --text-tertiary: var(--faint);
+  /* Semantic borders. */
+  --border-subtle: #2b3035;
+  --border: #3a4046;
+  --border-strong: #4a525a;
+
+  /* Semantic text. */
+  --text-primary: #e8eaed;
+  --text-secondary: #a8b0b8;
+  --text-tertiary: #7c858e;
+  --text-inverse: #141617;
   --text-on-accent: #ffffff;
-  --accent-text: #69b1ff;
-  --accent-hover: #4096ff;
-  --accent-ring: rgba(22, 119, 255, .15);
-  --danger-solid: #ff4d4f;
-  --danger-hover: #ff7875;
-  --success: #95de64;
-  --warning: #ffc53d;
+
+  /* Accent and state colors. */
+  --accent: #2f81f7;
+  --accent-hover: #4a93ff;
+  --accent-text: #7ab2ff;
+  --accent-dim: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent) 26%, transparent);
   --focus-ring: color-mix(in srgb, var(--accent) 16%, transparent);
-  --shadow-panel: 0 16px 35px rgba(0, 0, 0, .35);
-  --shadow-dialog: 0 24px 72px rgba(0, 0, 0, .46);
-  --shadow-control-hover: 0 6px 16px rgba(0, 0, 0, .28);
-  --overlay-backdrop: rgba(3, 7, 10, .55);
-  --scroll-thumb: #595959;
-  --scroll-thumb-hover: #737373;
-  --scroll-track: transparent;
-  --kbd-text: #687781;
-  --kbd-surface: #171e24;
-  --kbd-border: #303b43;
-  --code-surface: #1e1e1e;
-  --code-surface-raised: #252526;
-  --code-border: #3c3c3c;
-  --code-text: #d4d4d4;
-  --code-muted: #cccccc;
-  --code-hover: #2a2d2e;
-  --code-add: #183826;
-  --code-add-hover: #214c33;
-  --code-del: #4b2026;
-  --code-del-hover: #612a32;
-  --code-hunk: #264f78;
-  --code-hunk-text: #d7eaff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --danger-solid: #da3633;
+  --danger-hover: #f85149;
+  --violet: #b392f0;
+  --orange: #e3b341;
   --selection-surface: var(--accent-dim);
   --selection-text: var(--accent-text);
-  --operation-text: #ffc53d;
-  --operation-hover: #ffe58f;
-  --warning-surface: #2b2111;
-  --success-surface: #162312;
+  --operation-text: #e3b341;
+  --operation-hover: #f2cc60;
+  --warning-surface: color-mix(in srgb, var(--warning) 14%, transparent);
+  --success-surface: color-mix(in srgb, var(--success) 14%, transparent);
+
+  /* Diff ranges. */
+  --diff-add-bg: color-mix(in srgb, var(--success) 14%, transparent);
+  --diff-del-bg: color-mix(in srgb, var(--danger) 14%, transparent);
+  --diff-add-gutter: color-mix(in srgb, var(--success) 24%, transparent);
+  --diff-del-gutter: color-mix(in srgb, var(--danger) 24%, transparent);
+  --diff-hunk-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+
+  /* Syntax palette. */
+  --syntax-comment: #8b949e;
+  --syntax-keyword: #ff7b72;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-type: #ffa657;
+  --syntax-function: #d2a8ff;
+  --syntax-property: #79c0ff;
+  --syntax-tag: #7ee787;
+  --syntax-attribute: #ffa657;
+  --syntax-operator: #c9d1d9;
+  --syntax-punctuation: #8b949e;
+  --syntax-meta: #8b949e;
+  --syntax-regexp: #a5d6ff;
+  --syntax-inserted: #7ee787;
+  --syntax-deleted: #ffa198;
+  --syntax-invalid: #f85149;
+
+  /* Code surfaces and legacy code tokens. */
+  --code-surface: var(--surface-content);
+  --code-surface-raised: var(--surface-elevated);
+  --code-border: var(--border-subtle);
+  --code-text: var(--text-primary);
+  --code-muted: var(--text-secondary);
+  --code-hover: var(--surface-hover);
+  --code-add: var(--diff-add-bg);
+  --code-add-hover: color-mix(in srgb, var(--success) 24%, transparent);
+  --code-del: var(--diff-del-bg);
+  --code-del-hover: color-mix(in srgb, var(--danger) 24%, transparent);
+  --code-hunk: var(--diff-hunk-bg);
+  --code-hunk-text: #c9e6ff;
+
+  /* Typography, shape, and elevation. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-code: "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-2: 0 8px 24px rgb(0 0 0 / 32%);
+  --shadow-panel: var(--shadow-2);
+  --shadow-dialog: var(--shadow-2);
+  --shadow-control-hover: var(--shadow-1);
+  --overlay-backdrop: rgb(3 7 10 / 62%);
+  --scroll-thumb: #4a525a;
+  --scroll-thumb-hover: #5d666f;
+  --scroll-track: transparent;
+  --kbd-text: #8b949e;
+  --kbd-surface: var(--surface-sunken);
+  --kbd-border: var(--border);
+
+  /* Legacy aliases kept for feature styles that have not migrated yet. */
+  --bg: var(--surface-app);
+  --panel: var(--surface-content);
+  --panel-2: var(--surface-elevated);
+  --panel-3: var(--surface-control);
+  --line: var(--border);
+  --line-soft: var(--border-subtle);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-tertiary);
 }
 
 .theme-light {
   color-scheme: light;
-  --bg: #f5f5f5;
-  --panel: #ffffff;
-  --panel-2: #fafafa;
-  --panel-3: #f0f0f0;
-  --line: #d9d9d9;
-  --line-soft: #dfe3e8;
-  --text: #1f1f1f;
-  --muted: #595959;
-  --faint: #6b7280;
+  --surface-app: #f4f5f7;
+  --surface-sidebar: #fafafa;
+  --surface-content: #ffffff;
+  --surface-elevated: #fafafa;
+  --surface-control: #f0f0f0;
+  --surface-hover: #eaf3ff;
+  --surface-active: #d9ebff;
+  --surface-sunken: #ebedf0;
+  --surface-base: var(--surface-app);
+  --surface-chrome: var(--surface-sidebar);
+  --surface-raised: var(--surface-elevated);
+
+  --border-subtle: #e1e4e8;
+  --border: #d0d7de;
+  --border-strong: #b6bec8;
+
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --text-tertiary: #6e7781;
+  --text-inverse: #ffffff;
+  --text-on-accent: #ffffff;
+
   --accent: #1677ff;
-  --accent-dim: #e6f4ff;
+  --accent-hover: #4096ff;
+  --accent-text: #0958d9;
+  --accent-dim: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-ring: rgba(22, 119, 255, .15);
+  --focus-ring: rgba(22, 119, 255, .15);
+  --success: #389e0d;
+  --warning: #ad6800;
+  --danger: #cf1322;
+  --danger-solid: #ff7875;
+  --danger-hover: #ff4d4f;
   --violet: #722ed1;
   --orange: #d46b08;
-  --danger: #cf1322;
+  --selection-surface: #d9ebff;
+  --selection-text: #0958d9;
+  --operation-text: #ad6800;
+  --operation-hover: #874d00;
+  --warning-surface: #fffbe6;
+  --success-surface: #f6ffed;
+
+  --diff-add-bg: color-mix(in srgb, var(--success) 14%, transparent);
+  --diff-del-bg: color-mix(in srgb, var(--danger) 14%, transparent);
+  --diff-add-gutter: color-mix(in srgb, var(--success) 24%, transparent);
+  --diff-del-gutter: color-mix(in srgb, var(--danger) 24%, transparent);
+  --diff-hunk-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+
   --syntax-comment: #5b7f3b;
   --syntax-keyword: #a3157a;
   --syntax-string: #a31515;
   --syntax-number: #098658;
   --syntax-type: #267f99;
+  --syntax-function: #6f42c1;
+  --syntax-property: #0451a5;
+  --syntax-tag: #800000;
+  --syntax-attribute: #e50000;
+  --syntax-operator: #1f2328;
+  --syntax-punctuation: #57606a;
+  --syntax-meta: #57606a;
+  --syntax-regexp: #811f3f;
+  --syntax-inserted: #22863a;
+  --syntax-deleted: #b31d28;
+  --syntax-invalid: #cf222e;
 
-  --surface-base: var(--bg);
-  --surface-chrome: var(--panel-2);
-  --surface-control: var(--panel);
-  --surface-raised: var(--panel);
-  --surface-hover: #eaf3ff;
-  --surface-sunken: var(--panel-3);
-  --border-strong: var(--line);
-  --border: var(--line);
-  --border-subtle: var(--line-soft);
-  --text-primary: var(--text);
-  --text-secondary: #434343;
-  --text-tertiary: var(--faint);
-  --text-on-accent: #ffffff;
-  --accent-text: #0958d9;
-  --accent-hover: #4096ff;
-  --accent-ring: rgba(22, 119, 255, .1);
-  --danger-solid: #ff7875;
-  --danger-hover: #ff4d4f;
-  --success: #389e0d;
-  --warning: #ad6800;
-  --focus-ring: rgba(22, 119, 255, .15);
-  --shadow-panel: 0 12px 28px rgba(0, 0, 0, .12);
-  --shadow-dialog: 0 18px 48px rgba(0, 0, 0, .16);
-  --shadow-control-hover: 0 6px 16px rgba(31, 43, 58, .075);
+  --code-surface: var(--surface-content);
+  --code-surface-raised: var(--surface-elevated);
+  --code-border: var(--border-subtle);
+  --code-text: var(--text-primary);
+  --code-muted: var(--text-secondary);
+  --code-hover: var(--surface-hover);
+  --code-add: var(--diff-add-bg);
+  --code-add-hover: color-mix(in srgb, var(--success) 22%, transparent);
+  --code-del: var(--diff-del-bg);
+  --code-del-hover: color-mix(in srgb, var(--danger) 22%, transparent);
+  --code-hunk: var(--diff-hunk-bg);
+  --code-hunk-text: #123b5d;
+
+  --shadow-1: 0 1px 2px rgba(31, 43, 58, .08);
+  --shadow-2: 0 12px 32px rgba(31, 43, 58, .16);
+  --shadow-panel: var(--shadow-2);
+  --shadow-dialog: var(--shadow-2);
+  --shadow-control-hover: var(--shadow-1);
   --overlay-backdrop: rgba(0, 0, 0, .26);
   --scroll-thumb: #aeb7c4;
   --scroll-thumb-hover: #8792a2;
@@ -135,22 +216,14 @@
   --kbd-text: #595959;
   --kbd-surface: #f0f0f0;
   --kbd-border: #d9d9d9;
-  --code-surface: #ffffff;
-  --code-surface-raised: #f3f3f3;
-  --code-border: #d0d0d0;
-  --code-text: #1f1f1f;
-  --code-muted: #3b3b3b;
-  --code-hover: #e8e8e8;
-  --code-add: #dff3e4;
-  --code-add-hover: #cdebd5;
-  --code-del: #f8dddd;
-  --code-del-hover: #f3caca;
-  --code-hunk: #d7ebf8;
-  --code-hunk-text: #123b5d;
-  --selection-surface: #d9ebff;
-  --selection-text: #0958d9;
-  --operation-text: #ad6800;
-  --operation-hover: #874d00;
-  --warning-surface: #fffbe6;
-  --success-surface: #f6ffed;
+
+  --bg: var(--surface-app);
+  --panel: var(--surface-content);
+  --panel-2: var(--surface-elevated);
+  --panel-3: var(--surface-control);
+  --line: var(--border);
+  --line-soft: var(--border-subtle);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-tertiary);
 }

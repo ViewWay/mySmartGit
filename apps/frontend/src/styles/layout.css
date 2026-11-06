@@ -46,7 +46,7 @@
 
 .sidebar-footer { padding: 10px; display: grid; gap: 8px; border-top: 1px solid var(--line-soft); }
 
-.workspace { min-width: 0; height: 100%; flex: 1; display: grid; grid-template-rows: 54px 39px 1fr 25px; }
+.workspace { min-width: 0; height: 100%; flex: 1; display: grid; grid-template-rows: 54px 39px 1fr 26px; }
 
 .workspace.empty-repository { grid-template-rows: minmax(0, 1fr); }
 

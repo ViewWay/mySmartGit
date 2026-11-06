@@ -321,9 +321,13 @@
 
 .code-row:hover { background: var(--code-hover); }
 
-.code-row.add { background: var(--code-add); }
+.code-row.add { background: var(--diff-add-bg); }
 
-.code-row.del { background: var(--code-del); }
+.code-row.del { background: var(--diff-del-bg); }
+
+.code-row.add .line-no { background: var(--diff-add-gutter); }
+
+.code-row.del .line-no { background: var(--diff-del-gutter); }
 
 .code-row.add:hover { background: var(--code-add-hover); }
 
@@ -371,21 +375,24 @@
 
 .token.type { color: var(--syntax-type); }
 
-.token.operator { color: var(--code-text); }
+.token.operator { color: var(--syntax-operator); }
 
-.token.punctuation { color: #aab6bd; }
+.token.punctuation { color: var(--syntax-punctuation); }
 
 .tok-comment { color: var(--syntax-comment); font-style: italic; }
-.tok-keyword, .tok-meta { color: var(--syntax-keyword); }
-.tok-string, .tok-string2, .tok-url, .tok-regexp { color: var(--syntax-string); }
+.tok-keyword { color: var(--syntax-keyword); }
+.tok-meta { color: var(--syntax-meta); }
+.tok-string, .tok-string2, .tok-url { color: var(--syntax-string); }
+.tok-regexp { color: var(--syntax-regexp); }
 .tok-number, .tok-bool, .tok-atom, .tok-literal { color: var(--syntax-number); }
 .tok-typeName, .tok-className, .tok-namespace, .tok-macroName { color: var(--syntax-type); }
-.tok-function, .tok-variableName.tok-definition, .tok-propertyName.tok-definition { color: var(--syntax-type); }
-.tok-propertyName { color: var(--syntax-type); }
-.tok-tagName { color: var(--syntax-keyword); }
-.tok-attributeName { color: var(--syntax-number); }
-.tok-operator, .tok-punctuation { color: var(--text-secondary); }
-.tok-invalid { color: var(--danger); }
+.tok-function, .tok-variableName.tok-definition, .tok-propertyName.tok-definition { color: var(--syntax-function); }
+.tok-propertyName { color: var(--syntax-property); }
+.tok-tagName { color: var(--syntax-tag); }
+.tok-attributeName { color: var(--syntax-attribute); }
+.tok-operator { color: var(--syntax-operator); }
+.tok-punctuation { color: var(--syntax-punctuation); }
+.tok-invalid { color: var(--syntax-invalid); }
 
 .staging-page, .stash-page { padding: 10px 12px 12px; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 
@@ -506,7 +513,7 @@
 
 .reference-select-search { height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--faint); background: var(--panel-2); }
 
-.reference-select-search:focus-within { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent); }
+.reference-select-search:focus-within { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 .reference-select-search input { min-width: 0; flex: 1; height: 100%; padding: 0; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
 
@@ -1110,7 +1117,7 @@
 
 .template-editor-body textarea { width: 100%; min-height: 0; padding: 14px; resize: none; border: 1px solid var(--line); border-radius: 7px; outline: 0; color: var(--text); background: var(--bg); font: 13px/1.65 var(--font-code); tab-size: 2; }
 
-.template-editor-body textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.template-editor-body textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 .template-editor-actions { min-width: 0; padding: 14px 20px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); background: var(--panel-2); }
 
@@ -1460,7 +1467,7 @@
 /* 行内改名输入框：不套 .branch-name-input，需要自带边框与等宽字体。 */
 .branch-rename-input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel-2); font-family: var(--font-code); font-size: 11px; }
 
-.branch-rename-input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.branch-rename-input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 /* 标签操作行紧贴其标签行：去掉 .structure-actions 的整块上边距，改用行内缩进对齐标签名。 */
 .structure-actions.tag-row-actions { margin-top: 0; padding: 0 12px 9px 51px; border-bottom: 1px solid var(--line-soft); }
@@ -2049,7 +2056,7 @@
 
 .pipeline-form input, .pipeline-form textarea { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; outline: 0; color: var(--text); background: var(--panel-3); font-size: 11px; resize: vertical; }
 
-.pipeline-form input:focus, .pipeline-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.pipeline-form input:focus, .pipeline-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 .pipeline-form input:disabled, .pipeline-form textarea:disabled { opacity: .6; cursor: not-allowed; }
 

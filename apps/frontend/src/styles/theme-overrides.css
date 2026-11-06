@@ -9,15 +9,15 @@
 
 /* Diff and syntax contrast that cannot be expressed by the base surface tokens. */
 .theme-light .code-row.line-context-active,
-.theme-light .split-code-side.line-context-active { box-shadow: inset 3px 0 var(--accent), inset 0 0 0 1px rgba(22, 119, 255, .52); }
+.theme-light .split-code-side.line-context-active { box-shadow: inset 3px 0 var(--accent), inset 0 0 0 1px var(--accent-ring); }
 .theme-light .code-row.diff-navigation-active,
-.theme-light .split-code-side.diff-navigation-active { box-shadow: inset 3px 0 var(--accent), inset 0 0 0 1px rgba(22, 119, 255, .58); }
+.theme-light .split-code-side.diff-navigation-active { box-shadow: inset 3px 0 var(--accent), inset 0 0 0 1px var(--accent-ring); }
 .theme-light .line-no { color: var(--text-tertiary); border-right-color: var(--border-subtle); }
 
-.theme-light .commit-row:hover { background: #eaf3ff; }
-.theme-light .commit-row.selected { background: #d9ebff; box-shadow: inset 3px 0 #1677ff, inset 0 0 0 1px rgba(22, 119, 255, .24); }
+.theme-light .commit-row:hover { background: var(--surface-hover); }
+.theme-light .commit-row.selected { background: var(--surface-active); box-shadow: inset 3px 0 var(--accent), inset 0 0 0 1px var(--accent-ring); }
 .theme-light .changed-files-list button { border-bottom-color: #d7dce2; }
-.theme-light .changed-files-list button:hover { background: #eaf3ff; }
+.theme-light .changed-files-list button:hover { background: var(--surface-hover); }
 
 /* Git state badges use intentionally distinct semantic colors. */
 .theme-light .ref { border-color: #91caff; color: #0958d9; background: #e6f4ff; }
