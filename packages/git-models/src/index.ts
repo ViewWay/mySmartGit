@@ -796,3 +796,42 @@ export type RepositoryHistoryPage = {
   notice?: string | null
   pageBytes: number
 }
+
+// ---------------------------------------------------------------------------
+// W3-6 SSH 密钥、凭据助手与 Git 运行时 —— 与 git_credentials.rs 同名结构对齐
+// ---------------------------------------------------------------------------
+
+/**
+ * Git / SSH / LFS 运行时探测结果。
+ * 所有版本与路径都可能为 null（未安装 / 探测失败）；本应用不附带 Git 二进制，
+ * `bundledGitPresent` 只表示安装包目录里是否恰好存在内置 git。
+ */
+export type GitRuntimeInfo = {
+  gitVersion?: string | null
+  gitPath?: string | null
+  sshVersion?: string | null
+  gitLfsVersion?: string | null
+  credentialHelpers: string[]
+  sshAgentRunning: boolean
+  sshAgentKeys: string[]
+  customGitDir?: string | null
+  bundledGitPresent: boolean
+}
+
+/** 单个 SSH 密钥对；`fileName` 为 base 名（不含 .pub），`.pub` 由 hasPublic 表示。 */
+export type SshKeyInfo = {
+  fileName: string
+  keyType: string
+  bits?: number | null
+  fingerprint?: string | null
+  comment: string
+  hasPrivate: boolean
+  hasPublic: boolean
+  path: string
+}
+
+/** 设置 credential.helper 后的回报；notice 承载明文存储等风险提示。 */
+export type CredentialHelperReport = {
+  configuredHelpers: string[]
+  notice?: string | null
+}
