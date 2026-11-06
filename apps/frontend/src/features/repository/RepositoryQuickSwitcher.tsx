@@ -35,6 +35,7 @@ type RepositoryQuickSwitcherProps = {
 }
 
 export function RepositoryQuickSwitcher({ favorites, onToggleFavorite, onManageRepositories, repository, parentRepository, recentRepositories, openingRepository, openSignal, onOpenRepository, onOpenRepositoryPath, onOpenSubmodulePath, onReturnToParentRepository }: RepositoryQuickSwitcherProps) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
