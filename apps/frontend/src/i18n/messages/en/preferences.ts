@@ -10,4 +10,10 @@ export const preferences = {
   'preferences.wordWrap': 'Word wrap',
   'preferences.showWhitespace': 'Show whitespace',
   'preferences.diffFontSize': 'Diff font size',
+  'preferences.languageHint': 'Branchline menus and interface text switch immediately',
+  'preferences.themeHint': 'Dark is easier on the eyes for long reviews; light suits bright rooms',
+  'preferences.diffLayoutHint': 'Split compares line by line; unified saves horizontal space',
+  'preferences.wordWrapHint': 'Wrap long lines to the panel width instead of scrolling sideways',
+  'preferences.showWhitespaceHint': 'Highlight trailing and indentation whitespace in diffs',
+  'preferences.diffFontSizeHint': 'Shortcuts: ⌘+ / ⌘− / ⌘0',
 } satisfies Record<keyof typeof import('../zh/preferences').preferences, string>

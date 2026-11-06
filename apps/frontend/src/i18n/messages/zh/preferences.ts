@@ -10,4 +10,10 @@ export const preferences = {
   'preferences.wordWrap': '自动换行',
   'preferences.showWhitespace': '显示空白差异',
   'preferences.diffFontSize': 'Diff 字号',
+  'preferences.languageHint': 'Branchline 菜单与界面文案会立即切换',
+  'preferences.themeHint': '深色适合长时间审阅代码，浅色适合明亮环境',
+  'preferences.diffLayoutHint': '并排视图适合逐行比对，统一视图更节省宽度',
+  'preferences.wordWrapHint': '长行按面板宽度折行，不再出现横向滚动',
+  'preferences.showWhitespaceHint': '在 Diff 中高亮行尾与缩进空白',
+  'preferences.diffFontSizeHint': '快捷键：⌘+ / ⌘− / ⌘0',
 } as const

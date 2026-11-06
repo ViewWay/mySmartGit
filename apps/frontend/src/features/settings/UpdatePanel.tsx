@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, RefreshCw, RotateCcw, ShieldCheck, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { Button } from '../../components/Button'
 import { useI18n } from '../../i18n'
@@ -211,29 +211,5 @@ export function UpdatePanel() {
         </article>
       </div>
     </section>
-  )
-}
-
-export function UpdateDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t } = useI18n()
-  if (!open) return null
-  return (
-    <div className="modal-backdrop" onPointerDown={onClose}>
-      <section
-        className="update-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('updates.title')}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <div className="update-dialog-bar">
-          <strong>{t('updates.title')}</strong>
-          <Button variant="icon" onClick={onClose} title={t('common.close')}>
-            <X size={16} />
-          </Button>
-        </div>
-        <UpdatePanel />
-      </section>
-    </div>
   )
 }

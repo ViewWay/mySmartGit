@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { applyRepositoryStash, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, createRepositoryBranch, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, loadFileCommitDiff, loadImageFileDiff, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
+import { abortRepositoryOperation, applyRepositoryStash, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, continueRepositoryOperation, createRepositoryBranch, createRepositoryStash, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, isTauriRuntime, loadFileCommitDiff, loadImageFileDiff, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, skipRepositoryOperation, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
 import { ContextMenu } from './components/ContextMenu'
 import { Button } from './components/Button'
 import { CompactSelect } from './components/CompactSelect'
@@ -33,8 +33,11 @@ import { GitflowPanel } from './features/flow/GitflowPanel'
 import { CredentialsPanel } from './features/credentials/CredentialsPanel'
 import { HostingPanel } from './features/hosting/HostingPanel'
 import { TerminalPanel } from './features/terminal/TerminalPanel'
-import { UpdateDialog } from './features/settings/UpdatePanel'
+import { PreferencesDialog, type PreferencesPage } from './features/preferences/PreferencesDialog'
 import { useI18n } from './i18n'
+import { buildMenuLabels, menuActionHandlers, menuRecentIndex } from './menu/menuBridge'
+import { useNativeMenu, type NativeMenuState } from './menu/useNativeMenu'
+import { setPreference, usePreferences } from './preferences'
 import { RebaseDialog } from './features/operation/RebaseDialog'
 import { CherryPickDialog } from './features/operation/CherryPickDialog'
 import { buildCommitGraphLayout, lanePosition, type CommitGraphRow } from './features/graph/commitGraphLayout'
@@ -146,7 +149,6 @@ function mergeHistoryStreamCommits(base: Commit[], extra: Commit[]) {
   return [...base, ...extra.filter((commit) => !known.has(commit.fullHash ?? commit.id))]
 }
 
-const isTheme = (value: unknown): value is 'dark' | 'light' => value === 'dark' || value === 'light'
 const isSidebarWidth = (value: unknown): value is number => typeof value === 'number' && value >= 200 && value <= 360
 const isInspectorWidth = (value: unknown): value is number => typeof value === 'number' && value >= 300 && value <= 520
 const isDetailsHeight = (value: unknown): value is number => typeof value === 'number' && value >= 230 && value <= 560
@@ -668,7 +670,9 @@ function ShortcutOverlay({ open, onClose }: { open: boolean; onClose: () => void
 }
 
 export default function App() {
-  const { t } = useI18n()
+  const { t, language, setLanguage } = useI18n()
+  const preferences = usePreferences()
+  const theme = preferences.theme
   const { repository, structureRepository, parentRepository, recentRepositories, favoriteRepositories, registerRepository, toggleFavorite, forgetRepository, openingRepository, fetching, repositoryNotice, pauseRepositoryNotice, resumeRepositoryNotice, setRepositoryNotice, applySnapshot, applyStructureSnapshot, openRepository, openRepositoryPath, openSubmodulePath, returnToParentRepository, fetchNow, autoFetchEnabled, fetchIntervalMinutes, localPollingEnabled, localPollingIntervalSeconds, setAutoFetchEnabled, setFetchIntervalMinutes, setLocalPollingEnabled, setLocalPollingIntervalSeconds, lastFetchAt } = useRepositoryWorkspace()
   const [repositoryManagerOpen, setRepositoryManagerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('branchline.sidebarCollapsed.v1', false, (value): value is boolean => typeof value === 'boolean')
@@ -700,14 +704,14 @@ export default function App() {
   const [cherryPickDialog, setCherryPickDialog] = useState<{ commit: Commit; parents: Array<{ hash: string; title: string; author: string; time: string }> } | null>(null)
   const [gitConfigOpen, setGitConfigOpen] = useState(false)
   const [commandLogOpen, setCommandLogOpen] = useState(false)
-  const [updateOpen, setUpdateOpen] = useState(false)
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
+  const [preferencesPage, setPreferencesPage] = useState<PreferencesPage>('general')
   const [forcePushOpen, setForcePushOpen] = useState(false)
   const [historyEditOpen, setHistoryEditOpen] = useState(false)
   const { confirm, confirmDialog } = useConfirmDialog()
   const [wideDiff, setWideDiff] = useState(false)
   const [diffFile, setDiffFile] = useState<number | null>(null)
   const [inspectorCollapsed, setInspectorCollapsed] = usePersistentState('branchline.inspectorCollapsed.v2', true, (value): value is boolean => typeof value === 'boolean')
-  const [theme, setTheme] = usePersistentState('branchline.theme.v1', 'light', isTheme)
   const [shortcutOpen, setShortcutOpen] = useState(false)
   const [autoFetchOpen, setAutoFetchOpen] = useState(false)
   const [historyTarget, setHistoryTarget] = useState<HistoryTarget | null>(null)
@@ -1187,6 +1191,14 @@ export default function App() {
       { key: 'stash', label: `正在删除 ${reference}…`, detail: '正在从 Stash 列表中移除该记录' },
     )
   }
+  const handleStashAll = async () => {
+    if (!repository) return setRepositoryNotice(t('menu.notice.stashRequiresRepository'))
+    await executeRepositoryAction(
+      (path) => createRepositoryStash(path, '', false),
+      t('menu.notice.stashDone'),
+      { key: 'stash', label: t('menu.notice.stashProgress'), detail: t('menu.notice.stashProgressDetail') },
+    )
+  }
   const handleSelectStash = (reference: string) => {
     const stash = repository?.stashes.find((item) => item.reference === reference)
     const stashCommit = stash ? activeCommits.find((commit) => commit.fullHash === stash.hash) : undefined
@@ -1291,6 +1303,125 @@ export default function App() {
       })
     })
   }
+  const openPreferences = (page: PreferencesPage) => {
+    setPreferencesPage(page)
+    setPreferencesOpen(true)
+  }
+
+  const runMenuAction = (id: string) => {
+    const recentIndex = menuRecentIndex(id)
+    if (recentIndex !== null) {
+      const recent = recentRepositories[recentIndex]
+      if (recent) void handleOpenRepositoryPath(recent.path)
+      return
+    }
+    const handler = menuActionHandlers[id as keyof typeof menuActionHandlers]
+    if (!handler) return
+    const selectedReference = selectedCommitBase.fullHash ?? selectedCommitBase.id
+    const canOperateOnSelection = !selectedWorkingTree && !selectedStashReference && selectedCommitBase.id !== '—'
+    const selectView = (view: WorkspaceView) => {
+      setRepositoryManagerOpen(false)
+      setWorkspaceView(view)
+    }
+    const actions: Record<string, (() => void) | undefined> = {
+      'new-repository': () => setRepositoryManagerOpen(true),
+      'open-repository': () => void handleOpenRepository(),
+      'clone-repository': () => setRepositoryManagerOpen(true),
+      'close-repository': () => setRepositoryManagerOpen(true),
+      'check-updates': () => openPreferences('updates'),
+      'preferences': () => openPreferences('general'),
+      'find': () => {
+        if (repositoryManagerOpen || !repository) {
+          document.querySelector<HTMLInputElement>('.repository-catalog-search input')?.focus()
+          return
+        }
+        setWorkspaceView('history')
+        window.setTimeout(() => searchRef.current?.focus(), 0)
+      },
+      'find-next': () => setSearchAction((current) => ({ sequence: current.sequence + 1, direction: 1 })),
+      'find-previous': () => setSearchAction((current) => ({ sequence: current.sequence + 1, direction: -1 })),
+      'search-repository': () => setWorkspaceView('search'),
+      'toggle-word-wrap': () => setPreference('wordWrap', !preferences.wordWrap),
+      'diff-unified': () => setPreference('diffLayout', 'unified'),
+      'diff-split': () => setPreference('diffLayout', 'split'),
+      'toggle-show-whitespace': () => setPreference('showWhitespace', !preferences.showWhitespace),
+      'font-increase': () => setPreference('diffFontSize', preferences.diffFontSize + 1),
+      'font-decrease': () => setPreference('diffFontSize', preferences.diffFontSize - 1),
+      'font-reset': () => setPreference('diffFontSize', 12),
+      'view-history': () => selectView('history'),
+      'view-changes': () => selectView('changes'),
+      'view-stash': () => selectView('stash'),
+      'view-recovery': () => selectView('recovery'),
+      'view-search': () => selectView('search'),
+      'view-tree': () => selectView('tree'),
+      'view-compare': () => { setCompareBase(null); selectView('compare') },
+      'view-merge': () => selectView('merge'),
+      'view-terminal': () => selectView('terminal'),
+      'toggle-sidebar': () => setSidebarCollapsed((value) => !value),
+      'toggle-inspector': () => setInspectorCollapsed((value) => !value),
+      'theme-light': () => setPreference('theme', 'light'),
+      'theme-dark': () => setPreference('theme', 'dark'),
+      'language-zh': () => setLanguage('zh'),
+      'language-en': () => setLanguage('en'),
+      'reload': () => window.location.reload(),
+      'fetch': () => void handleFetch(),
+      'pull': () => { if (repository) void handlePullBranch(repository.branch) },
+      'push': () => void handlePush(),
+      'commit': () => selectView('changes'),
+      'undo-last-commit': () => { if (currentBranchHead) void handleUndoLastCommit(currentBranchHead) },
+      'create-branch': () => openCreateBranchDialog(),
+      'stash-all': () => void handleStashAll(),
+      'show-remotes': () => selectView('remotes'),
+      'show-tags': () => selectView('tags'),
+      'show-worktrees': () => { setStructureSelection({ kind: 'worktrees' }); selectView('structure') },
+      'show-submodules': () => { setStructureSelection({ kind: 'submodules' }); selectView('structure') },
+      'show-lfs': () => selectView('lfs'),
+      'show-gitflow': () => selectView('gitflow'),
+      'merge': () => { if (canOperateOnSelection) void handleMergeReference(selectedReference, t('menu.notice.mergeCommit', { id: selectedCommitBase.id })) },
+      'rebase': () => { if (canOperateOnSelection) void handleRebaseCommit(selectedCommitBase) },
+      'cherry-pick': () => { if (canOperateOnSelection) void handleCherryPickCommit(selectedCommitBase) },
+      'revert': () => { if (canOperateOnSelection) void handleRevertCommit(selectedCommitBase) },
+      'reset': () => { if (canOperateOnSelection) void handleResetCommit(selectedCommitBase) },
+      'continue-operation': () => {
+        if (!repository?.operation) return
+        void executeRepositoryAction((path) => continueRepositoryOperation(path), t('menu.notice.continueDone'))
+      },
+      'skip-operation': () => {
+        if (!repository?.operation) return
+        void executeRepositoryAction((path) => skipRepositoryOperation(path), t('menu.notice.skipDone'))
+      },
+      'abort-operation': () => {
+        if (!repository?.operation) return
+        void (async () => {
+          if (!await confirm({ title: t('menu.notice.abortTitle'), message: t('menu.notice.abortMessage'), confirmLabel: t('menu.notice.abortConfirm'), variant: 'danger' })) return
+          await executeRepositoryAction((path) => abortRepositoryOperation(path), t('menu.notice.abortDone'))
+        })()
+      },
+      'show-shortcuts': () => setShortcutOpen(true),
+      'open-docs': () => { window.open('https://github.com/ViewWay/mySmartGit', '_blank', 'noopener') },
+      'report-issue': () => { window.open('https://github.com/ViewWay/mySmartGit/issues/new', '_blank', 'noopener') },
+    }
+    actions[handler]?.()
+  }
+
+  const menuLabels = useMemo(() => buildMenuLabels(language), [language])
+  const menuState = useMemo<NativeMenuState>(() => ({
+    language,
+    hasRepository: Boolean(repository),
+    busy: Boolean(activeOperation) || fetching || openingRepository,
+    operation: Boolean(repository?.operation),
+    hasSelection: Boolean(selected) && !selectedWorkingTree && !selectedStashReference && selectedCommitBase.id !== '—',
+    sidebarVisible: !sidebarCollapsed,
+    inspectorVisible: !inspectorCollapsed,
+    diffLayout: preferences.diffLayout,
+    wordWrap: preferences.wordWrap,
+    showWhitespace: preferences.showWhitespace,
+    diffFontSize: preferences.diffFontSize,
+    theme,
+    recent: recentRepositories.map((entry) => ({ path: entry.path, name: entry.name })),
+  }), [activeOperation, fetching, inspectorCollapsed, language, openingRepository, preferences, recentRepositories, repository, selected, selectedCommitBase.id, selectedStashReference, selectedWorkingTree, sidebarCollapsed, theme])
+  useNativeMenu(runMenuAction, menuLabels, menuState)
+
   const beginPanelResize = (panel: 'sidebar' | 'inspector', event: React.PointerEvent<HTMLSpanElement>) => {
     event.preventDefault()
     const startX = event.clientX
@@ -1327,7 +1458,7 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (document.querySelector('.repository-add-dialog')) return
       const modifier = event.metaKey || event.ctrlKey
-      if (modifier && event.key.toLowerCase() === 'p') {
+      if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'p') {
         event.preventDefault()
         if (repositoryManagerOpen || !repository) {
           document.querySelector<HTMLInputElement>('.repository-catalog-search input')?.focus()
@@ -1336,7 +1467,16 @@ export default function App() {
           setRepositorySwitcherSignal((current) => current + 1)
         }
       }
-      if (modifier && event.key === '/') { event.preventDefault(); setTheme((value) => value === 'dark' ? 'light' : 'dark') }
+      if (modifier && event.key === '/') { event.preventDefault(); setPreference('theme', preferences.theme === 'dark' ? 'light' : 'dark') }
+      if (isTauriRuntime()) {
+        const key = event.key.toLowerCase()
+        const nativeMenuShortcut = (modifier && !event.altKey && !event.shiftKey && ['n', 'o', 'f', 'b', 'g', 'r', ',', '=', '-', '0'].includes(key))
+          || (modifier && event.shiftKey && !event.altKey && ['o', 'w', 'f', 'g', 'p'].includes(key))
+          || (modifier && event.altKey && !event.shiftKey && key === 'p')
+          || (modifier && event.key === 'Enter')
+        // The native menu owns these accelerators; letting them run here would fire twice.
+        if (nativeMenuShortcut) return
+      }
       if (repositoryManagerOpen || !repository) {
         if (modifier && !event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); document.querySelector<HTMLInputElement>('.repository-catalog-search input')?.focus() }
         return
@@ -1355,14 +1495,14 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [handleFetch, repositoryManagerOpen, repository])
+  }, [handleFetch, preferences.theme, repositoryManagerOpen, repository])
   const inspectorVisible = workspaceView === 'history' && !inspectorCollapsed && !(wideDiff && diffFile !== null)
   const timeFilterLabels: Record<TimeFilter, string> = { all: '全部时间', day: '最近 24 小时', week: '最近 7 天', month: '最近 30 天' }
   const branchFilterLabel = branchFilter.length === 0 ? '全部分支' : branchFilter.length === 1 ? branchFilter[0] : `已选 ${branchFilter.length} 个分支`
   return <main className={`app-shell ${theme === 'light' ? 'theme-light' : ''} ${panelResizing === 'details' ? 'panel-resizing-vertical' : panelResizing ? 'panel-resizing' : ''}`}>
     {repository && !repositoryManagerOpen && <>
       <div className={`sidebar-shell ${sidebarCollapsed ? 'collapsed' : ''}`} style={{ width: sidebarCollapsed ? 0 : sidebarWidth, flexBasis: sidebarCollapsed ? 0 : sidebarWidth }}>
-        <Sidebar repository={repository} structureRepository={structureRepository} parentRepository={parentRepository} recentRepositories={recentRepositories} favorites={favoriteRepositories} onToggleFavorite={toggleFavorite} onManageRepositories={() => setRepositoryManagerOpen(true)} openingRepository={openingRepository} activeView={workspaceView} structureSelection={structureSelection} repositorySwitcherSignal={repositorySwitcherSignal} onOpenRepository={handleOpenRepository} onOpenRepositoryPath={handleOpenRepositoryPath} onOpenSubmodulePath={handleOpenSubmodulePath} onReturnToParentRepository={handleReturnToParentRepository} onCreateBranch={openCreateBranchDialog} onDeleteBranchPrefix={(prefix) => void handleDeleteBranchPrefix(prefix)} onJumpBranch={handleJumpBranch} onSwitchBranch={(branch) => void handleSwitchBranch(branch)} onPullBranch={(branch) => void handlePullBranch(branch)} onMergeBranch={(branch) => void handleMergeReference(branch)} onDeleteBranch={(branch) => void handleDeleteBranch(branch)} onCopyBranch={(branch) => void copyText(branch, `已复制分支名：${branch}`)} onSelectView={(view) => { setRepositoryManagerOpen(false); setWorkspaceView(view) }} onSelectStructure={(selection) => { setRepositoryManagerOpen(false); setStructureSelection(selection); setWorkspaceView('structure') }} onOpenGitConfig={() => setGitConfigOpen(true)} onOpenCommandLog={() => setCommandLogOpen(true)} onOpenUpdates={() => setUpdateOpen(true)} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}/>
+        <Sidebar repository={repository} structureRepository={structureRepository} parentRepository={parentRepository} recentRepositories={recentRepositories} favorites={favoriteRepositories} onToggleFavorite={toggleFavorite} onManageRepositories={() => setRepositoryManagerOpen(true)} openingRepository={openingRepository} activeView={workspaceView} structureSelection={structureSelection} repositorySwitcherSignal={repositorySwitcherSignal} onOpenRepository={handleOpenRepository} onOpenRepositoryPath={handleOpenRepositoryPath} onOpenSubmodulePath={handleOpenSubmodulePath} onReturnToParentRepository={handleReturnToParentRepository} onCreateBranch={openCreateBranchDialog} onDeleteBranchPrefix={(prefix) => void handleDeleteBranchPrefix(prefix)} onJumpBranch={handleJumpBranch} onSwitchBranch={(branch) => void handleSwitchBranch(branch)} onPullBranch={(branch) => void handlePullBranch(branch)} onMergeBranch={(branch) => void handleMergeReference(branch)} onDeleteBranch={(branch) => void handleDeleteBranch(branch)} onCopyBranch={(branch) => void copyText(branch, `已复制分支名：${branch}`)} onSelectView={(view) => { setRepositoryManagerOpen(false); setWorkspaceView(view) }} onSelectStructure={(selection) => { setRepositoryManagerOpen(false); setStructureSelection(selection); setWorkspaceView('structure') }} onOpenGitConfig={() => setGitConfigOpen(true)} onOpenCommandLog={() => setCommandLogOpen(true)} onOpenUpdates={() => openPreferences('updates')} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}/>
       </div>
       <span className={`panel-resizer sidebar-resizer ${sidebarCollapsed ? 'hidden' : ''} ${panelResizing === 'sidebar' ? 'active' : ''}`} role="separator" aria-label="拖动调整左侧面板宽度" onPointerDown={(event) => beginPanelResize('sidebar', event)}/>
     </>}
@@ -1376,7 +1516,7 @@ export default function App() {
             <Button variant="secondary" className="fetch-button sync-action" onClick={() => repository && void handlePullBranch(repository.branch)} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={repository?.operation ? '请先完成当前 Git 操作' : repository?.behind ? `拉取当前分支（${repository.behind} 个待拉取提交）` : '拉取当前分支'}>{activeOperation?.key === 'pull' ? <RefreshCw className="spin" size={15}/> : <CloudDownload size={15}/>}<span>{activeOperation?.key === 'pull' ? '拉取中…' : '拉取'}</span>{Boolean(repository?.behind) && <small className="sync-count pull-count">{repository!.behind}</small>}</Button>
             <Button variant="secondary" className="fetch-button sync-action" onClick={() => void handlePush()} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={repository?.operation ? '请先完成当前 Git 操作' : repository?.ahead ? `推送当前分支（${repository.ahead} 个待推送提交）` : '推送当前分支'}>{activeOperation?.key === 'push' ? <RefreshCw className="spin" size={15}/> : <CloudUpload size={15}/>}<span>{activeOperation?.key === 'push' ? '推送中…' : '推送'}</span>{Boolean(repository?.ahead) && <small className="sync-count push-count">{repository!.ahead}</small>}</Button>
             <Button variant="icon" className="force-push-trigger" onClick={() => setForcePushOpen(true)} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={repository?.operation ? '请先完成当前 Git 操作' : '以 force-with-lease 强推当前分支（需输入分支名确认）'}><AlertTriangle size={16}/></Button>
-            <Button variant="icon" onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</Button>
+            <Button variant="icon" onClick={() => setPreference('theme', theme === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</Button>
             <Button ref={notificationButtonRef} variant="icon" className="notification" active={notificationOpen} onClick={() => setNotificationOpen((value) => !value)} title="查看通知"><Bell size={17}/><span/></Button>
             {notificationOpen && <div ref={notificationPopoverRef} className="notification-popover">
               <div className="popover-heading"><strong>通知</strong><button onClick={() => setNotificationOpen(false)} title="关闭通知"><X size={13}/></button></div>
@@ -1466,7 +1606,7 @@ export default function App() {
       <footer className="statusbar">
         <div><span className={repository.operation ? 'status-warning' : 'status-ok'}>{repository.operation ? <AlertTriangle size={11}/> : <Check size={11}/>}</span><span>{repository.operation?.label ?? '仓库状态正常'}</span><span className="status-separator"/><GitBranch size={12}/><span>{repository.operation?.originalBranch ?? repository.branch}</span><span>↑{repository.ahead}</span><span>↓{repository.behind}</span></div>
         <div ref={autoFetchRef} className="statusbar-secondary"><button className="status-command-log" onClick={() => setCommandLogOpen(true)} title="查看执行命令日志"><TerminalSquare size={12}/><span>命令日志</span></button><span className="status-separator"/><button className={`status-fetch-control ${autoFetchOpen ? 'active' : ''}`} onClick={() => setAutoFetchOpen((value) => !value)} aria-expanded={autoFetchOpen} aria-haspopup="dialog" title="配置后台同步"><TimerReset size={12}/><span>自动 Fetch：{autoFetchEnabled ? `每 ${fetchIntervalMinutes} 分钟` : '已停用'}</span></button><span className="status-separator"/><Box size={12}/><span>{repository.submoduleCount} 个 Submodule 已同步</span><span className="status-separator"/><Code2 size={12}/><span>UTF-8</span>{autoFetchOpen && <div className="auto-fetch-popover" role="dialog" aria-label="后台同步配置"><div className="auto-fetch-heading"><div><strong>后台同步</strong><small>控制远程引用更新与本地状态采样</small></div><Button variant="icon" onClick={() => setAutoFetchOpen(false)} title="关闭"><X size={14}/></Button></div><label className="auto-fetch-toggle"><span><strong>启用自动 Fetch</strong><small>仅在仓库已打开时执行</small></span><input type="checkbox" checked={autoFetchEnabled} onChange={(event) => setAutoFetchEnabled(event.target.checked)}/><span className="toggle-track" aria-hidden="true"><span/></span></label><div className="auto-fetch-field"><span>获取间隔</span><CompactSelect className="auto-fetch-interval-select" value={fetchIntervalMinutes} options={[1, 5, 10, 15, 30].map((minutes) => ({ value: minutes, label: `${minutes} 分钟` }))} onChange={setFetchIntervalMinutes} ariaLabel="选择自动 Fetch 间隔" disabled={!autoFetchEnabled}/></div><div className="local-polling-settings"><label className="auto-fetch-toggle"><span><strong>本地状态采样</strong><small>定期检测其他工具产生的仓库变更</small></span><input type="checkbox" checked={localPollingEnabled} onChange={(event) => setLocalPollingEnabled(event.target.checked)}/><span className="toggle-track" aria-hidden="true"><span/></span></label><div className="auto-fetch-field"><span>采样间隔</span><CompactSelect className="auto-fetch-interval-select" value={localPollingIntervalSeconds} options={[2, 5, 10, 30].map((seconds) => ({ value: seconds, label: `${seconds} 秒` }))} onChange={setLocalPollingIntervalSeconds} ariaLabel="选择本地状态采样间隔" disabled={!localPollingEnabled}/></div></div><div className="auto-fetch-meta"><span>最近 Fetch</span><strong>{lastFetchAt ? new Date(lastFetchAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '尚未执行'}</strong></div><Button variant="secondary" className="auto-fetch-now" onClick={() => void handleFetch()} disabled={fetching || Boolean(activeOperation)}><RefreshCw size={13} className={fetching ? 'spin' : ''}/>{fetching ? '获取中…' : '立即 Fetch'}</Button></div>}</div>
-      </footer></> : <RepositoryManagerPage recent={recentRepositories} favorites={favoriteRepositories} current={repository} opening={openingRepository} theme={theme} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} onBack={() => setRepositoryManagerOpen(false)} onOpen={(path) => void handleOpenRepositoryPath(path)} onRegister={registerRepository} onToggleFavorite={toggleFavorite} onForget={forgetRepository} onNotice={setRepositoryNotice}/>}
+      </footer></> : <RepositoryManagerPage recent={recentRepositories} favorites={favoriteRepositories} current={repository} opening={openingRepository} theme={theme} onToggleTheme={() => setPreference('theme', theme === 'dark' ? 'light' : 'dark')} onBack={() => setRepositoryManagerOpen(false)} onOpen={(path) => void handleOpenRepositoryPath(path)} onRegister={registerRepository} onToggleFavorite={toggleFavorite} onForget={forgetRepository} onNotice={setRepositoryNotice}/>}
     </div>
     {openingRepository && <div className="repository-loading" role="status" aria-live="polite"><div><RefreshCw className="spin" size={22}/><strong>正在加载仓库</strong><span>正在读取分支、提交图谱、Worktree 与 Submodule…</span></div></div>}
     <div className={`operation-indicator ${activeOperation ? 'visible' : ''} ${activeOperation?.key === 'cherry-pick' ? 'cherry-pick' : ''}`} role="status" aria-live="polite" aria-hidden={!activeOperation}>{activeOperation && <><RefreshCw className="spin" size={17}/><div><strong>{activeOperation.label}</strong><span>{activeOperation.detail}</span></div></>}</div>
@@ -1482,7 +1622,7 @@ export default function App() {
     />}
     <GitConfigDialog open={gitConfigOpen} onClose={() => setGitConfigOpen(false)} onNotice={setRepositoryNotice}/>
     <CommandLogPanel open={commandLogOpen} onClose={() => setCommandLogOpen(false)}/>
-    <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)}/>
+    <PreferencesDialog open={preferencesOpen} page={preferencesPage} onClose={() => setPreferencesOpen(false)} onPageChange={setPreferencesPage}/>
     <ShortcutOverlay open={shortcutOpen} onClose={() => setShortcutOpen(false)}/>
     <ForcePushDialog open={forcePushOpen} branch={repository?.branch ?? ''} busy={activeOperation?.key === 'push'} onCancel={() => setForcePushOpen(false)} onConfirm={() => void handleForcePush()}/>
     {repository && <SequenceEditor open={historyEditOpen} repositoryPath={repository.path} baseRef={selectedCommitBase.parent ?? 'HEAD~10'} onClose={() => setHistoryEditOpen(false)} onChanged={() => { void loadRepository(repository.path).then(handleSnapshot).catch((reason) => setRepositoryNotice(String(reason))) }}/>}

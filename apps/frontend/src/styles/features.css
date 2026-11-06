@@ -2125,10 +2125,40 @@
 .update-progress > span { color: var(--muted); font-size: 10px; }
 .update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .update-hint { margin: 0; color: var(--faint); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
-.update-dialog { display: grid; align-content: start; width: min(780px, 100%); max-height: min(84vh, 760px); overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-base); box-shadow: 0 24px 64px rgba(0, 0, 0, .38); }
-.update-dialog-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); background: var(--surface-base); }
-.update-dialog-bar strong { color: var(--text); font-size: 13px; }
 
 @media (max-width: 1100px) {
   .update-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------------------
+   W6 偏好设置
+   --------------------------------------------------------------------------- */
+.preferences-dialog { width: min(860px, calc(100vw - 32px)); height: min(620px, calc(100vh - 64px)); display: grid; grid-template-columns: 190px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 14px; color: var(--text); background: var(--panel); box-shadow: 0 28px 80px rgba(0, 0, 0, .46); animation: popIn .18s ease-out; }
+.preferences-nav { display: flex; flex-direction: column; gap: 4px; padding: 16px 12px; border-right: 1px solid var(--line-soft); background: var(--panel-2); }
+.preferences-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 12px; color: var(--text); font-size: 13px; }
+.preferences-title svg { color: var(--accent); }
+.preferences-nav button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
+.preferences-nav button:hover { color: var(--text); background: var(--panel-3); }
+.preferences-nav button.active { color: var(--accent); background: var(--accent-dim); }
+.preferences-content { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.preferences-heading { min-height: 52px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
+.preferences-heading h2 { margin: 0; font-size: 15px; }
+.preferences-body { min-height: 0; overflow: auto; padding: 18px; }
+.preferences-body .update-panel { gap: 12px; }
+.preferences-general { display: grid; gap: 2px; }
+.preferences-field, .preferences-toggle { min-height: 54px; padding: 10px 2px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line-soft); }
+.preferences-field { justify-content: space-between; }
+.preferences-field > div:first-child, .preferences-toggle > span:first-child { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.preferences-field strong, .preferences-toggle strong { color: var(--text); font-size: 12px; font-weight: 500; }
+.preferences-field small, .preferences-toggle small { color: var(--faint); font-size: 10px; line-height: 1.5; }
+.preferences-toggle { cursor: pointer; }
+.preferences-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.preferences-toggle input:checked + .toggle-track { background: var(--accent); }
+.preferences-toggle input:checked + .toggle-track > span { background: #fff; transform: translateX(14px); }
+.preferences-toggle input:focus-visible + .toggle-track { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .preferences-dialog { grid-template-columns: minmax(0, 1fr); height: min(720px, calc(100vh - 32px)); }
+  .preferences-nav { flex-direction: row; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .preferences-title { padding: 0 10px 0 4px; }
 }
