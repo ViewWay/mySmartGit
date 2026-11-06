@@ -202,6 +202,17 @@ pub(crate) fn isolate_test_git_environment() {
     });
 }
 
+/// 串行化所有会改写 `BRANCHLINE_HOME` 的测试（AI 设置、凭据 / SSH 等）。
+///
+/// 每个模块都有自己的隔离目录，但 `BRANCHLINE_HOME` 是进程级环境变量：
+/// 各模块私有的锁无法阻止彼此覆盖，必须共用同一把锁。
+#[cfg(test)]
+pub(crate) fn test_environment_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 清理崩溃/强杀遗留的测试临时目录（超过 24 小时的 branchline-* 条目），
 /// 防止磁盘堆积；正在进行中的进程目录（含其他并行测试进程）不会被误删——
 /// 活跃用例的目录 mtime 一直在变，24 小时阈值只会命中真正的残留。
