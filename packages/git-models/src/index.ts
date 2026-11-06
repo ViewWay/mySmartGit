@@ -1052,3 +1052,53 @@ export type CreatePullRequestInput = {
   targetBranch: string
   draft: boolean
 }
+
+// ---------------------------------------------------------------------------
+// W4-2 内置终端与自定义命令流水线 —— 与 git_terminal.rs 同名结构对齐
+// ---------------------------------------------------------------------------
+
+/** 一个已启动的 PTY 终端会话；sessionId 由后端生成。 */
+export type TerminalSessionInfo = {
+  sessionId: string
+  /** 实际启动的 Shell（绝对路径或白名单裸名）。 */
+  shell: string
+  cwd: string
+}
+
+/** 增量读取结果；nextOffset 是下次读取应传入的偏移。 */
+export type TerminalOutput = {
+  data: string
+  nextOffset: number
+  /** 请求的偏移已被丢弃（输出超过 256 KiB 缓冲上限）。 */
+  truncated: boolean
+  alive: boolean
+  exitCode?: number | null
+}
+
+/** 自定义命令：程序 + 字面参数数组，永不经过 shell 拼接。 */
+export type PipelineCommand = {
+  id: string
+  name: string
+  description: string
+  program: string
+  args: string[]
+  /** 仓库内的相对工作目录；null / 空表示仓库根目录。 */
+  cwdRelative?: string | null
+}
+
+export type PipelineCommands = {
+  commands: PipelineCommand[]
+}
+
+/** 单次流水线执行结果；输出已按 UTF-8 lossy 转换，可能被截断。 */
+export type CommandRunReport = {
+  runId: string
+  commandId: string
+  exitCode?: number | null
+  timedOut: boolean
+  cancelled: boolean
+  durationMs: number
+  stdout: string
+  stderr: string
+  truncated: boolean
+}

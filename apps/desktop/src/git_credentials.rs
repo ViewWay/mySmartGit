@@ -1167,7 +1167,7 @@ mod tests {
     use super::*;
 
     /// 凭据 / SSH 用例共享同一个 BRANCHLINE_HOME 与隔离 global gitconfig，必须串行；
-    /// 锁与其他会改写 BRANCHLINE_HOME 的模块（如 AI 设置）共用。
+    /// 与 git_ai 等模块共用 git.rs 的全局测试环境锁，避免并行 cargo test 下互相覆盖。
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         crate::git::test_environment_lock()
     }
