@@ -15,6 +15,13 @@ import {
   validateSubmodulePath,
   validateSubmoduleUrl,
 } from './submoduleAddForm'
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
 
 const submodule = (path: string, overrides: Partial<RepositorySubmodule> = {}): RepositorySubmodule => ({
   path,
@@ -47,7 +54,7 @@ describe('submodule url 校验', () => {
       '/srv/local/repo.git',
       'https://user:token@host.example/team/repo.git',
     ]) {
-      expect(validateSubmoduleUrl(url), url).toBeNull()
+      expect(validateSubmoduleUrl(url, zhT), url).toBeNull()
     }
   })
 
@@ -67,7 +74,7 @@ describe('submodule url 校验', () => {
       'host.example',
     ]
     for (const url of rejected) {
-      expect(validateSubmoduleUrl(url), url).not.toBeNull()
+      expect(validateSubmoduleUrl(url, zhT), url).not.toBeNull()
     }
   })
 
@@ -76,52 +83,52 @@ describe('submodule url 校验', () => {
     expect(hasEmbeddedCredentials('https://token@host.example/a.git')).toBe(true)
     expect(hasEmbeddedCredentials('git@host.example:team/repo.git')).toBe(false)
     expect(hasEmbeddedCredentials('https://host.example/team/repo.git')).toBe(false)
-    expect(credentialNotice('https://user:token@host.example/a.git')).toContain('明文写进 .gitmodules')
-    expect(credentialNotice('http://host.example/a.git')).toContain('https')
-    expect(credentialNotice('git@host.example:team/repo.git')).toBeNull()
+    expect(credentialNotice('https://user:token@host.example/a.git', zhT)).toContain('明文写进 .gitmodules')
+    expect(credentialNotice('http://host.example/a.git', zhT)).toContain('https')
+    expect(credentialNotice('git@host.example:team/repo.git', zhT)).toBeNull()
   })
 })
 
 describe('submodule 路径与名称校验', () => {
   it('拒绝越界、绝对路径与保留目标', () => {
     for (const path of ['/etc/passwd', '../escape', 'vendor/../../x', '-b', '.git/hooks', 'vendor/.git/m', '.gitmodules', 'vendor//m', 'vendor/m/', 'a\x01b']) {
-      expect(validateSubmodulePath(path), path).not.toBeNull()
+      expect(validateSubmodulePath(path, zhT), path).not.toBeNull()
     }
   })
 
   it('放行正常相对路径，空值交给后端推断', () => {
     for (const path of ['vendor/lib', 'libs/sub-module.2', '中文/目录', '']) {
-      expect(validateSubmodulePath(path), path).toBeNull()
+      expect(validateSubmodulePath(path, zhT), path).toBeNull()
     }
   })
 
   it('段名拒绝 config 特殊字符与路径分隔符', () => {
     for (const name of ['-x', 'a/b', 'a b', 'a[b]', '.hidden', 'x.lock', 'a..b']) {
-      expect(validateSubmoduleName(name), name).not.toBeNull()
+      expect(validateSubmoduleName(name, zhT), name).not.toBeNull()
     }
-    expect(validateSubmoduleName('shared-lib')).toBeNull()
-    expect(validateSubmoduleName('')).toBeNull()
+    expect(validateSubmoduleName('shared-lib', zhT)).toBeNull()
+    expect(validateSubmoduleName('', zhT)).toBeNull()
   })
 
   it('跟踪分支只挡明显错误', () => {
-    expect(validateSubmoduleBranch('feat/tracking')).toBeNull()
-    expect(validateSubmoduleBranch('')).toBeNull()
+    expect(validateSubmoduleBranch('feat/tracking', zhT)).toBeNull()
+    expect(validateSubmoduleBranch('', zhT)).toBeNull()
     // refs/heads/x 作为分支名写法很别扭，但 Git 的 check-ref-format --branch 确实接受，
     // 前端不能替 Git 做更严的决定（否则后端放行、前端拦人）。
-    expect(validateSubmoduleBranch('refs/heads/x')).toBeNull()
+    expect(validateSubmoduleBranch('refs/heads/x', zhT)).toBeNull()
     for (const branch of ['-b', 'feat branch', 'a..b', 'x@{1}', '.hidden', 'trailing/']) {
-      expect(validateSubmoduleBranch(branch), branch).not.toBeNull()
+      expect(validateSubmoduleBranch(branch, zhT), branch).not.toBeNull()
     }
   })
 
   it('路径冲突同时挡住父子层级互占', () => {
     const existing = [submodule('vendor/lib'), submodule('libs/vendor/deep')]
-    expect(findPathConflict('vendor/lib', existing)?.kind).toBe('submodule')
-    expect(findPathConflict('VENDOR/LIB', existing)?.kind).toBe('submodule')
-    expect(findPathConflict('vendor/lib/extra', existing)?.kind).toBe('nested')
-    expect(findPathConflict('libs/vendor', existing)?.kind).toBe('nested')
-    expect(findPathConflict('vendor/other', existing)).toBeNull()
-    expect(findPathConflict('', existing)).toBeNull()
+    expect(findPathConflict('vendor/lib', existing, zhT)?.kind).toBe('submodule')
+    expect(findPathConflict('VENDOR/LIB', existing, zhT)?.kind).toBe('submodule')
+    expect(findPathConflict('vendor/lib/extra', existing, zhT)?.kind).toBe('nested')
+    expect(findPathConflict('libs/vendor', existing, zhT)?.kind).toBe('nested')
+    expect(findPathConflict('vendor/other', existing, zhT)).toBeNull()
+    expect(findPathConflict('', existing, zhT)).toBeNull()
   })
 })
 
@@ -144,22 +151,23 @@ describe('表单聚合校验', () => {
   const draft = { url: 'https://host.example/team/repo.git', path: 'vendor/lib', name: '', branch: '' }
 
   it('干净草稿可以提交', () => {
-    expect(validateSubmoduleDraft(draft, [submodule('libs/other')])).toEqual({})
-    expect(canSubmitSubmoduleDraft(draft, [submodule('libs/other')])).toBe(true)
+    expect(validateSubmoduleDraft(draft, [submodule('libs/other')], zhT)).toEqual({})
+    expect(canSubmitSubmoduleDraft(draft, [submodule('libs/other')], zhT)).toBe(true)
   })
 
   it('逐字段报告错误并且不掩盖路径冲突', () => {
     const errors = validateSubmoduleDraft(
       { url: 'ext::sh -c true', path: '../out', name: 'a b', branch: '-x' },
       [],
+      zhT,
     )
     expect(Object.keys(errors).sort()).toEqual(['branch', 'name', 'path', 'url'])
-    expect(validateSubmoduleDraft(draft, [submodule('vendor/lib')]).path).toContain('已登记')
+    expect(validateSubmoduleDraft(draft, [submodule('vendor/lib')], zhT).path).toContain('已登记')
   })
 
   it('留空路径时按地址推断，推断不出来就要求手动指定', () => {
-    expect(validateSubmoduleDraft({ ...draft, path: '' }, [])).toEqual({})
-    const errors = validateSubmoduleDraft({ ...draft, url: 'https://host.example', path: '' }, [])
+    expect(validateSubmoduleDraft({ ...draft, path: '' }, [], zhT)).toEqual({})
+    const errors = validateSubmoduleDraft({ ...draft, url: 'https://host.example', path: '' }, [], zhT)
     expect(errors.url).toContain('无法从地址推断')
   })
 })
@@ -185,13 +193,13 @@ describe('预览确认与克隆深度', () => {
   })
 
   it('浅克隆深度只接受 1..=10000 的整数', () => {
-    expect(parseCloneDepth('')).toEqual({ depth: null, error: null })
-    expect(parseCloneDepth('1')).toEqual({ depth: 1, error: null })
-    expect(parseCloneDepth(' 12 ')).toEqual({ depth: 12, error: null })
-    expect(parseCloneDepth('0').error).toContain('正整数')
-    expect(parseCloneDepth('-3').error).toContain('正整数')
-    expect(parseCloneDepth('1.5').error).toContain('正整数')
-    expect(parseCloneDepth('abc').error).toContain('正整数')
-    expect(parseCloneDepth('10001').error).toContain('上限')
+    expect(parseCloneDepth('', zhT)).toEqual({ depth: null, error: null })
+    expect(parseCloneDepth('1', zhT)).toEqual({ depth: 1, error: null })
+    expect(parseCloneDepth(' 12 ', zhT)).toEqual({ depth: 12, error: null })
+    expect(parseCloneDepth('0', zhT).error).toContain('正整数')
+    expect(parseCloneDepth('-3', zhT).error).toContain('正整数')
+    expect(parseCloneDepth('1.5', zhT).error).toContain('正整数')
+    expect(parseCloneDepth('abc', zhT).error).toContain('正整数')
+    expect(parseCloneDepth('10001', zhT).error).toContain('上限')
   })
 })

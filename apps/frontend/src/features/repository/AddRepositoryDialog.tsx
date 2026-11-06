@@ -22,7 +22,7 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
   const dialogRef = useRef<HTMLElement>(null)
   const destination = parent ? `${parent.replace(/[\\/]+$/, '')}${parent.includes('\\') ? '\\' : '/'}${name}` : ''
   const validName = Boolean(name.trim()) && !/^[.]+$|[<>:"/\\|?*\x00-\x1f]|[. ]$/.test(name)
-  const cloneDepth = parseCloneDepth(depth)
+  const cloneDepth = parseCloneDepth(depth, t)
   const canSubmit = validName && Boolean(parent.trim()) && (mode !== 'clone' || (Boolean(source.trim()) && !cloneDepth.error))
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null
