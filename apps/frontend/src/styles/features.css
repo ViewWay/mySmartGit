@@ -1746,3 +1746,77 @@
 .ai-assistant-result pre { max-height: 180px; margin: 0; padding: 7px 8px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: 11px/1.55 var(--font-code); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .ai-assistant-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* W3-6 凭据与运行时设置：SSH 密钥、credential.helper、Git 运行时探测。 */
+
+.credentials-panel { display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; min-height: 0; }
+
+.credentials-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+
+.credentials-heading h2 { margin: 0; font-size: 14px; }
+
+.credentials-heading p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+.credentials-card { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.credentials-card-title { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
+
+.credentials-card-title small { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 400; }
+
+.credentials-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 14px; }
+
+.credentials-field { display: grid; gap: 2px; min-width: 0; }
+
+.credentials-field span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+
+.credentials-field strong { font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.credentials-mono { font-family: var(--font-code); font-size: 10px; }
+
+.credentials-muted { color: var(--muted); font-size: 11px; }
+
+.credentials-notice { padding: 7px 9px; border: 1px solid color-mix(in srgb, #ffc53d 35%, transparent); border-radius: 7px; background: color-mix(in srgb, #ffc53d 10%, transparent); color: #ffd666; font-size: 11px; line-height: 1.5; }
+
+.credentials-error { color: #ff7875; font-size: 11px; line-height: 1.5; }
+
+.credentials-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.credentials-input { min-width: 0; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-3); color: var(--text); font: inherit; font-size: 11px; }
+
+.credentials-input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.credentials-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+
+.credentials-table th { padding: 5px 7px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 10px; font-weight: 500; text-align: left; white-space: nowrap; }
+
+.credentials-table td { padding: 6px 7px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+
+.credentials-table tr:last-child td { border-bottom: 0; }
+
+.credentials-key-name { display: flex; align-items: center; gap: 5px; min-width: 0; }
+
+.credentials-key-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.credentials-badge { display: inline-block; padding: 1px 5px; border-radius: 999px; background: var(--panel-3); color: var(--muted); font-size: 9px; line-height: 1.5; }
+
+.credentials-badge.ok { color: #73d13d; background: color-mix(in srgb, #73d13d 12%, transparent); }
+
+.credentials-badge.warn { color: #ffc53d; background: color-mix(in srgb, #ffc53d 12%, transparent); }
+
+.credentials-fingerprint { font-family: var(--font-code); font-size: 10px; color: var(--muted); }
+
+.credentials-empty { padding: 14px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 11px; text-align: center; }
+
+.credentials-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; align-items: end; }
+
+.credentials-check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+
+.credentials-segment { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-3); }
+
+.credentials-segment button { padding: 3px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+
+.credentials-segment button.active { background: var(--accent-dim); color: var(--accent-text); font-weight: 600; }
+
+.credentials-segment button:disabled { opacity: .45; cursor: not-allowed; }
+
+.credentials-agent-list { margin: 0; padding-left: 16px; color: var(--muted); font-family: var(--font-code); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }

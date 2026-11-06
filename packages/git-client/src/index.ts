@@ -982,3 +982,72 @@ export async function generateCommitMessage(
     options,
   })
 }
+
+// ---------------------------------------------------------------------------
+// W3-6 SSH 密钥、凭据助手与 Git 运行时（apps/desktop/src/git_credentials.rs）
+//
+// 所有调用都只传结构化参数；后端对文件名、密钥类型、位数与凭据助手做白名单校验。
+// 生成密钥仅支持空口令：口令保护需要在终端执行 `ssh-keygen -p -f <私钥>`。
+// ---------------------------------------------------------------------------
+
+export type { GitRuntimeInfo, SshKeyInfo, CredentialHelperReport } from '@branchline/git-models'
+
+/** 只读探测 Git / SSH / LFS 版本、凭据助手与 ssh-agent 状态。 */
+export async function loadGitRuntimeInfo() {
+  return invoke<import('@branchline/git-models').GitRuntimeInfo>('load_git_runtime_info', {})
+}
+
+/** 设置（或传 null 清除）自定义 Git 目录；后端会校验目录内含可执行 git。 */
+export async function setCustomGitDirectory(path: string | null) {
+  return invoke<string | null>('set_custom_git_directory', { path })
+}
+
+/** 列出 ~/.ssh 下的密钥对（跳过符号链接与目录）。 */
+export async function loadSshKeys() {
+  return invoke<import('@branchline/git-models').SshKeyInfo[]>('load_ssh_keys', {})
+}
+
+/** 生成 ed25519 / rsa 密钥对（空口令）；同名文件需要 overwrite=true。 */
+export async function generateSshKey(
+  fileName: string,
+  keyType: 'ed25519' | 'rsa',
+  bits?: number | null,
+  comment?: string | null,
+  overwrite = false,
+) {
+  return invoke<import('@branchline/git-models').SshKeyInfo>('generate_ssh_key', {
+    fileName,
+    keyType,
+    bits: bits ?? null,
+    comment: comment ?? null,
+    overwrite,
+  })
+}
+
+/** 读取公钥文本（优先 .pub，只有私钥时由 ssh-keygen 推导；上限 16KB）。 */
+export async function readSshPublicKey(fileName: string) {
+  return invoke<string>('read_ssh_public_key', { fileName })
+}
+
+/** 删除密钥（可选连同 .pub）；后端拒绝目录、符号链接与路径逃逸。 */
+export async function deleteSshKey(fileName: string, alsoPublic = false) {
+  return invoke<string[]>('delete_ssh_key', { fileName, alsoPublic })
+}
+
+/** 设置 global / local 作用域的 credential.helper；空串表示清除。 */
+export async function setCredentialHelper(
+  scope: 'global' | 'local',
+  repositoryPath: string | null,
+  helper: string,
+) {
+  return invoke<import('@branchline/git-models').CredentialHelperReport>('set_credential_helper', {
+    scope,
+    repositoryPath,
+    helper,
+  })
+}
+
+/** 读取 global（或指定仓库的 local）凭据助手列表。 */
+export async function getCredentialHelpers(repositoryPath?: string | null) {
+  return invoke<string[]>('get_credential_helpers', { repositoryPath: repositoryPath ?? null })
+}
