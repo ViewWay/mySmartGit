@@ -24,6 +24,7 @@ import { DiffPanel } from '../diff/DiffPanel'
 import { CommitMessageAssistant } from '../ai/CommitMessageAssistant'
 import { useResizablePane } from '../../components/useResizablePane'
 import { commitButtonState, draftAfterAction, initialCommitMessage, templateMessage } from './commitMessage'
+import { useI18n } from '../../i18n'
 import { isBooleanRecord, usePersistentState } from '../../persistentState'
 import { stageSelectionKey, type StageSelection } from './stagingSelection'
 
@@ -55,22 +56,26 @@ function StageFilePath({ path }: { path: string }) {
   </span>
 }
 
-const fileStatusMeta: Record<string, { label: string; className: string; description: string }> = {
-  A: { label: '新增', className: 'added', description: '新增文件' },
-  M: { label: '修改', className: 'modified', description: '修改文件' },
-  D: { label: '删除', className: 'deleted', description: '删除文件' },
-  R: { label: '重命名', className: 'renamed', description: '重命名文件' },
-  C: { label: '复制', className: 'copied', description: '复制文件' },
-  U: { label: '冲突', className: 'conflicted', description: '存在冲突' },
+const fileStatusKeys: Record<string, { label: string; className: string; description: string }> = {
+  A: { label: 'stage.status.add', className: 'added', description: 'stage.status.addDescription' },
+  M: { label: 'stage.status.modified', className: 'modified', description: 'stage.status.modifiedDescription' },
+  D: { label: 'stage.status.deleted', className: 'deleted', description: 'stage.status.deletedDescription' },
+  R: { label: 'stage.status.renamed', className: 'renamed', description: 'stage.status.renamedDescription' },
+  C: { label: 'stage.status.copied', className: 'copied', description: 'stage.status.copiedDescription' },
+  U: { label: 'stage.status.conflict', className: 'conflicted', description: 'stage.status.conflictDescription' },
 }
 const UNMERGED_FILE_TYPES = new Set(['U', 'DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
 
-function getFileStatus(type: string) {
+function getFileStatus(type: string, t: (key: string) => string) {
   const code = type.trim().charAt(0).toUpperCase()
-  return fileStatusMeta[code] ?? { label: type || '变更', className: 'modified', description: '文件变更' }
+  const meta = fileStatusKeys[code]
+  return meta
+    ? { label: t(meta.label), className: meta.className, description: t(meta.description) }
+    : { label: type || t('stage.status.fallback'), className: 'modified', description: t('stage.status.fallbackDescription') }
 }
 
 export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotice, onOperationChange, onOpenHistory, onOpenLineHistory, onOpenConflict }: StagingPageProps) {
+  const { t } = useI18n()
   const [fullMessage, setFullMessage] = useState('')
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false)
   const [templateDraft, setTemplateDraft] = useState('')
@@ -153,7 +158,7 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
     }
   }
   const updateStaging = async (paths: string[], mode: 'stage' | 'unstage', force = false) => {
-    if (!repository) return onNotice('请先打开本地仓库')
+    if (!repository) return onNotice(t('stage.requiresRepository'))
     const pathSet = new Set(paths)
     const previousSnapshot = repository
     const optimisticFiles = files.map((file) => pathSet.has(file.path)
@@ -183,7 +188,7 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
       } else {
         onSnapshot({ ...repository, files: updatedFiles })
         setDiffRevision((value) => value + 1)
-        onNotice(mode === 'stage' ? `已暂存 ${paths.length} 个文件` : `已取消暂存 ${paths.length} 个文件`)
+        onNotice(t(mode === 'stage' ? 'stage.stagedCount' : 'stage.unstagedCount', { count: paths.length }))
       }
     } catch (error) {
       onSnapshot(previousSnapshot)
@@ -203,8 +208,8 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
       const updatedFiles = await action(repository.path, patch)
       onSnapshot({ ...repository, files: updatedFiles })
       setDiffRevision((value) => value + 1)
-      const verb = mode === 'stage' ? '暂存' : mode === 'restore' ? '还原' : '取消暂存'
-      onNotice('已' + verb + description)
+      const verb = mode === 'stage' ? t('stage.verbStage') : mode === 'restore' ? t('stage.verbRestore') : t('stage.verbUnstage')
+      onNotice(t('stage.patchDone', { verb, description }))
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
     } finally {
@@ -213,9 +218,9 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
     }
   }
   const discard = async (paths: string[]) => {
-    if (!repository) return onNotice('请先打开本地仓库')
+    if (!repository) return onNotice(t('stage.requiresRepository'))
     if (!paths.length) return
-    const confirmed = await confirm({ title: '丢弃工作区修改', message: `确定丢弃选中的 ${paths.length} 个文件的未暂存改动？\n\n跟踪文件会恢复到当前暂存区版本，已暂存内容会保留；未跟踪文件会从磁盘永久删除。此操作无法撤销。`, confirmLabel: '丢弃', variant: 'danger' })
+    const confirmed = await confirm({ title: t('stage.discardWorkingChanges'), message: `确定丢弃选中的 ${paths.length} 个文件的未暂存改动？\n\n跟踪文件会恢复到当前暂存区版本，已暂存内容会保留；未跟踪文件会从磁盘永久删除。此操作无法撤销。`, confirmLabel: t('stage.discard'), variant: 'danger' })
     if (!confirmed) return
     setBusy(true)
     try {
@@ -230,13 +235,13 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
     }
   }
   const quickStash = (scope: 'staged' | 'unstaged', count: number) => repository
-    ? run(() => createScopedRepositoryStash(repository.path, scope, `快速 Stash：${scope === 'staged' ? '已暂存' : '未暂存'}变更`), `已将 ${count} 个${scope === 'staged' ? '已暂存' : '未暂存'}文件保存到 Stash`)
-    : onNotice('快速 Stash 需要先打开本地仓库')
+    ? run(() => createScopedRepositoryStash(repository.path, scope, `快速 Stash：${scope === 'staged' ? t('stage.staged') : t('stage.unstaged')}变更`), `已将 ${count} 个${scope === 'staged' ? t('stage.staged') : t('stage.unstaged')}文件保存到 Stash`)
+    : onNotice(t('stage.quickStashRequiresRepository'))
   const commit = () => {
-    if (!repository) return onNotice('请先打开本地仓库')
+    if (!repository) return onNotice(t('stage.requiresRepository'))
     const message = fullMessage
-    if (!message.trim()) return onNotice('提交信息不能为空')
-    return run(() => commitRepository(repository.path, message, amend, sign), '提交完成，工作区已刷新', '正在创建提交…')
+    if (!message.trim()) return onNotice(t('stage.commitMessageRequired'))
+    return run(() => commitRepository(repository.path, message, amend, sign), t('stage.commitDone'), t('stage.committing'))
   }
   const saveRepositoryTemplate = async () => {
     if (!repository) return
@@ -245,7 +250,7 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
       const snapshot = await updateRepositoryCommitTemplate(repository.path, templateDraft)
       onSnapshot(snapshot)
       setTemplateEditorOpen(false)
-      onNotice('当前仓库提交模板已保存')
+      onNotice(t('stage.templateSaved'))
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
     } finally {
@@ -259,7 +264,7 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
       const snapshot = await clearRepositoryCommitTemplate(repository.path)
       onSnapshot(snapshot)
       setTemplateEditorOpen(false)
-      onNotice('当前仓库已恢复使用全局提交模板')
+      onNotice(t('stage.templateReset'))
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
     } finally {
@@ -269,25 +274,25 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
   const fileRow = (file: RepositoryFile, action: () => void, icon: 'add' | 'remove', scope: 'staged' | 'unstaged') => {
     const Icon = icon === 'add' ? Plus : Minus
     const FileIcon = file.path.includes('.') ? FileCode2 : FileText
-    const status = getFileStatus(file.type)
+    const status = getFileStatus(file.type, t)
     const selection = { path: file.path, scope }
     return <div className={`stage-file ${stageSelectionKey(selectedFile) === stageSelectionKey(selection) ? 'active' : ''}`} key={`${scope}-${file.path}`} onContextMenu={(event) => { event.preventDefault(); setSelectedFile(selection); setContextFile({ file, scope, x: event.clientX, y: event.clientY }) }}>
-      <button className={`stage-file-open ${file.incoming ? 'has-incoming' : ''}`} onClick={() => { setSelectedFile(selection); setWidePreview(false) }} title={`点击查看 ${file.path} 的变更，右键查看更多操作`}><FileIcon size={15}/><span className={`stage-file-status ${status.className}`} title={status.description}>{status.label}</span><StageFilePath path={file.path}/>{file.incoming && <span className="stage-file-incoming" title="远端待拉取提交也修改了此文件"><ArrowDown size={13}/></span>}<span className="stage-file-stats"><small className="additions">+{file.add}</small><small className="deletions">-{file.del}</small></span></button>
+      <button className={`stage-file-open ${file.incoming ? 'has-incoming' : ''}`} onClick={() => { setSelectedFile(selection); setWidePreview(false) }} title={`点击查看 ${file.path} 的变更，右键查看更多操作`}><FileIcon size={15}/><span className={`stage-file-status ${status.className}`} title={status.description}>{status.label}</span><StageFilePath path={file.path}/>{file.incoming && <span className="stage-file-incoming" title={t('stage.remoteAlsoTouchedFile')}><ArrowDown size={13}/></span>}<span className="stage-file-stats"><small className="additions">+{file.add}</small><small className="deletions">-{file.del}</small></span></button>
       <div className="stage-file-actions">
-        {scope === 'unstaged' && <Button variant="danger" className="stage-file-action" onClick={() => void discard([file.path])} disabled={busy} title="丢弃未暂存改动"><Trash2 size={13}/></Button>}
-        <button className="stage-file-action" onClick={action} disabled={busy} title={icon === 'add' ? '暂存文件' : '取消暂存'}><Icon size={13}/></button>
+        {scope === 'unstaged' && <Button variant="danger" className="stage-file-action" onClick={() => void discard([file.path])} disabled={busy} title={t('stage.discardUnstaged')}><Trash2 size={13}/></Button>}
+        <button className="stage-file-action" onClick={action} disabled={busy} title={icon === 'add' ? t('stage.stageFiles') : t('stage.unstage')}><Icon size={13}/></button>
       </div>
     </div>
   }
 
   const forceStageConflict = async (file: RepositoryFile) => {
-    if (!await confirm({ title: '强制暂存冲突文件', message: `“${file.path}”仍处于冲突状态。\n\n强行暂存会将当前工作区内容写入暂存区，包括未处理的冲突标记。确定继续吗？`, confirmLabel: '强制暂存', variant: 'danger' })) return
+    if (!await confirm({ title: t('stage.forceStageConflicted'), message: `“${file.path}”仍处于冲突状态。\n\n强行暂存会将当前工作区内容写入暂存区，包括未处理的冲突标记。确定继续吗？`, confirmLabel: t('stage.forceStage'), variant: 'danger' })) return
     await stage([file.path], true)
   }
 
   const conflictRow = (file: RepositoryFile) => <div className="stage-file conflict-file" key={`conflict-${file.path}`}>
-    <button className="stage-file-open" onClick={() => onOpenConflict?.(file.path)} title={`处理 ${file.path} 的冲突`}><FileCode2 size={15}/><span className="stage-file-status conflicted">冲突</span><StageFilePath path={file.path}/><span className="stage-file-stats"><small className="additions">+{file.add}</small><small className="deletions">-{file.del}</small></span></button>
-    <div className="stage-file-actions"><button className="stage-file-action force-stage" onClick={() => forceStageConflict(file)} disabled={busy} title="强制暂存冲突文件" aria-label="强制暂存冲突文件"><Plus size={14}/></button></div>
+    <button className="stage-file-open" onClick={() => onOpenConflict?.(file.path)} title={`处理 ${file.path} 的冲突`}><FileCode2 size={15}/><span className="stage-file-status conflicted">{t('stage.status.conflict')}</span><StageFilePath path={file.path}/><span className="stage-file-stats"><small className="additions">+{file.add}</small><small className="deletions">-{file.del}</small></span></button>
+    <div className="stage-file-actions"><button className="stage-file-action force-stage" onClick={() => forceStageConflict(file)} disabled={busy} title={t('stage.forceStageConflicted')} aria-label={t('stage.forceStageConflicted')}><Plus size={14}/></button></div>
   </div>
 
   const commitButton = commitButtonState({ stagedCount: stagedFiles.length, busy, amend })
@@ -299,26 +304,26 @@ export function StagingPage({ repository, undoCommitMessage, onSnapshot, onNotic
       <div className="staging-control-pane" style={{ gridTemplateRows: `${filesHeight.value}px 1px minmax(230px, 1fr)` }}>
         <div className="staging-file-sections">
           {conflictFiles.length > 0 && <div className="stage-section conflict-section">
-            <div className="stage-section-header"><div className="stage-section-name"><span className="stage-section-marker"/><strong>冲突</strong><span className="stage-section-count">{conflictFiles.length}</span></div><span className="stage-section-hint">解决后可暂存</span></div>
+            <div className="stage-section-header"><div className="stage-section-name"><span className="stage-section-marker"/><strong>{t('stage.status.conflict')}</strong><span className="stage-section-count">{conflictFiles.length}</span></div><span className="stage-section-hint">{t('stage.resolveThenStage')}</span></div>
             <div className="stage-section-files">{conflictFiles.map(conflictRow)}</div>
           </div>}
           <div className={`stage-section staged-section ${sectionOpen.staged ? '' : 'collapsed'}`}>
-            <div className="stage-section-header"><button type="button" className="stage-section-toggle" onClick={() => setSectionOpen((value) => ({ ...value, staged: !value.staged }))} aria-expanded={sectionOpen.staged} title={sectionOpen.staged ? '收起已暂存文件' : '展开已暂存文件'}><ChevronDown size={14}/></button><div className="stage-section-name"><span className="stage-section-marker"/><strong>已暂存</strong><span className="stage-section-count">{stagedFiles.length}</span></div><div className="stage-section-actions"><button className="icon-tool-button" onClick={() => quickStash('staged', stagedFiles.length)} disabled={!stagedFiles.length || busy} title="快速 Stash 已暂存变更" aria-label="快速 Stash 已暂存变更"><Archive size={14}/></button><button className="icon-tool-button" onClick={() => unstage(stagedFiles.map((file) => file.path))} disabled={!stagedFiles.length || busy} title="全部取消暂存" aria-label="全部取消暂存"><Minus size={14}/></button></div></div>
-            {sectionOpen.staged && <div className="stage-section-files">{stagedFiles.length ? stagedFiles.map((file) => fileRow(file, () => unstage([file.path]), 'remove', 'staged')) : <div className="stage-empty">暂无已暂存文件</div>}</div>}
+            <div className="stage-section-header"><button type="button" className="stage-section-toggle" onClick={() => setSectionOpen((value) => ({ ...value, staged: !value.staged }))} aria-expanded={sectionOpen.staged} title={sectionOpen.staged ? t('stage.collapseStaged') : t('stage.expandStaged')}><ChevronDown size={14}/></button><div className="stage-section-name"><span className="stage-section-marker"/><strong>{t('stage.staged')}</strong><span className="stage-section-count">{stagedFiles.length}</span></div><div className="stage-section-actions"><button className="icon-tool-button" onClick={() => quickStash('staged', stagedFiles.length)} disabled={!stagedFiles.length || busy} title={t('stage.quickStashStaged')} aria-label={t('stage.quickStashStaged')}><Archive size={14}/></button><button className="icon-tool-button" onClick={() => unstage(stagedFiles.map((file) => file.path))} disabled={!stagedFiles.length || busy} title={t('stage.unstageAll')} aria-label={t('stage.unstageAll')}><Minus size={14}/></button></div></div>
+            {sectionOpen.staged && <div className="stage-section-files">{stagedFiles.length ? stagedFiles.map((file) => fileRow(file, () => unstage([file.path]), 'remove', 'staged')) : <div className="stage-empty">{t('stage.noStagedFiles')}</div>}</div>}
           </div>
           <div className={`stage-section unstaged-section ${sectionOpen.unstaged ? '' : 'collapsed'}`}>
-            <div className="stage-section-header"><button type="button" className="stage-section-toggle" onClick={() => setSectionOpen((value) => ({ ...value, unstaged: !value.unstaged }))} aria-expanded={sectionOpen.unstaged} title={sectionOpen.unstaged ? '收起未暂存文件' : '展开未暂存文件'}><ChevronDown size={14}/></button><div className="stage-section-name"><span className="stage-section-marker"/><strong>未暂存</strong><span className="stage-section-count">{unstagedFiles.length}</span></div><div className="stage-section-actions"><Button variant="danger" className="icon-tool-button" onClick={() => void discard(unstagedFiles.map((file) => file.path))} disabled={!unstagedFiles.length || busy} title="全部丢弃未暂存改动" aria-label="全部丢弃未暂存改动"><Trash2 size={14}/></Button><button className="icon-tool-button" onClick={() => quickStash('unstaged', unstagedFiles.length)} disabled={!unstagedFiles.length || busy} title="快速 Stash 未暂存变更" aria-label="快速 Stash 未暂存变更"><Archive size={14}/></button><button className="icon-tool-button" onClick={() => stage(unstagedFiles.map((file) => file.path))} disabled={!unstagedFiles.length || busy} title="全部暂存" aria-label="全部暂存"><Plus size={14}/></button></div></div>
-            {sectionOpen.unstaged && <div className="stage-section-files">{unstagedFiles.length ? unstagedFiles.map((file) => fileRow(file, () => stage([file.path]), 'add', 'unstaged')) : <div className="stage-empty"><Check size={14}/> 工作区干净</div>}</div>}
+            <div className="stage-section-header"><button type="button" className="stage-section-toggle" onClick={() => setSectionOpen((value) => ({ ...value, unstaged: !value.unstaged }))} aria-expanded={sectionOpen.unstaged} title={sectionOpen.unstaged ? t('stage.collapseUnstaged') : t('stage.expandUnstaged')}><ChevronDown size={14}/></button><div className="stage-section-name"><span className="stage-section-marker"/><strong>{t('stage.unstaged')}</strong><span className="stage-section-count">{unstagedFiles.length}</span></div><div className="stage-section-actions"><Button variant="danger" className="icon-tool-button" onClick={() => void discard(unstagedFiles.map((file) => file.path))} disabled={!unstagedFiles.length || busy} title={t('stage.discardAllUnstaged')} aria-label={t('stage.discardAllUnstaged')}><Trash2 size={14}/></Button><button className="icon-tool-button" onClick={() => quickStash('unstaged', unstagedFiles.length)} disabled={!unstagedFiles.length || busy} title={t('stage.quickStashUnstaged')} aria-label={t('stage.quickStashUnstaged')}><Archive size={14}/></button><button className="icon-tool-button" onClick={() => stage(unstagedFiles.map((file) => file.path))} disabled={!unstagedFiles.length || busy} title={t('stage.stageAll')} aria-label={t('stage.stageAll')}><Plus size={14}/></button></div></div>
+            {sectionOpen.unstaged && <div className="stage-section-files">{unstagedFiles.length ? unstagedFiles.map((file) => fileRow(file, () => stage([file.path]), 'add', 'unstaged')) : <div className="stage-empty"><Check size={14}/> {t('stage.cleanWorktree')}</div>}</div>}
           </div>
         </div>
-        <span className={`workspace-resizer workspace-resizer-row ${filesHeight.resizing ? 'active' : ''}`} role="separator" aria-label="拖动调整文件列表和提交面板高度" onPointerDown={filesHeight.beginResize}/>
-        <div className="commit-compose"><div className="template-row"><span title={repository?.commitTemplate?.path}><FileText size={14}/> {repository?.commitTemplate ? `模板：${fileName(repository.commitTemplate.path)}` : '未配置 commit.template'}</span><div className="template-row-actions"><button type="button" className="template-icon-button" onClick={applyConfiguredTemplate} disabled={!repository?.commitTemplate} title="重新应用模板" aria-label="重新应用模板"><RefreshCw size={14}/></button><button type="button" className="template-icon-button" onClick={() => { setTemplateDraft(repository?.commitTemplate?.content ?? ''); setTemplateEditorOpen(true) }} title="编辑模板" aria-label="编辑模板"><Pencil size={14}/></button></div></div><textarea className="commit-full-message" value={fullMessage} onChange={(event) => setFullMessage(event.target.value)} aria-label="完整提交信息" placeholder="输入完整提交信息" spellCheck={false}/><CommitMessageAssistant repositoryPath={repository?.path ?? ''} currentMessage={fullMessage} onApply={setFullMessage} onNotice={onNotice}/><div className="commit-options"><label><input type="checkbox" checked={amend} onChange={(event) => setAmend(event.target.checked)}/> Amend</label><label><input type="checkbox" checked={sign} onChange={(event) => setSign(event.target.checked)}/> 签名</label></div><Button variant="primary" onClick={commit} disabled={commitButton.disabled}><GitCommitHorizontal size={16}/> {commitButton.label} <span>⌘↵</span></Button></div>
+        <span className={`workspace-resizer workspace-resizer-row ${filesHeight.resizing ? 'active' : ''}`} role="separator" aria-label={t('stage.filesResizer')} onPointerDown={filesHeight.beginResize}/>
+        <div className="commit-compose"><div className="template-row"><span title={repository?.commitTemplate?.path}><FileText size={14}/> {repository?.commitTemplate ? `模板：${fileName(repository.commitTemplate.path)}` : t('stage.noCommitTemplate')}</span><div className="template-row-actions"><button type="button" className="template-icon-button" onClick={applyConfiguredTemplate} disabled={!repository?.commitTemplate} title={t('stage.reapplyTemplate')} aria-label={t('stage.reapplyTemplate')}><RefreshCw size={14}/></button><button type="button" className="template-icon-button" onClick={() => { setTemplateDraft(repository?.commitTemplate?.content ?? ''); setTemplateEditorOpen(true) }} title={t('stage.editTemplate')} aria-label={t('stage.editTemplate')}><Pencil size={14}/></button></div></div><textarea className="commit-full-message" value={fullMessage} onChange={(event) => setFullMessage(event.target.value)} aria-label={t('stage.fullCommitMessage')} placeholder={t('stage.fullCommitMessagePlaceholder')} spellCheck={false}/><CommitMessageAssistant repositoryPath={repository?.path ?? ''} currentMessage={fullMessage} onApply={setFullMessage} onNotice={onNotice}/><div className="commit-options"><label><input type="checkbox" checked={amend} onChange={(event) => setAmend(event.target.checked)}/> Amend</label><label><input type="checkbox" checked={sign} onChange={(event) => setSign(event.target.checked)}/> {t('stage.sign')}</label></div><Button variant="primary" onClick={commit} disabled={commitButton.disabled}><GitCommitHorizontal size={16}/> {commitButton.label} <span>⌘↵</span></Button></div>
       </div>
-      <span className={`workspace-resizer workspace-resizer-column ${stagingWidth.resizing ? 'active' : ''}`} role="separator" aria-label="拖动调整文件面板和 Diff 宽度" onPointerDown={stagingWidth.beginResize}/>
-      <div className="staging-preview-pane">{selectedDiffEntry ? <DiffPanel files={[selectedDiffEntry.file]} repositoryPath={repository?.path} loadRows={loadStagingRows} viewKey={stageSelectionKey(selectedFile)} reloadKey={String(diffRevision)} wide={widePreview} onWideChange={setWidePreview} hideFileList actionScope={selectedDiffEntry.scope} actionsBusy={busy} onStagePatch={(_path, patch, description) => void applySelectedPatch('stage', patch, description)} onRestorePatch={(_path, patch, description) => void applySelectedPatch('restore', patch, description)} onUnstagePatch={(_path, patch, description) => void applySelectedPatch('unstage', patch, description)} onOpenLineHistory={(path, line, _side, row) => { if (row.kind === 'add') onNotice('未提交的新增或修改行尚无提交历史，请查询对应旧版本行或提交后再查看'); else onOpenLineHistory(path, row.old ?? line) }}/>: <div className="drawer-preview-empty"><FileCode2 size={30}/><strong>选择文件查看变更</strong><span>点击左侧文件即可查看完整内容、统一 Diff 或并排 Diff。</span></div>}</div>
+      <span className={`workspace-resizer workspace-resizer-column ${stagingWidth.resizing ? 'active' : ''}`} role="separator" aria-label={t('stage.panesResizer')} onPointerDown={stagingWidth.beginResize}/>
+      <div className="staging-preview-pane">{selectedDiffEntry ? <DiffPanel files={[selectedDiffEntry.file]} repositoryPath={repository?.path} loadRows={loadStagingRows} viewKey={stageSelectionKey(selectedFile)} reloadKey={String(diffRevision)} wide={widePreview} onWideChange={setWidePreview} hideFileList actionScope={selectedDiffEntry.scope} actionsBusy={busy} onStagePatch={(_path, patch, description) => void applySelectedPatch('stage', patch, description)} onRestorePatch={(_path, patch, description) => void applySelectedPatch('restore', patch, description)} onUnstagePatch={(_path, patch, description) => void applySelectedPatch('unstage', patch, description)} onOpenLineHistory={(path, line, _side, row) => { if (row.kind === 'add') onNotice(t('stage.workingLineNoHistory')); else onOpenLineHistory(path, row.old ?? line) }}/>: <div className="drawer-preview-empty"><FileCode2 size={30}/><strong>{t('stage.pickFile')}</strong><span>{t('stage.pickFileHint')}</span></div>}</div>
     </div>
-    {templateEditorOpen && <div className="template-editor-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) setTemplateEditorOpen(false) }}><section className="template-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="template-editor-title"><header className="template-editor-heading"><div><h2 id="template-editor-title">编辑提交模板</h2><span title={repository?.commitTemplate?.path}>{repository?.commitTemplate?.path ?? '当前仓库 commit.template'}</span></div><button type="button" className="template-editor-close" onClick={() => setTemplateEditorOpen(false)} disabled={busy} aria-label="关闭模板编辑器">×</button></header><div className="template-editor-body"><textarea value={templateDraft} onChange={(event) => setTemplateDraft(event.target.value)} aria-label="当前仓库完整提交模板" placeholder="输入当前仓库的完整提交模板" spellCheck={false} autoFocus /></div><footer className="template-editor-actions"><Button variant="secondary" onClick={() => setTemplateEditorOpen(false)} disabled={busy}>取消</Button><Button variant="secondary" onClick={() => void restoreGlobalTemplate()} disabled={busy}>恢复全局模板</Button><Button variant="primary" onClick={() => void saveRepositoryTemplate()} disabled={busy}>保存当前仓库模板</Button></footer></section></div>}
-    {contextFile && <ContextMenu x={contextFile.x} y={contextFile.y} onClose={() => setContextFile(null)}><div className="context-menu-title"><FileText size={13}/><span>{contextFile.file.path}</span></div><button onClick={() => { onOpenHistory(contextFile.file.path, 'history'); setContextFile(null) }}><History size={14}/><span>查看文件历史</span></button><button onClick={() => { onOpenHistory(contextFile.file.path, 'blame'); setContextFile(null) }}><Rows3 size={14}/><span>查看逐行归属（Blame）</span></button><div className="context-menu-separator"/><button onClick={() => { navigator.clipboard?.writeText(contextFile.file.path).catch(() => undefined); setContextFile(null) }}><Copy size={14}/><span>复制文件路径</span></button>{contextFile.scope === 'unstaged' && <><div className="context-menu-separator"/><Button variant="danger" onClick={() => { const path = contextFile.file.path; setContextFile(null); void discard([path]) }}><Trash2 size={14}/><span>丢弃未暂存改动…</span></Button></>}</ContextMenu>}
+    {templateEditorOpen && <div className="template-editor-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) setTemplateEditorOpen(false) }}><section className="template-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="template-editor-title"><header className="template-editor-heading"><div><h2 id="template-editor-title">{t('stage.templateEditorTitle')}</h2><span title={repository?.commitTemplate?.path}>{repository?.commitTemplate?.path ?? t('stage.templateEditorSubtitle')}</span></div><button type="button" className="template-editor-close" onClick={() => setTemplateEditorOpen(false)} disabled={busy} aria-label={t('stage.closeTemplateEditor')}>×</button></header><div className="template-editor-body"><textarea value={templateDraft} onChange={(event) => setTemplateDraft(event.target.value)} aria-label={t('stage.templateEditorLabel')} placeholder={t('stage.templateEditorPlaceholder')} spellCheck={false} autoFocus /></div><footer className="template-editor-actions"><Button variant="secondary" onClick={() => setTemplateEditorOpen(false)} disabled={busy}>{t('common.cancel')}</Button><Button variant="secondary" onClick={() => void restoreGlobalTemplate()} disabled={busy}>{t('stage.restoreGlobalTemplate')}</Button><Button variant="primary" onClick={() => void saveRepositoryTemplate()} disabled={busy}>{t('stage.saveRepositoryTemplate')}</Button></footer></section></div>}
+    {contextFile && <ContextMenu x={contextFile.x} y={contextFile.y} onClose={() => setContextFile(null)}><div className="context-menu-title"><FileText size={13}/><span>{contextFile.file.path}</span></div><button onClick={() => { onOpenHistory(contextFile.file.path, 'history'); setContextFile(null) }}><History size={14}/><span>{t('stage.fileHistory')}</span></button><button onClick={() => { onOpenHistory(contextFile.file.path, 'blame'); setContextFile(null) }}><Rows3 size={14}/><span>{t('stage.fileBlame')}</span></button><div className="context-menu-separator"/><button onClick={() => { navigator.clipboard?.writeText(contextFile.file.path).catch(() => undefined); setContextFile(null) }}><Copy size={14}/><span>{t('stage.copyFilePath')}</span></button>{contextFile.scope === 'unstaged' && <><div className="context-menu-separator"/><Button variant="danger" onClick={() => { const path = contextFile.file.path; setContextFile(null); void discard([path]) }}><Trash2 size={14}/><span>{t('stage.discardUnstagedProgress')}</span></Button></>}</ContextMenu>}
     {confirmDialog}
   </section>
 }
