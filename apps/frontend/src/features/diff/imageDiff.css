@@ -1,0 +1,177 @@
+/* W2-8 图片 / SVG 差异预览。合并后可迁入 styles/features.css（本轨道无权修改样式总入口）。
+   只消费 tokens.css 的语义变量，不写死颜色。 */
+
+.image-diff-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.image-diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-chrome);
+}
+
+.image-diff-toolbar .image-diff-spacer {
+  flex: 1 1 auto;
+}
+
+.image-diff-zoom-readout {
+  min-width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.image-diff-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-chrome);
+}
+
+.image-diff-meta dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  margin: 0;
+}
+
+.image-diff-meta dt {
+  color: var(--text-tertiary);
+}
+
+.image-diff-meta dd {
+  margin: 0;
+  font-family: var(--font-code);
+}
+
+.image-diff-hint {
+  color: var(--warning);
+}
+
+/* 工具条上的一句话摘要（新增/删除/无像素差异），不参与压缩，也不抢按钮的焦点。 */
+.image-diff-meta-hint {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-diff-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.image-diff-transparent-backing {
+  background-color: var(--surface-base);
+}
+
+.image-diff-side-by-side {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  width: 100%;
+  align-items: start;
+}
+
+.image-diff-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.image-diff-cell-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.image-diff-frame {
+  position: relative;
+  display: block;
+  margin: 0 auto;
+  line-height: 0;
+  outline: 1px solid var(--border-subtle);
+}
+
+.image-diff-image {
+  display: block;
+  image-rendering: auto;
+}
+
+.image-diff-image.pixelated {
+  image-rendering: pixelated;
+}
+
+.image-diff-image--clipped {
+  position: absolute;
+  inset: 0;
+}
+
+.image-diff-canvas {
+  display: block;
+  outline: 1px solid var(--border-subtle);
+}
+
+.image-diff-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-chrome);
+}
+
+.image-diff-slider-row input[type='range'] {
+  flex: 1 1 auto;
+}
+
+.image-diff-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--surface-chrome);
+  color: var(--text-secondary);
+  max-width: 520px;
+}
+
+.image-diff-message strong {
+  color: var(--text-primary);
+}
+
+.image-diff-message-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.image-diff-message code {
+  font-family: var(--font-code);
+  color: var(--accent-text);
+  word-break: break-all;
+}
