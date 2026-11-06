@@ -6,6 +6,7 @@ import { abortRepositoryOperation, continueRepositoryOperation, launchConflictMe
 import { Button } from '../../components/Button'
 import { useConfirmDialog } from '../../components/ConfirmDialog'
 import { acquireOperationLock, releaseOperationLock } from './operationLock'
+import { asPanelKind, canSkipOperation, continueActionLabel, showsStepRoute, stepRouteLabel } from './operationKind'
 import { hasConflictMarkers, isDraftDirty, isSideAvailable, normalizeConflictDraft, parseConflictBlocks, resolveConflictBlockInText, type ResolutionStrategy } from './conflictDraft'
 import { canRedoDraft, canUndoDraft, createDraftHistory, pushDraftHistory, redoDraftHistory, undoDraftHistory, type DraftChangeReason, type DraftHistory } from './draftHistory'
 import { paneLabels, resolveAllBlocks } from './threePane'
@@ -288,7 +289,10 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
   const totalSteps = operation?.totalSteps ?? 0
   const completedSteps = useMemo(() => operation?.steps.filter((step) => step.status === 'applied').length ?? 0, [operation?.steps])
 
-  if (!operation) return <section className="workspace-empty"><Check size={36}/><strong>没有待处理的 Git 操作</strong><span>合并、变基或 Cherry-pick 产生冲突后，会在这里逐文件处理。</span></section>
+  if (!operation) return <section className="workspace-empty"><Check size={36}/><strong>没有待处理的 Git 操作</strong><span>合并、变基、还原或 Cherry-pick 产生冲突后，会在这里逐文件处理。</span></section>
+
+  // kind 字符串由后端下发；revert（任务 #24）经本地超集收敛后再比较，保持编译期安全。
+  const kind = asPanelKind(operation.kind)
 
   const canUndo = canUndoDraft(historyRef.current)
   const canRedo = canRedoDraft(historyRef.current)
@@ -312,19 +316,19 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
   return <section className={`operation-page workspace-page ${loading ? 'operation-busy' : ''}`} aria-busy={loading} onKeyDown={handlePanelKeyDown}>
     <div className="operation-heading operation-statusbar">
       <div className="operation-heading-title">
-        <span className={`operation-kind operation-kind-${operation.kind}`}>{operation.kind === 'rebase' ? <GitPullRequest size={15}/> : operation.kind === 'merge' ? <GitMerge size={15}/> : <CircleAlert size={15}/>}</span>
+        <span className={`operation-kind operation-kind-${operation.kind}`}>{kind === 'rebase' ? <GitPullRequest size={15}/> : kind === 'merge' ? <GitMerge size={15}/> : kind === 'revert' ? <RotateCcw size={15}/> : <CircleAlert size={15}/>}</span>
         <strong>{operation.label}</strong>
-        <span className="operation-status-meta">{operation.kind === 'rebase' ? `${completedSteps} / ${operation.steps.length || totalSteps} 个提交` : `${conflicts.length} 个冲突文件`}</span>
+        <span className="operation-status-meta">{kind === 'rebase' ? `${completedSteps} / ${operation.steps.length || totalSteps} 个提交` : kind === 'revert' && totalSteps > 1 ? `还原第 ${currentStep} / ${totalSteps} 步 · ${conflicts.length} 个冲突文件` : `${conflicts.length} 个冲突文件`}</span>
       </div>
       <div className="operation-actions">
-        <Button variant="secondary" onClick={() => void runOperation(() => continueRepositoryOperation(repository.path), '操作已继续')} disabled={loading || conflicts.length > 0 || operation.kind === 'conflict'}>{loading ? <RefreshCw className="spin" size={14}/> : <ChevronRight size={14}/>} {loading ? '正在继续…' : operation.kind === 'rebase' ? '继续变基' : '继续操作'}</Button>
-        {(operation.kind === 'rebase' || operation.kind === 'cherry-pick') && <Button variant="secondary" onClick={() => void runOperation(() => skipRepositoryOperation(repository.path), '已跳过当前提交')} disabled={loading}><SkipForward size={14}/>跳过提交</Button>}
-        <Button variant="danger" onClick={() => void (async () => { if (await confirm({ title: '中止 Git 操作', message: '确定中止当前 Git 操作？未完成的合并或变基将被撤销。', confirmLabel: '中止', variant: 'danger' })) await runOperation(() => abortRepositoryOperation(repository.path), '已中止 Git 操作') })()} disabled={loading || operation.kind === 'conflict'}><Square size={13}/>中止</Button>
+        <Button variant="secondary" onClick={() => void runOperation(() => continueRepositoryOperation(repository.path), '操作已继续')} disabled={loading || conflicts.length > 0 || kind === 'conflict'}>{loading ? <RefreshCw className="spin" size={14}/> : <ChevronRight size={14}/>} {loading ? '正在继续…' : continueActionLabel(kind)}</Button>
+        {canSkipOperation(kind) && <Button variant="secondary" onClick={() => void runOperation(() => skipRepositoryOperation(repository.path), '已跳过当前提交')} disabled={loading}><SkipForward size={14}/>跳过提交</Button>}
+        <Button variant="danger" onClick={() => void (async () => { if (await confirm({ title: '中止 Git 操作', message: '确定中止当前 Git 操作？未完成的合并、变基或还原将被撤销。', confirmLabel: '中止', variant: 'danger' })) await runOperation(() => abortRepositoryOperation(repository.path), '已中止 Git 操作') })()} disabled={loading || kind === 'conflict'}><Square size={13}/>中止</Button>
         {onClose && <Button variant="icon" onClick={onClose} disabled={loading} title="返回提交图谱"><X size={15}/></Button>}
       </div>
     </div>
 
-    {operation.kind === 'rebase' && operation.steps.length > 0 && <details className="rebase-route"><summary><GitBranch size={13}/>变基线路 <span>{currentStep && totalSteps ? `第 ${currentStep} / ${totalSteps} 步` : '准备中'}</span></summary><div className="rebase-steps">{operation.steps.map((step) => <div className={`rebase-step ${step.status}`} key={step.hash}><span className="rebase-step-line"/><span className="rebase-step-dot"/><div><strong>{step.title}</strong><small>{step.shortHash} · {step.author}</small></div><span className="rebase-step-status">{step.status === 'applied' ? '已完成' : step.status === 'current' ? '当前冲突' : '待处理'}</span></div>)}</div></details>}
+    {showsStepRoute(kind) && operation.steps.length > 0 && <details className="rebase-route"><summary><GitBranch size={13}/>{stepRouteLabel(kind)} <span>{currentStep && totalSteps ? `第 ${currentStep} / ${totalSteps} 步` : '准备中'}</span></summary><div className="rebase-steps">{operation.steps.map((step) => <div className={`rebase-step ${step.status}`} key={step.hash}><span className="rebase-step-line"/><span className="rebase-step-dot"/><div><strong>{step.title}</strong><small>{step.shortHash} · {step.author}</small></div><span className="rebase-step-status">{step.status === 'applied' ? '已完成' : step.status === 'current' ? '当前冲突' : '待处理'}</span></div>)}</div></details>}
 
     <div className={`conflict-workspace${viewMode === 'three' ? ' tp-workspace-wide' : ''}`}>
       <div className="conflict-editor inline-resolution">
