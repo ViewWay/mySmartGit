@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, Save, X } from 'lucide-react'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap } from '@codemirror/commands'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
@@ -217,8 +217,9 @@ export const ConflictCodeEditor = forwardRef<ConflictCodeEditorHandle, ConflictC
         doc: value,
         extensions: [
           lineNumbers(),
-          history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          // 撤销/重做统一由面板的草稿历史栈管理（draftHistory）：
+          // 块操作、批量选边、恢复冲突和手工编辑共享一条可测的栈，避免两套历史互相打架。
+          keymap.of(defaultKeymap),
           conflictEditorTheme,
           syntaxHighlighting(conflictHighlightStyle, { fallback: true }),
           conflictDecorationField,
