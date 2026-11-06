@@ -1,4 +1,7 @@
 import type { BisectStatus, BlameLine, CommandLogEntry, ConflictFileContent, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot, RebasePreview, ReflogEntry, RemoteOperationReport, RepositoryBranchTracking, RepositoryCommitStats, RepositoryComparison, RepositoryDiffLine, RepositoryFile, RepositoryRemoteDetail, RepositorySnapshot, RepositorySubmoduleDetail, RepositoryTagDetail, SubmoduleOperationReport, SubmodulePointerDiff } from '@branchline/git-models'
+import { BranchlineCommandError } from './errors'
+
+export { BranchlineCommandError } from './errors'
 
 export type {
   RepositoryDetails,
@@ -69,10 +72,14 @@ export function isTauriRuntime() {
 
 async function invoke<T>(command: string, args: Record<string, unknown>) {
   if (!isTauriRuntime()) {
-    throw new Error('本地仓库操作需要桌面版。请运行 pnpm desktop:dev。')
+    throw new BranchlineCommandError('errors.desktopOnly')
   }
   const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
-  return tauriInvoke<T>(command, args)
+  try {
+    return await tauriInvoke<T>(command, args)
+  } catch (error) {
+    throw BranchlineCommandError.from(error)
+  }
 }
 
 export async function loadRepository(path: string) {

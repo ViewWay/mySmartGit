@@ -10,6 +10,7 @@
     "desktop:dev": "pnpm --filter @branchline/desktop dev",
     "desktop:build": "pnpm --filter @branchline/desktop build",
     "typecheck": "pnpm --filter @branchline/frontend exec tsc -b",
+    "test:git-client": "pnpm --filter @branchline/git-client test",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:i18n:update": "node scripts/check-i18n.mjs --update",
     "check:error-codes": "node scripts/check-error-codes.mjs",
