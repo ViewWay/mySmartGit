@@ -13,8 +13,11 @@ mod git_recovery;
 mod git_history_edit;
 mod git_search;
 mod git_submodule;
+mod menu;
 mod models;
 mod repository_management;
+
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,10 +25,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|_app| {
+        .setup(|app| {
             // 自定义 / 随包 Git 目录必须在任何 Git 子进程启动前前置到 PATH。
             git_credentials::configure_process_path();
+            let runtime = menu::MenuRuntime::default();
+            if let Ok(built) = menu::build_menu(app.handle(), &runtime.labels, &runtime.state) {
+                let _ = app.set_menu(built);
+            }
+            app.manage(std::sync::Mutex::new(runtime));
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            let id = event.id().0.clone();
+            let _ = app.emit("menu-action", menu::MenuAction { id, payload: None });
         })
         .invoke_handler(tauri::generate_handler![
             commands::load_repository_details,
@@ -212,6 +224,9 @@ pub fn run() {
             crate::git_terminal::save_pipeline_commands,
             crate::git_terminal::run_pipeline_command,
             crate::git_terminal::cancel_pipeline_command,
+            // W6 原生菜单
+            menu::set_menu_language,
+            menu::sync_menu_state,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Branchline 失败");
