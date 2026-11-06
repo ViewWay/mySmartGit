@@ -674,3 +674,31 @@ export type SubmoduleOperationReport = {
   snapshot?: RepositorySnapshot | null
 }
 
+
+// ---------------------------------------------------------------------------
+// W3-3 流式提交历史（游标分页 / 有界 / 可取消）——与 models.rs 同名结构对齐
+// ---------------------------------------------------------------------------
+
+/** 历史流类型：graph=提交图谱；file=文件历史（--follow）；line=行历史（-L）。 */
+export type HistoryStreamKind = 'graph' | 'file' | 'line'
+
+/**
+ * 流式历史一页：`sessionId` 指向后端持续读取中的 `git log` 子进程会话。
+ * 翻页从同一进程快照续读：已发行条目不受期间新提交影响（游标稳定、不重不漏）。
+ * `truncated=true` 表示本页有超出字符预算的标题/正文被显式截断（见 notice）；
+ * 字节预算只会推迟记录到下一页，绝不静默丢数据（靠 `hasMore` 续取）。
+ */
+export type RepositoryHistoryPage = {
+  sessionId: string
+  kind: HistoryStreamKind
+  /** 仅 graph 流非空；lane 携带跨页一致的轨道状态。 */
+  commits: RepositoryCommit[]
+  /** 仅 file/line 流非空。 */
+  entries: FileHistoryEntry[]
+  /** 会话累计已发出条数（含本页）。 */
+  emitted: number
+  hasMore: boolean
+  truncated: boolean
+  notice?: string | null
+  pageBytes: number
+}

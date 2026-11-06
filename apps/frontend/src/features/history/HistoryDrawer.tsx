@@ -1,9 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GitCommitHorizontal, History, Rows3, X } from 'lucide-react'
 import { Button } from '../../components/Button'
-import { loadFileBlame, loadFileCommitDiff, loadFileHistory, loadLineHistory, type BlameLine, type FileHistoryEntry } from '../../repository'
+import {
+  cancelRepositoryHistoryStream,
+  loadFileBlame,
+  loadFileCommitDiff,
+  loadRepositoryFileHistoryNextPage,
+  loadRepositoryLineHistoryNextPage,
+  startRepositoryFileHistoryStream,
+  startRepositoryLineHistoryStream,
+  type BlameLine,
+  type FileHistoryEntry,
+} from '../../repository'
+import { HISTORY_PAGE_SIZE, mergeHistoryEntries } from './historyDepth'
 import { DiffPanel } from '../diff/DiffPanel'
 import { formatLocalDateTime } from '../../dateTime'
+
+type HistoryStreamInfo = { sessionId: string; hasMore: boolean }
 
 type HistoryDrawerProps = {
   repositoryPath?: string
@@ -34,6 +47,18 @@ export function HistoryDrawer({ repositoryPath, filePath, initialTab = 'history'
   const [activeLineNumber, setActiveLineNumber] = useState<number | undefined>(lineNumber)
   const [blameLineLoading, setBlameLineLoading] = useState(false)
   const [wideDiff, setWideDiff] = useState(false)
+  const [fileStream, setFileStream] = useState<HistoryStreamInfo | null>(null)
+  const [lineStream, setLineStream] = useState<HistoryStreamInfo | null>(null)
+  const [fileMoreLoading, setFileMoreLoading] = useState(false)
+  const [lineMoreLoading, setLineMoreLoading] = useState(false)
+
+  // 关闭抽屉/切换文件时取消在跑的历史流：不留僵尸会话，过期响应直接丢弃。
+  const fileSessionId = fileStream?.sessionId
+  const lineSessionId = lineStream?.sessionId
+  useEffect(() => () => {
+    if (fileSessionId) void cancelRepositoryHistoryStream(fileSessionId)
+    if (lineSessionId) void cancelRepositoryHistoryStream(lineSessionId)
+  }, [fileSessionId, lineSessionId])
 
   useEffect(() => {
     setTab(initialTab)
@@ -49,44 +74,92 @@ export function HistoryDrawer({ repositoryPath, filePath, initialTab = 'history'
     setLineHistory([])
     setBlame([])
     setSelectedHash(null)
+    setFileStream(null)
+    setLineStream(null)
     setHistoryError(null)
     setBlameError(null)
     setLineHistoryError(null)
+    const startFile = startRepositoryFileHistoryStream(repositoryPath, filePath, HISTORY_PAGE_SIZE)
+    const startLine = lineNumber ? startRepositoryLineHistoryStream(repositoryPath, filePath, lineNumber, revision, HISTORY_PAGE_SIZE) : Promise.resolve(null)
     Promise.allSettled([
-      loadFileHistory(repositoryPath, filePath),
+      startFile,
       loadFileBlame(repositoryPath, filePath, revision),
-      lineNumber ? loadLineHistory(repositoryPath, filePath, lineNumber, revision) : Promise.resolve([]),
+      startLine,
     ]).then(([historyResult, blameResult, lineHistoryResult]) => {
-      if (cancelled) return
+      if (cancelled) {
+        // 迟到的流会话也必须取消，绝不让旧任务的流继续占资源。
+        if (historyResult.status === 'fulfilled' && historyResult.value) void cancelRepositoryHistoryStream(historyResult.value.sessionId)
+        if (lineHistoryResult.status === 'fulfilled' && lineHistoryResult.value) void cancelRepositoryHistoryStream(lineHistoryResult.value.sessionId)
+        return
+      }
       let fileEntries: FileHistoryEntry[] = []
       let lineEntries: FileHistoryEntry[] = []
-      if (historyResult.status === 'fulfilled') {
-        fileEntries = historyResult.value
+      if (historyResult.status === 'fulfilled' && historyResult.value) {
+        const page = historyResult.value
+        fileEntries = page.entries
         setHistory(fileEntries)
+        setFileStream({ sessionId: page.sessionId, hasMore: page.hasMore })
+        if (page.truncated && page.notice) setHistoryError(page.notice)
       }
-      else setHistoryError(String(historyResult.reason))
+      else if (historyResult.status === 'rejected') setHistoryError(String(historyResult.reason))
       if (blameResult.status === 'fulfilled') setBlame(blameResult.value)
       else setBlameError(String(blameResult.reason))
-      if (lineHistoryResult.status === 'fulfilled') {
-        lineEntries = lineHistoryResult.value
+      if (lineHistoryResult.status === 'fulfilled' && lineHistoryResult.value) {
+        const page = lineHistoryResult.value
+        lineEntries = page.entries
         setLineHistory(lineEntries)
+        setLineStream({ sessionId: page.sessionId, hasMore: page.hasMore })
+        if (page.truncated && page.notice) setLineHistoryError(page.notice)
       }
-      else setLineHistoryError(String(lineHistoryResult.reason))
+      else if (lineHistoryResult.status === 'rejected') setLineHistoryError(String(lineHistoryResult.reason))
       setSelectedHash((initialTab === 'line' ? lineEntries[0] : fileEntries[0])?.hash ?? fileEntries[0]?.hash ?? null)
     }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [filePath, initialTab, lineNumber, repositoryPath, revision])
+
+  const loadMoreFileHistory = useCallback(() => {
+    if (!fileStream || fileMoreLoading) return
+    setFileMoreLoading(true)
+    loadRepositoryFileHistoryNextPage(fileStream.sessionId, HISTORY_PAGE_SIZE)
+      .then((page) => {
+        setHistory((current) => mergeHistoryEntries(current, page))
+        setFileStream({ sessionId: page.sessionId, hasMore: page.hasMore })
+        if (page.truncated && page.notice) setHistoryError(page.notice)
+      })
+      .catch((error) => setHistoryError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setFileMoreLoading(false))
+  }, [fileMoreLoading, fileStream])
+
+  const loadMoreLineHistory = useCallback(() => {
+    if (!lineStream || lineMoreLoading) return
+    setLineMoreLoading(true)
+    loadRepositoryLineHistoryNextPage(lineStream.sessionId, HISTORY_PAGE_SIZE)
+      .then((page) => {
+        setLineHistory((current) => mergeHistoryEntries(current, page))
+        setLineStream({ sessionId: page.sessionId, hasMore: page.hasMore })
+        if (page.truncated && page.notice) setLineHistoryError(page.notice)
+      })
+      .catch((error) => setLineHistoryError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setLineMoreLoading(false))
+  }, [lineMoreLoading, lineStream])
 
   useEffect(() => {
     if (!repositoryPath || !filePath || !selectedBlame) return
     let cancelled = false
     setBlameLineLoading(true)
     setLineHistory([])
+    setLineStream(null)
     setLineHistoryError(null)
-    loadLineHistory(repositoryPath, filePath, selectedBlame.line, revision)
-      .then((entries) => {
-        if (cancelled) return
+    startRepositoryLineHistoryStream(repositoryPath, filePath, selectedBlame.line, revision, HISTORY_PAGE_SIZE)
+      .then((page) => {
+        if (cancelled) {
+          void cancelRepositoryHistoryStream(page.sessionId)
+          return
+        }
+        const entries = page.entries
         setLineHistory(entries)
+        setLineStream({ sessionId: page.sessionId, hasMore: page.hasMore })
+        if (page.truncated && page.notice) setLineHistoryError(page.notice)
         setSelectedHash(entries.find((entry) => entry.hash === selectedBlame.hash)?.hash ?? entries[0]?.hash ?? null)
       })
       .catch((error) => { if (!cancelled) setLineHistoryError(error instanceof Error ? error.message : String(error)) })
@@ -118,6 +191,13 @@ export function HistoryDrawer({ repositoryPath, filePath, initialTab = 'history'
         {!(tab === 'line' && blameLineLoading) && (tab === 'line' ? lineHistoryError : historyError) && <div className="history-empty error">{tab === 'line' ? lineHistoryError : historyError}</div>}
         {!(tab === 'line' && blameLineLoading) && !(tab === 'line' ? lineHistoryError : historyError) && activeHistory.map((entry) => <button className={`file-history-row ${selectedEntry?.hash === entry.hash ? 'active' : ''}`} key={entry.hash} onClick={() => { setSelectedHash(entry.hash); setWideDiff(false) }}><span className="history-node"><GitCommitHorizontal size={12}/></span><div><strong title={entry.title}>{entry.title}</strong><span title={`${entry.author} · ${formatLocalDateTime(entry.commitTime || entry.time)}`}>{entry.author} · {formatLocalDateTime(entry.commitTime || entry.time, false)}</span></div><code title={entry.hash}>{entry.shortHash}</code></button>)}
         {!(tab === 'line' && blameLineLoading) && !(tab === 'line' ? lineHistoryError : historyError) && !activeHistory.length && <div className="history-empty">{tab === 'line' ? `第 ${activeLineNumber} 行暂无可追踪的提交历史` : '该文件暂无提交历史'}</div>}
+        {(() => {
+          const isLineTab = tab === 'line'
+          const hasMore = isLineTab ? lineStream?.hasMore : fileStream?.hasMore
+          const loadingMore = isLineTab ? lineMoreLoading : fileMoreLoading
+          if (!hasMore || !activeHistory.length) return null
+          return <button className="history-load-more" disabled={loadingMore} onClick={isLineTab ? loadMoreLineHistory : loadMoreFileHistory}>{loadingMore ? '正在续取历史…' : '加载更多提交'}</button>
+        })()}
       </div>
       {selectedEntry ? <section className="file-history-detail">
         <div className="file-history-commit"><div><strong>{selectedEntry.title}</strong><code>{selectedEntry.hash}</code></div><dl><div><dt>作者</dt><dd>{selectedEntry.author} &lt;{selectedEntry.email}&gt;</dd></div><div><dt>提交人</dt><dd>{selectedEntry.committer} &lt;{selectedEntry.committerEmail}&gt;</dd></div><div><dt>提交时间</dt><dd>{formatLocalDateTime(selectedEntry.commitTime || selectedEntry.time)}</dd></div><div><dt>父级</dt><dd>{selectedEntry.parents.length ? selectedEntry.parents.join(', ') : '根提交'}</dd></div></dl><pre>{selectedEntry.message}</pre></div>

@@ -708,3 +708,80 @@ export async function cloneRepositoryWithSubmodules(
     singleBranch,
   })
 }
+
+// ---------------------------------------------------------------------------
+// W3-3 流式提交历史：游标分页 / 有界 / 可取消（apps/desktop/src/git.rs）
+//
+// 一次「开始」= 后端一个持续读取中的 `git log` 子进程会话；翻页从同一流快照
+// 续读，已发行条目不受期间新提交影响。切仓库 / 换分支 / 重开抽屉前必须先
+// cancelRepositoryHistoryStream（或仓库级 cancelRepositoryHistory），否则旧
+// 任务会被下一次 start 自动替换（同仓库同类型只保留最新一条流）。
+// ---------------------------------------------------------------------------
+
+export type { HistoryStreamKind, RepositoryHistoryPage } from '@branchline/git-models'
+
+/** 提交图谱流：从 `git log --all --date-order` 快照流式取第一页（无总上限）。 */
+export async function startRepositoryHistoryStream(repositoryPath: string, pageSize?: number | null) {
+  return invoke<import('@branchline/git-models').RepositoryHistoryPage>('start_repository_history_stream', {
+    repositoryPath,
+    pageSize: pageSize ?? null,
+  })
+}
+
+/** 图谱续页：滚动到底部时调用；hasMore=false 即历史读完。 */
+export async function loadRepositoryHistoryNextPage(sessionId: string, pageSize?: number | null) {
+  return invoke<import('@branchline/git-models').RepositoryHistoryPage>('load_repository_history_next_page', {
+    sessionId,
+    pageSize: pageSize ?? null,
+  })
+}
+
+/** 文件历史流：保留 --follow，重命名跨页可继续追踪（替代旧 200 条硬上限）。 */
+export async function startRepositoryFileHistoryStream(repositoryPath: string, filePath: string, pageSize?: number | null) {
+  return invoke<import('@branchline/git-models').RepositoryHistoryPage>('start_repository_file_history_stream', {
+    repositoryPath,
+    filePath,
+    pageSize: pageSize ?? null,
+  })
+}
+
+export async function loadRepositoryFileHistoryNextPage(sessionId: string, pageSize?: number | null) {
+  return invoke<import('@branchline/git-models').RepositoryHistoryPage>('load_repository_file_history_next_page', {
+    sessionId,
+    pageSize: pageSize ?? null,
+  })
+}
+
+/** 行历史流（-L）：替代旧 200 条硬上限，可分页续取。 */
+export async function startRepositoryLineHistoryStream(
+  repositoryPath: string,
+  filePath: string,
+  line: number,
+  revision?: string | null,
+  pageSize?: number | null,
+) {
+  return invoke<import('@branchline/git-models').RepositoryHistoryPage>('start_repository_line_history_stream', {
+    repositoryPath,
+    filePath,
+    line,
+    revision: revision ?? null,
+    pageSize: pageSize ?? null,
+  })
+}
+
+export async function loadRepositoryLineHistoryNextPage(sessionId: string, pageSize?: number | null) {
+  return invoke<import('@branchline/git-models').RepositoryHistoryPage>('load_repository_line_history_next_page', {
+    sessionId,
+    pageSize: pageSize ?? null,
+  })
+}
+
+/** 取消单个流会话（kill+wait，不留僵尸）；返回是否确实存在过该会话。 */
+export async function cancelRepositoryHistoryStream(sessionId: string) {
+  return invoke<boolean>('cancel_repository_history_stream', { sessionId })
+}
+
+/** 仓库级取消：切仓库/换分支时中止该仓库全部在跑的历史流，返回被取消的会话数。 */
+export async function cancelRepositoryHistory(repositoryPath: string) {
+  return invoke<number>('cancel_repository_history', { repositoryPath })
+}
