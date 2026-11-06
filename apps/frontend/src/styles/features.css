@@ -1533,3 +1533,155 @@
   .tp-merge-grid, .tp-merge-grid.tp-merge-with-base { grid-template-columns: minmax(160px, 1fr) minmax(260px, 1.6fr) minmax(160px, 1fr); }
   .tp-pane-base { display: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   W3-4 Git LFS 与 Gitflow 面板（只追加，不改既有规则）
+   --------------------------------------------------------------------------- */
+
+.lfs-panel, .flow-panel { display: grid; gap: 14px; align-content: start; }
+
+.lfs-status-card { display: grid; gap: 10px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-3); }
+
+.lfs-status-badge { display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+
+.lfs-status-ready { border-color: color-mix(in srgb, #3fb950 40%, var(--line)); }
+
+.lfs-status-ready .lfs-status-badge { color: #3fb950; background: color-mix(in srgb, #3fb950 14%, transparent); }
+
+.lfs-status-attention { border-color: color-mix(in srgb, #d29922 42%, var(--line)); }
+
+.lfs-status-attention .lfs-status-badge { color: #d29922; background: color-mix(in srgb, #d29922 14%, transparent); }
+
+.lfs-status-unavailable { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); }
+
+.lfs-status-unavailable .lfs-status-badge { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+
+.lfs-status-card dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 14px; margin: 0; }
+
+.lfs-status-card dl > div { display: grid; gap: 2px; }
+
+.lfs-status-card dt { color: var(--faint); font-size: 10px; }
+
+.lfs-status-card dd { margin: 0; color: var(--text); font-family: var(--font-code); font-size: 12px; }
+
+.lfs-status-notice { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+.lfs-grid, .flow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+
+.lfs-grid h3, .flow-grid h3, .lfs-files-card h3, .flow-group h3, .flow-report h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; color: var(--text); font-size: 13px; }
+
+.lfs-card-hint { margin: 0 0 10px; color: var(--faint); font-size: 11px; line-height: 1.55; }
+
+.lfs-pattern-input { display: flex; gap: 8px; align-items: center; }
+
+.lfs-pattern-input input { flex: 1; min-width: 0; height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--text); background: var(--surface-base, var(--panel)); font-family: var(--font-code); font-size: 12px; }
+
+.lfs-pattern-list { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+
+.lfs-pattern-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; border: 1px solid var(--line-soft); border-radius: 7px; background: color-mix(in srgb, var(--panel-3) 60%, transparent); }
+
+.lfs-pattern-list code { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--font-code); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.lfs-empty { margin: 10px 0 0; color: var(--faint); font-size: 11px; }
+
+.lfs-operation-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+
+.lfs-action-labels { margin: 9px 0 0; color: var(--faint); font-size: 10px; }
+
+.lfs-files-card { min-width: 0; }
+
+.lfs-truncated { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 9px; padding: 6px 9px; border: 1px solid color-mix(in srgb, #d29922 38%, var(--line)); border-radius: 7px; color: #d29922; background: color-mix(in srgb, #d29922 10%, transparent); font-size: 11px; line-height: 1.5; }
+
+.lfs-file-table-wrap { overflow: auto; max-height: 360px; border: 1px solid var(--line-soft); border-radius: 8px; }
+
+.lfs-file-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+
+.lfs-file-table th { position: sticky; top: 0; z-index: 1; padding: 7px 9px; color: var(--faint); background: var(--panel-3); font-weight: 600; text-align: left; white-space: nowrap; }
+
+.lfs-file-table td { max-width: 320px; padding: 6px 9px; overflow: hidden; border-top: 1px solid var(--line-soft); color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+
+.lfs-file-table code { color: var(--muted); font-family: var(--font-code); }
+
+.lfs-downloaded { color: #3fb950; }
+
+.lfs-pointer { color: #d29922; }
+
+.lfs-error { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line)); border-radius: 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); font-size: 11px; line-height: 1.55; }
+
+.lfs-error span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+.flow-config-card, .flow-start-card { min-width: 0; }
+
+.flow-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }
+
+.flow-config-field { display: grid; gap: 4px; color: var(--muted); font-size: 10px; }
+
+.flow-config-field .branch-name-input { margin: 0; }
+
+.flow-config-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 11px; color: var(--faint); font-size: 10px; }
+
+.flow-config-footer .error { color: var(--danger); }
+
+.flow-start-kinds { display: flex; flex-wrap: wrap; gap: 7px; }
+
+.flow-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+
+.flow-group { min-width: 0; }
+
+.flow-group-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+
+.flow-group-heading p { margin: 3px 0 0; color: var(--faint); font-size: 10px; line-height: 1.5; }
+
+.flow-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; color: var(--accent-text); background: var(--accent-dim); font-size: 10px; }
+
+.flow-branch-list { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+
+.flow-branch-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid var(--line-soft); border-radius: 7px; background: color-mix(in srgb, var(--panel-3) 60%, transparent); }
+
+.flow-branch-list code { min-width: 0; overflow: hidden; color: var(--text); font-family: var(--font-code); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.flow-long-lived { color: var(--faint); font-size: 10px; white-space: nowrap; }
+
+.flow-report { border-color: var(--line); }
+
+.flow-report-success { border-color: color-mix(in srgb, #3fb950 38%, var(--line)); }
+
+.flow-report-conflict { border-color: color-mix(in srgb, #d29922 45%, var(--line)); }
+
+.flow-report-failed { border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); }
+
+.flow-report-heading { display: flex; align-items: center; gap: 10px; }
+
+.flow-report-heading h3 { margin: 0; flex: 1; }
+
+.flow-report-counts { color: var(--faint); font-size: 10px; white-space: nowrap; }
+
+.flow-report-steps { display: grid; gap: 3px; margin: 10px 0 0; padding: 0; list-style: none; }
+
+.flow-report-steps li { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+
+.flow-report-steps li > span { min-width: 30px; color: var(--muted); font-size: 10px; }
+
+.flow-report-steps li > code { color: var(--text); font-family: var(--font-code); }
+
+.flow-report-steps li > small { color: var(--faint); font-size: 10px; }
+
+.flow-step-conflict > span, .flow-step-failed > span { color: var(--danger); }
+
+.flow-step-completed > span { color: #3fb950; }
+
+.flow-step-skipped > span { color: var(--faint); }
+
+.flow-guidance { display: flex; align-items: flex-start; gap: 6px; margin: 10px 0 0; padding: 7px 9px; border: 1px solid color-mix(in srgb, #d29922 38%, var(--line)); border-radius: 7px; color: #d29922; background: color-mix(in srgb, #d29922 10%, transparent); font-size: 11px; line-height: 1.55; }
+
+.flow-report-hashes { margin: 8px 0 0; color: var(--faint); font-size: 10px; }
+
+.flow-dialog { width: min(500px, calc(100vw - 32px)); }
+
+.flow-tag-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel-3); }
+
+.flow-tag-toggle span { display: grid; gap: 2px; }
+
+.flow-tag-toggle strong { color: var(--text); font-size: 11px; }
+
+.flow-tag-toggle small { color: var(--faint); font-size: 10px; }

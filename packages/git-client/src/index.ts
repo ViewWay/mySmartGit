@@ -838,3 +838,106 @@ export async function cancelRepositoryHistoryStream(sessionId: string) {
 export async function cancelRepositoryHistory(repositoryPath: string) {
   return invoke<number>('cancel_repository_history', { repositoryPath })
 }
+
+// ---------------------------------------------------------------------------
+// W3-4 Git LFS 与 Gitflow（apps/desktop/src/git_lfs.rs / git_flow.rs）
+// 命令名与 Rust #[tauri::command] 一一对应；错误统一走 reject。
+// ---------------------------------------------------------------------------
+
+export type {
+  GitflowBranches,
+  GitflowConfig,
+  GitflowFinishOptions,
+  GitflowFinishReport,
+  GitflowKind,
+  GitflowStartReport,
+  GitflowStepReport,
+  GitflowStepStatus,
+  LfsFile,
+  LfsFilesPage,
+  LfsOperationReport,
+  LfsStatus,
+} from '@branchline/git-models'
+
+/** 仓库级 LFS 状态：可用性 / 版本 / 本地安装 / 跟踪模式 / 已跟踪文件数。 */
+export async function loadLfsStatus(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').LfsStatus>('lfs_status', { repositoryPath })
+}
+
+/** 执行 `git lfs install --local` 并返回最新状态。 */
+export async function installLfs(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').LfsStatus>('lfs_install', { repositoryPath })
+}
+
+/** 添加跟踪模式；后端校验 - 开头 / 换行 / NUL 后写回 .gitattributes。 */
+export async function trackLfsPattern(repositoryPath: string, pattern: string) {
+  return invoke<import('@branchline/git-models').LfsStatus>('lfs_track_pattern', { repositoryPath, pattern })
+}
+
+/** 移除跟踪模式；模式不存在时后端返回 git-lfs 的可操作错误。 */
+export async function untrackLfsPattern(repositoryPath: string, pattern: string) {
+  return invoke<import('@branchline/git-models').LfsStatus>('lfs_untrack_pattern', { repositoryPath, pattern })
+}
+
+/** 列出 LFS 文件；limit 缺省 500、硬上限 2000，超出显式 truncated。 */
+export async function listLfsFiles(repositoryPath: string, limit?: number | null) {
+  return invoke<import('@branchline/git-models').LfsFilesPage>('lfs_list_files', {
+    repositoryPath,
+    limit: limit ?? null,
+  })
+}
+
+/** 只填充本地 LFS 缓存，不修改工作区。 */
+export async function fetchLfsObjects(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').LfsOperationReport>('lfs_fetch', { repositoryPath })
+}
+
+/** 抓取并检出当前引用的 LFS 对象；会改动工作区，前端应先确认。 */
+export async function pullLfsObjects(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').LfsOperationReport>('lfs_pull', { repositoryPath })
+}
+
+/** 删除本地不再引用的 LFS 缓存对象；破坏性操作，前端必须先确认。 */
+export async function pruneLfsObjects(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').LfsOperationReport>('lfs_prune', { repositoryPath })
+}
+
+/** 读取本地 gitflow.* 配置（main 缺省时 main 优先、其次 master）。 */
+export async function loadGitflowConfig(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').GitflowConfig>('load_gitflow_config', { repositoryPath })
+}
+
+/** 校验并写入 gitflow.* 本地配置，返回规范化后的值。 */
+export async function saveGitflowConfig(repositoryPath: string, config: import('@branchline/git-models').GitflowConfig) {
+  return invoke<import('@branchline/git-models').GitflowConfig>('save_gitflow_config', { repositoryPath, config })
+}
+
+/** 按 feature/release/hotfix/support 前缀分组的本地分支（短名）。 */
+export async function listGitflowBranches(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').GitflowBranches>('list_gitflow_branches', { repositoryPath })
+}
+
+/** 创建并切换 Gitflow 分支；base 为空时按类型使用 develop / main。 */
+export async function startGitflowBranch(repositoryPath: string, kind: import('@branchline/git-models').GitflowKind, name: string, base?: string | null) {
+  return invoke<import('@branchline/git-models').GitflowStartReport>('start_gitflow_branch', {
+    repositoryPath,
+    kind,
+    name,
+    base: base ?? null,
+  })
+}
+
+/** 完成分支：本地 --no-ff 合并、可选打标签、删分支；冲突时保留合并状态，绝不 push。 */
+export async function finishGitflowBranch(
+  repositoryPath: string,
+  kind: import('@branchline/git-models').GitflowKind,
+  name: string,
+  options: import('@branchline/git-models').GitflowFinishOptions,
+) {
+  return invoke<import('@branchline/git-models').GitflowFinishReport>('finish_gitflow_branch', {
+    repositoryPath,
+    kind,
+    name,
+    options,
+  })
+}

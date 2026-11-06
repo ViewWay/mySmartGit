@@ -796,3 +796,108 @@ export type RepositoryHistoryPage = {
   notice?: string | null
   pageBytes: number
 }
+
+// ---------------------------------------------------------------------------
+// W3-4 Git LFS 管理（apps/desktop/src/git_lfs.rs）——与 Rust 结构逐字段对齐
+// ---------------------------------------------------------------------------
+
+/**
+ * 仓库级 LFS 状态。`available` 表示本机能否执行 `git lfs version`；
+ * `installedLocally` 表示当前仓库是否写过 filter.lfs.*（install --local）。
+ * 未安装 git-lfs 不是错误：available=false + notice 给出安装指引。
+ */
+export type LfsStatus = {
+  available: boolean
+  version?: string | null
+  installedLocally: boolean
+  /** `.gitattributes` 中 filter=lfs 的模式（后端已去重）。 */
+  patterns: string[]
+  trackedFileCount: number
+  notice?: string | null
+}
+
+export type LfsFile = {
+  /** 完整 64 字符 OID。 */
+  oid: string
+  /** 字节数；git-lfs 未给出大小时为 0。 */
+  size: number
+  path: string
+  /** true 表示工作区已下载完整对象；false 表示仍是 LFS 指针。 */
+  downloaded: boolean
+}
+
+/** `truncated=true` 表示超过请求上限（默认 500、硬上限 2000），绝不静默截断。 */
+export type LfsFilesPage = {
+  files: LfsFile[]
+  truncated: boolean
+}
+
+/** fetch / pull / prune 的成功回执；失败走 invoke 的 reject。 */
+export type LfsOperationReport = {
+  action: 'fetch' | 'pull' | 'prune' | string
+  summary: string
+  output: string
+}
+
+// ---------------------------------------------------------------------------
+// W3-4 Gitflow 工作流（apps/desktop/src/git_flow.rs）——与 Rust 结构逐字段对齐
+// ---------------------------------------------------------------------------
+
+export type GitflowKind = 'feature' | 'release' | 'hotfix' | 'support'
+
+/** 本地 git config 的 gitflow.* 键；main 缺省时 main 优先、其次 master。 */
+export type GitflowConfig = {
+  mainBranch: string
+  developBranch: string
+  featurePrefix: string
+  releasePrefix: string
+  hotfixPrefix: string
+  supportPrefix: string
+  /** 发布标签前缀，默认空。 */
+  tagPrefix: string
+}
+
+/** 分组只含去掉前缀后的短名，start / finish 直接接收短名。 */
+export type GitflowBranches = {
+  mainBranch: string
+  developBranch: string
+  feature: string[]
+  release: string[]
+  hotfix: string[]
+  support: string[]
+}
+
+export type GitflowStartReport = {
+  kind: GitflowKind
+  branch: string
+  base: string
+  head: string
+}
+
+export type GitflowFinishOptions = {
+  tag: boolean
+  tagMessage?: string | null
+}
+
+export type GitflowStepStatus = 'completed' | 'skipped' | 'failed' | 'conflict'
+
+export type GitflowStepReport = {
+  action: string
+  status: GitflowStepStatus
+  detail?: string | null
+}
+
+/**
+ * 完成报告。`conflicts=true` 时 Git 的 MERGE_HEAD 仍保留（后端不自动 abort），
+ * 用户可到现有「操作」页继续或中止；`guidance` 给出可操作说明。
+ */
+export type GitflowFinishReport = {
+  kind: GitflowKind
+  branch: string
+  completed: boolean
+  conflicts: boolean
+  steps: GitflowStepReport[]
+  guidance?: string | null
+  headBefore: string
+  headAfter: string
+}
