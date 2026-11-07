@@ -87,6 +87,9 @@
 
 .content-tabs .history-undo-button { width: auto; height: 27px; min-height: 27px; margin-bottom: 4px; padding: 0 9px; }
 
+/* 动作区（撤销/过滤）与导航 tab 之间拉开呼吸感，避免两种性质的按钮挤作一团 */
+.content-tabs > .tab-spacer + button { margin-left: 10px; }
+
 .workspace-grid { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 1px 360px; transition: grid-template-columns .22s ease; }
 
 .workspace-grid.diff-wide .inspector-pane, .workspace-grid.inspector-collapsed .inspector-pane { opacity: 0; transform: translateX(16px); pointer-events: none; }

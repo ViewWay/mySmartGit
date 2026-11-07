@@ -94,7 +94,7 @@
 
 .nav-section { padding: 10px; border-bottom: 1px solid var(--line-soft); }
 
-.nav-row, .tree-row { width: 100%; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 14px; cursor: pointer; }
+.nav-row, .tree-row { width: 100%; height: 30px; padding: 0 8px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 13px; cursor: pointer; }
 
 .nav-row:hover, .tree-row:hover { color: var(--text); background: var(--panel-3); }
 
@@ -102,13 +102,21 @@
 
 .nav-row.active svg, .tree-row.active svg { color: var(--accent); }
 
-.nav-row span:nth-child(2), .tree-row span:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 0; flex: 1; text-align: left;; }
+.nav-row span:nth-child(2), .tree-row span:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 0; flex: 1; text-align: left; }
 
 .key, .count, .nav-badge { margin-left: auto; color: var(--faint); font-size: 12px; }
 
 .nav-badge { min-width: 18px; height: 17px; padding: 0 5px; display: grid; place-items: center; border-radius: 5px; color: var(--accent); background: var(--accent-dim); }
 
 .nav-badge.muted { color: var(--muted); background: var(--surface-sunken); }
+
+/* 布局收敛：低频工具分区（远程/标签、LFS/Gitflow/凭据、托管/终端）合并呈现——
+   相邻分区不再各画一条分隔线，行高与字号降一档，与上方核心导航拉开层级。 */
+.nav-section.structure-tags-section { padding: 6px 9px; }
+
+.nav-section.structure-tags-section + .nav-section.structure-tags-section { border-bottom: 0; }
+
+.nav-section.structure-tags-section .nav-row { height: 28px; font-size: 12px; }
 
 .section-title { height: 29px; padding: 0 6px; display: flex; align-items: center; justify-content: space-between; color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 
