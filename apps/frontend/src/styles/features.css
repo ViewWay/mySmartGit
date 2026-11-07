@@ -2184,3 +2184,30 @@
   .preferences-nav { flex-direction: row; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
   .preferences-title { padding: 0 10px 0 4px; }
 }
+
+/* ---------------------------------------------------------------------------
+ * B3 Diff 审查评论：行号标记与底部评论坞
+ * ------------------------------------------------------------------------- */
+
+.diff-panel .line-no.review-clickable {
+  cursor: pointer;
+}
+
+.diff-panel .line-no.has-review::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: var(--accent, #4c8dff);
+  vertical-align: middle;
+}
+
+.diff-review-dock {
+  flex-shrink: 0;
+}
+
+.diff-review-dock .review-thread-panel {
+  max-height: 38%;
+}

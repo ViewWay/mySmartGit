@@ -14,12 +14,33 @@ import { useI18n } from '../../i18n'
 import { usePreferences } from '../../preferences'
 import { buildLineHeights, buildOffsets, indexAtOffset, offsetAtIndex } from './wrapModel'
 import { readCodeGeometry, useCodeMeasurer } from './useCodeMeasurer'
+import { ReviewThreadPanel } from '../review/ReviewThreadPanel'
+import { threadsForFile, threadLineSet } from '../review/reviewModel'
+import type { ReviewThread, ReviewThreadSide } from '@branchline/git-models'
 
 const useBrowserLayoutEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect
 
 type SplitDiffRow = { left?: RepositoryDiffLine; right?: RepositoryDiffLine }
 type SplitDiffEntry = { kind: 'row'; row: SplitDiffRow } | { kind: 'omitted'; count: number }
 export type DiffLineSide = 'old' | 'new'
+
+/**
+ * B3 审查评论接线包：宿主（App）组装后整包传入；不传则 DiffPanel 与原来完全一致。
+ * threads 为该仓库全部线程（宿主经 useReviewThreads 加载），面板内部按文件/ref 过滤。
+ */
+export type DiffReviewWiring = {
+  /** 线程锚定的版本 ref（提交 hash / 分支 / 'worktree'）。 */
+  reference: string
+  threads: ReviewThread[]
+  busy: boolean
+  error: string | null
+  onCreate: (input: { filePath: string; line: number; side: DiffLineSide; body: string }) => void
+  onReply: (threadId: string, body: string) => void
+  onResolve: (threadId: string, resolved: boolean) => void
+  onDelete: (threadId: string) => void
+  onClose: () => void
+}
+
 type PendingDiffJump = { edge: 'first' | 'last'; direction: -1 | 1; remaining: number }
 
 export function buildStagePatch(filePath: string, rows: RepositoryDiffLine[], fileType?: string, operation: 'stage' | 'restore' | 'unstage' = 'stage', sourceRows?: RepositoryDiffLine[]) {
@@ -407,9 +428,11 @@ type DiffPanelProps = {
   allowStage?: boolean
   defaultFontSize?: number
   fontSizeStorageKey?: string
+  /** B3 审查评论接线（可选）；未提供时行号无点击行为、面板不渲染。 */
+  review?: DiffReviewWiring
 }
 
-export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFile = 0, onActiveFileChange, onClose, hideFileList = false, loadRows, viewKey = '', reloadKey = '', fallbackRows = EMPTY_FALLBACK_ROWS, fallbackChangeRows = EMPTY_DIFF_ROWS, onOpenLineHistory, onStagePatch, onRestorePatch, onUnstagePatch, loadImageDiff, onOpenFileExternally, actionScope, actionsBusy = false, allowStage = false, defaultFontSize = DEFAULT_DIFF_FONT_SIZE, fontSizeStorageKey = DIFF_FONT_SIZE_KEY }: DiffPanelProps) {
+export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFile = 0, onActiveFileChange, onClose, hideFileList = false, loadRows, viewKey = '', reloadKey = '', fallbackRows = EMPTY_FALLBACK_ROWS, fallbackChangeRows = EMPTY_DIFF_ROWS, onOpenLineHistory, onStagePatch, onRestorePatch, onUnstagePatch, loadImageDiff, onOpenFileExternally, actionScope, actionsBusy = false, allowStage = false, defaultFontSize = DEFAULT_DIFF_FONT_SIZE, fontSizeStorageKey = DIFF_FONT_SIZE_KEY, review }: DiffPanelProps) {
   const { t } = useI18n()
   const preferences = usePreferences()
   const wrapEnabled = preferences.wordWrap
@@ -590,6 +613,36 @@ export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFi
   const expectedRowsKey = [activeFileIdentity, reloadKey, showWhitespace].join('\0')
   const actionsDisabled = actionsBusy || diffLoading || (usesLoader && loadedRowsKey !== expectedRowsKey)
   const lineNumberDigits = sourceRows.reduce((digits, row) => Math.max(digits, String(Math.max(row.old ?? 0, row.next ?? 0)).length), 1)
+
+  // B3 审查评论：行号点击开/关评论区；线程按当前文件 + ref 过滤，新旧行号分开标记。
+  const [reviewAnchor, setReviewAnchor] = useState<{ line: number; side: ReviewThreadSide } | null>(null)
+  useEffect(() => { setReviewAnchor(null) }, [activeFile, viewKey])
+  const fileReviewThreads = useMemo(
+    () => (review && activeFileInfo ? threadsForFile(review.threads, review.reference, activeFileInfo.path) : []),
+    [review, activeFileInfo],
+  )
+  const reviewLineMarks = useMemo(() => ({
+    old: threadLineSet(fileReviewThreads.filter((thread) => thread.side === 'old')),
+    new: threadLineSet(fileReviewThreads.filter((thread) => thread.side === 'new')),
+  }), [fileReviewThreads])
+  const activeReviewThreads = useMemo(() => (
+    reviewAnchor
+      ? fileReviewThreads.filter((thread) => thread.line === reviewAnchor.line && thread.side === reviewAnchor.side)
+      : []
+  ), [fileReviewThreads, reviewAnchor])
+  const toggleReviewAnchor = (line: number, side: ReviewThreadSide) => {
+    setReviewAnchor((current) => (current && current.line === line && current.side === side ? null : { line, side }))
+  }
+  /** 行号格子的类名与点击行为：仅当接入审查时才可点。 */
+  const renderLineNo = (side: ReviewThreadSide, line: number | null) => {
+    if (!review) return { className: 'line-no', onClick: undefined, title: undefined }
+    const marked = line != null && reviewLineMarks[side].has(line)
+    return {
+      className: `line-no${marked ? ' has-review' : ''} review-clickable`,
+      onClick: line != null ? () => toggleReviewAnchor(line, side) : undefined,
+      title: t('review.diffClickHint'),
+    }
+  }
   const contextEntries = useMemo(() => buildDiffContextEntries(sourceRows), [sourceRows])
   const unifiedEntries = useMemo<DiffContextEntry[]>(() => scope === 'file'
     ? sourceRows.map((row, sourceIndex) => ({ kind: 'line', row, sourceIndex }))
@@ -1016,12 +1069,12 @@ export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFi
   }
   const renderUnifiedEntry = (entry: DiffContextEntry, index: number) => entry.kind === 'omitted'
     ? <div className="hunk diff-omitted" style={{ height: heights[index] }} key={`omitted-${index}`}>{t('diff.omittedPrefix')} {entry.count} {t('diff.omittedSuffix')}</div>
-    : (() => { const row = entry.row; const side: DiffLineSide = row.kind === 'del' ? 'old' : 'new'; const block = row.kind !== 'same' ? changeBlock(sourceRows, entry.sourceIndex) : []; return <div data-diff-row-index={index} style={{ height: heights[index] }} className={`code-row ${row.kind} ${searchMatches.includes(index) ? 'diff-search-match' : ''} ${searchMatches[searchIndex] === index ? 'diff-search-current' : ''} ${lineMenu?.rowIndex === index && lineMenu.side === side ? 'line-context-active' : ''} ${activeChange?.fileIndex === activeFile && activeChange.rowIndex === index ? 'diff-navigation-active' : ''}`} key={index} onContextMenu={(event) => openLineMenu(event, row, index, side, entry.sourceIndex)} title={t('diff.lineHistoryHint')}>
-      {renderStageActions(block, blockActionAnchors.get(index))}<span className="line-no">{row.old ?? row.next ?? ''}</span>{renderLineAction(row, entry.sourceIndex)}<HighlightedCode code={row.code} filePath={activeFileInfo?.path ?? ''} tokens={diffHighlights.get(entry.sourceIndex)}/>
+    : (() => { const row = entry.row; const side: DiffLineSide = row.kind === 'del' ? 'old' : 'new'; const block = row.kind !== 'same' ? changeBlock(sourceRows, entry.sourceIndex) : []; const reviewSide: ReviewThreadSide = side; const reviewLine = row.kind === 'del' ? row.old : row.next; return <div data-diff-row-index={index} style={{ height: heights[index] }} className={`code-row ${row.kind} ${searchMatches.includes(index) ? 'diff-search-match' : ''} ${searchMatches[searchIndex] === index ? 'diff-search-current' : ''} ${lineMenu?.rowIndex === index && lineMenu.side === side ? 'line-context-active' : ''} ${activeChange?.fileIndex === activeFile && activeChange.rowIndex === index ? 'diff-navigation-active' : ''}`} key={index} onContextMenu={(event) => openLineMenu(event, row, index, side, entry.sourceIndex)} title={t('diff.lineHistoryHint')}>
+      {renderStageActions(block, blockActionAnchors.get(index))}{(() => { const anchorProps = renderLineNo(reviewSide, reviewLine); return <span {...anchorProps}>{row.old ?? row.next ?? ''}</span> })()}{renderLineAction(row, entry.sourceIndex)}<HighlightedCode code={row.code} filePath={activeFileInfo?.path ?? ''} tokens={diffHighlights.get(entry.sourceIndex)}/>
     </div> })()
   const renderSplitEntry = (entry: SplitDiffEntry, index: number, side: DiffLineSide) => entry.kind === 'omitted'
     ? <div className="hunk diff-omitted" style={{ height: heights[index] }} key={`omitted-${side}-${index}`}>{t('diff.omittedPrefix')} {entry.count} {t('diff.omittedSuffix')}</div>
-    : (() => { const row = side === 'old' ? entry.row.left : entry.row.right; const sourceIndex = row ? sourceRows.indexOf(row) : -1; const action = renderLineAction(row, sourceIndex); return <div data-diff-row-index={index} style={{ height: heights[index] }} className={`split-code-side ${row?.kind ?? 'empty'} ${searchMatches.includes(index) ? 'diff-search-match' : ''} ${searchMatches[searchIndex] === index ? 'diff-search-current' : ''} ${lineMenu?.rowIndex === index && lineMenu.side === side ? 'line-context-active' : ''} ${activeChange?.fileIndex === activeFile && activeChange.rowIndex === index ? 'diff-navigation-active' : ''}`} key={`${side}-${index}`} onContextMenu={(event) => openLineMenu(event, row, index, side, sourceIndex)} title={row ? t('diff.lineHistoryHint') : undefined}><span className="line-no">{side === 'old' ? row?.old ?? '' : row?.next ?? ''}</span>{action}{row ? <HighlightedCode code={row.code} filePath={activeFileInfo?.path ?? ''} tokens={diffHighlights.get(sourceIndex)}/> : <code/>}</div> })()
+    : (() => { const row = side === 'old' ? entry.row.left : entry.row.right; const sourceIndex = row ? sourceRows.indexOf(row) : -1; const action = renderLineAction(row, sourceIndex); const reviewSide: ReviewThreadSide = side; const reviewLine = side === 'old' ? row?.old ?? null : row?.next ?? null; return <div data-diff-row-index={index} style={{ height: heights[index] }} className={`split-code-side ${row?.kind ?? 'empty'} ${searchMatches.includes(index) ? 'diff-search-match' : ''} ${searchMatches[searchIndex] === index ? 'diff-search-current' : ''} ${lineMenu?.rowIndex === index && lineMenu.side === side ? 'line-context-active' : ''} ${activeChange?.fileIndex === activeFile && activeChange.rowIndex === index ? 'diff-navigation-active' : ''}`} key={`${side}-${index}`} onContextMenu={(event) => openLineMenu(event, row, index, side, sourceIndex)} title={row ? t('diff.lineHistoryHint') : undefined}>{(() => { const anchorProps = renderLineNo(reviewSide, reviewLine); return <span {...anchorProps}>{side === 'old' ? row?.old ?? '' : row?.next ?? ''}</span> })()}{action}{row ? <HighlightedCode code={row.code} filePath={activeFileInfo?.path ?? ''} tokens={diffHighlights.get(sourceIndex)}/> : <code/>}</div> })()
   const renderSplitActions = (entry: SplitDiffEntry, index: number) => {
     if (entry.kind === 'omitted') return <div className="split-action-row" style={{ height: heights[index] }} key={`actions-${index}`}/>
     const row = entry.row.left ?? entry.row.right
@@ -1081,6 +1134,16 @@ export function DiffPanel({ files, repositoryPath, wide, onWideChange, initialFi
       </div>}
       </div>
     </div>
+    {review && <div className="diff-review-dock">{reviewAnchor && activeFileInfo && <ReviewThreadPanel
+      threads={activeReviewThreads}
+      composeLine={reviewAnchor.line}
+      busy={review.busy}
+      error={review.error}
+      onCreate={(body) => { if (reviewAnchor && activeFileInfo) review.onCreate({ filePath: activeFileInfo.path, line: reviewAnchor.line, side: reviewAnchor.side, body }) }}
+      onReply={review.onReply}
+      onResolve={review.onResolve}
+      onDelete={review.onDelete}
+      onClose={() => { review.onClose(); setReviewAnchor(null) }}/>}</div>}
     {lineMenu && activeFileInfo && <ContextMenu x={lineMenu.x} y={lineMenu.y} onClose={() => setLineMenu(null)}><div className="context-menu-title"><FileCode2 size={13}/><span>{activeFileInfo.path}:{lineMenu.line} · {lineMenu.side === 'old' ? t('diff.oldLabel') : t('diff.newLabel')}</span></div>{canStage && onStagePatch && contextMenuRow?.kind !== 'same' && <button disabled={actionsDisabled} onClick={() => { applyPatch('stage', contextMenuActionRows, t('diff.singleLine')); setLineMenu(null) }}><Plus size={14}/><span>{t('diff.stageLine')}</span></button>}{canStage && onRestorePatch && contextMenuRow?.kind !== 'same' && <button disabled={actionsDisabled} onClick={() => { applyPatch('restore', contextMenuActionRows, t('diff.singleLine')); setLineMenu(null) }}><RotateCcw size={14}/><span>{t('diff.restoreLine')}</span></button>}{canUnstage && contextMenuRow?.kind !== 'same' && <button disabled={actionsDisabled} onClick={() => { applyPatch('unstage', contextMenuActionRows, t('diff.singleLine')); setLineMenu(null) }}><Minus size={14}/><span>{t('diff.unstageLine')}</span></button>}{onOpenLineHistory && <button onClick={() => { if (contextMenuRow) onOpenLineHistory(activeFileInfo.path, lineMenu.line, lineMenu.side, contextMenuRow); setLineMenu(null) }}><History size={14}/><span>{t('diff.lineHistoryAt', { line: lineMenu.line })}</span></button>}<button onClick={() => { navigator.clipboard?.writeText(lineMenu.code).catch(() => undefined); setLineMenu(null) }}><Copy size={14}/><span>{t('diff.copyLine')}</span></button></ContextMenu>}
   </section>
 }

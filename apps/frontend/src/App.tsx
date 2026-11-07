@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { abortRepositoryOperation, applyRepositoryStash, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, continueRepositoryOperation, createRepositoryBranch, createRepositoryStash, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, isTauriRuntime, loadFileCommitDiff, loadImageFileDiff, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, skipRepositoryOperation, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
+import { abortRepositoryOperation, applyRepositoryStash, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, continueRepositoryOperation, createRepositoryBranch, createRepositoryStash, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, isTauriRuntime, loadFileCommitDiff, loadImageFileDiff, loadGitUserConfig, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, skipRepositoryOperation, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
 import { ContextMenu } from './components/ContextMenu'
 import { Button } from './components/Button'
 import { CompactSelect } from './components/CompactSelect'
@@ -51,6 +51,7 @@ import { isBooleanRecord, usePersistentState } from './persistentState'
 import { DEFAULT_HISTORY_COLUMN_WIDTHS, DEFAULT_HISTORY_VISIBLE_COLUMNS, isHistoryColumnWidths, isHistoryVisibleColumns } from './features/history/historyColumns'
 import { committerInitials, committerName, isHistoryCommitVisibleOnSelectedBranches, matchesCommitterFilter, reachableHistoryCommitIds, toggleFilterValue, unloadedHistoryBranches } from './features/history/historyFilters'
 import { acquireOperationLock, releaseOperationLock } from './features/operation/operationLock'
+import { useReviewThreads } from './features/review/useReviewThreads'
 import {
   Archive,
   AlertTriangle,
@@ -833,6 +834,29 @@ export default function App() {
   const selectedStashReference = selectedCommitBase.status === 'stash'
     ? repository?.stashes.find((stash) => stash.hash === selectedStatsKey)?.reference ?? null
     : null
+
+  // B3 历史区 Diff 的行级审查评论：线程锚定当前提交（工作区锚定 'worktree'）。
+  const commitReview = useReviewThreads({ repositoryPath: repository?.path ?? null })
+  const reviewAuthorRef = useRef('')
+  useEffect(() => {
+    let cancelled = false
+    loadGitUserConfig()
+      .then((config) => { if (!cancelled) reviewAuthorRef.current = config.userName })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+  const commitReviewWiring = useMemo(() => ({
+    reference: selectedWorkingTree ? 'worktree' : selectedStatsKey,
+    threads: commitReview.threads,
+    busy: commitReview.status === 'loading',
+    error: commitReview.error,
+    onCreate: (input: { filePath: string; line: number; side: 'old' | 'new'; body: string }) =>
+      commitReview.actions.addThread({ ...input, author: reviewAuthorRef.current }),
+    onReply: (threadId: string, body: string) => commitReview.actions.reply(threadId, body, reviewAuthorRef.current),
+    onResolve: (threadId: string, resolved: boolean) => commitReview.actions.setResolved(threadId, resolved),
+    onDelete: (threadId: string) => commitReview.actions.remove(threadId),
+    onClose: () => undefined,
+  }), [commitReview, selectedStatsKey, selectedWorkingTree])
   useEffect(() => {
     if (!structureRepository) {
       structureRepositoryPath.current = null
@@ -1540,7 +1564,7 @@ export default function App() {
       <div className={`workspace-grid ${wideDiff && diffFile !== null ? 'diff-wide' : ''} ${inspectorCollapsed ? 'inspector-collapsed' : ''}`} style={{ gridTemplateColumns: `minmax(0, 1fr) ${inspectorVisible ? 1 : 0}px ${inspectorVisible ? inspectorWidth : 0}px` }}>
         {workspaceView === 'history' && <section className="history-pane">
           <CommitList key={repository.path} commits={activeCommits} selected={selected} onSelect={(id) => { setSelected(id); setInspectorCollapsed(false) }} query={query} searchMode={searchMode} searchAction={searchAction} onSearchSummaryChange={handleSearchSummaryChange} branchFilter={branchFilter} timeFilter={timeFilter} currentBranch={repository.branch} remoteBranches={repository.remoteBranches} branchTracking={repository.branchTracking} tags={repository.tags} stashReferences={stashReferences} inspectorCollapsed={inspectorCollapsed} onToggleInspector={() => setInspectorCollapsed((value) => !value)} onMergeCommit={(commit) => { const remote = commit.branches?.find((reference) => repository.remoteBranches.includes(reference) || repository.remoteBranches.includes(reference.replace(/^refs\/remotes\//, ''))); const normalized = remote?.replace(/^refs\/remotes\//, ''); void handleMergeReference(remote ?? commit.fullHash ?? commit.id, remote ? t('history.mergeBranchLabel', { name: normalized ?? '' }) : t('history.mergeCommitLabel', { id: commit.id })) }} onCherryPickCommit={(commit) => void handleCherryPickCommit(commit)} onResetCommit={(commit) => void handleResetCommit(commit)} onRevertCommit={(commit) => void handleRevertCommit(commit)} onRebaseCommit={(commit) => void handleRebaseCommit(commit)} onTagCommit={(commit) => void handleTagCommit(commit)} onCompareCommit={handleCompareCommit} onCopyCommit={(commit, mode) => void copyText(mode === 'hash' ? commit.fullHash ?? commit.id : formatCommitClipboard(commit, t), mode === 'hash' ? (commit.status === 'stash' ? t('history.copiedStashHash', { id: commit.id }) : t('history.copiedCommitHash', { id: commit.id })) : (commit.status === 'stash' ? t('history.copiedStashMessage') : t('history.copiedCommitMessage', { id: commit.id })))} onApplyStash={(reference) => void handleApplyStash(reference)} onPopStash={(reference) => void handlePopStash(reference)} onDropStash={(reference) => void handleDropStash(reference)} historyStream={historyStream} onLoadMoreHistory={() => { void loadNextHistoryPage() }}/>
-          {diffFile !== null && <div className="history-diff-overlay"><DiffPanel files={selectedCommitFiles} repositoryPath={repository.path} wide={wideDiff} onWideChange={setWideDiff} initialFile={diffFile} onActiveFileChange={setDiffFile} hideFileList loadRows={loadSelectedCommitDiff} loadImageDiff={selectedWorkingTree ? undefined : (filePath) => loadImageFileDiff(repository.path, selectedCommit.parents?.[0] ?? selectedCommit.parent ?? selectedStatsKey, selectedCommitBase.id, filePath)} onOpenFileExternally={(filePath) => { void openRevisionFileExternally(repository.path, selectedCommitBase.id, filePath).then(() => setRepositoryNotice(t('shell.exportedCopy', { path: filePath }))).catch((reason) => setRepositoryNotice(String(reason))) }} onOpenLineHistory={(path, line, side) => setHistoryTarget({ path, line, tab: 'line', revision: selectedWorkingTree ? (side === 'old' ? selectedCommit.parent : undefined) : side === 'old' ? (selectedCommit.parents?.[0] ?? selectedCommit.parent ?? selectedStatsKey) : selectedStatsKey })} onClose={() => { setDiffFile(null); setWideDiff(false) }}/></div>}
+          {diffFile !== null && <div className="history-diff-overlay"><DiffPanel files={selectedCommitFiles} repositoryPath={repository.path} wide={wideDiff} onWideChange={setWideDiff} initialFile={diffFile} onActiveFileChange={setDiffFile} hideFileList loadRows={loadSelectedCommitDiff} loadImageDiff={selectedWorkingTree ? undefined : (filePath) => loadImageFileDiff(repository.path, selectedCommit.parents?.[0] ?? selectedCommit.parent ?? selectedStatsKey, selectedCommitBase.id, filePath)} onOpenFileExternally={(filePath) => { void openRevisionFileExternally(repository.path, selectedCommitBase.id, filePath).then(() => setRepositoryNotice(t('shell.exportedCopy', { path: filePath }))).catch((reason) => setRepositoryNotice(String(reason))) }} onOpenLineHistory={(path, line, side) => setHistoryTarget({ path, line, tab: 'line', revision: selectedWorkingTree ? (side === 'old' ? selectedCommit.parent : undefined) : side === 'old' ? (selectedCommit.parents?.[0] ?? selectedCommit.parent ?? selectedStatsKey) : selectedStatsKey })} review={commitReviewWiring} onClose={() => { setDiffFile(null); setWideDiff(false) }}/></div>}
           {historyConflictPath && repository.operation && <div className="history-diff-overlay history-operation-overlay"><Suspense fallback={<section className="workspace-empty"><RefreshCw className="spin" size={28}/><strong>{t('shell.loadingConflictEditor')}</strong></section>}><OperationPanel repository={repository} onSnapshot={handleSnapshot} onNotice={setRepositoryNotice} initialPath={historyConflictPath} onReturnToChanges={() => { setHistoryConflictPath(null); setOperationPath(null) }} onClose={() => { setHistoryConflictPath(null); setOperationPath(null) }}/></Suspense></div>}
         </section>}
         {workspaceView === 'compare' && <ComparePanel repository={repository} initialBase={compareBase ?? undefined} initialTarget={compareBase ? repository?.branch : undefined} onNotice={setRepositoryNotice}/>} 

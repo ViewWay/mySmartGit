@@ -17,4 +17,5 @@ export const review = {
   'review.composePlaceholder': 'Write the first comment on line {{line}}…',
   'review.create': 'Add comment',
   'review.emptyHint': 'Click a line number to open the comment panel below the preview',
+  'review.diffClickHint': 'Click the line number to view or add comments',
 } satisfies Record<keyof typeof import('../zh/review').review, string>
