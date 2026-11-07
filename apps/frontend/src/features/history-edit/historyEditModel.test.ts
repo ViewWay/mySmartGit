@@ -15,6 +15,14 @@ import {
 } from './historyEditModel'
 import type { HistoryEditEntry } from '../../repository'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 function entry(hashSeed: string, title: string): HistoryEditEntry {
   const hash = hashSeed.repeat(40).slice(0, 40)
   return {
@@ -68,30 +76,30 @@ describe('history edit validation mirrors backend rules', () => {
   it('rejects squash/fixup without a preceding kept commit', () => {
     let rows = createRows(entries)
     rows = setRowAction(rows, 0, 'squash')
-    expect(validateRows(rows).join()).toContain('squash 之前必须有保留的提交')
+    expect(validateRows(rows, zhT).join()).toContain('squash 之前必须有保留的提交')
     rows = setRowAction(createRows(entries), 0, 'fixup')
-    expect(validateRows(rows).join()).toContain('fixup')
+    expect(validateRows(rows, zhT).join()).toContain('fixup')
     // 前一条被 drop 后 squash 同样无效。
     rows = setRowAction(setRowAction(createRows(entries), 0, 'drop'), 1, 'squash')
-    expect(validateRows(rows).join()).toContain('drop 也不行')
+    expect(validateRows(rows, zhT).join()).toContain('drop 也不行')
     // drop 不影响 pick，pick 之后的 squash 合法。
     rows = setRowAction(setRowAction(createRows(entries), 0, 'drop'), 2, 'squash')
-    expect(validateRows(rows)).toEqual([])
+    expect(validateRows(rows, zhT)).toEqual([])
   })
 
   it('requires non-empty message for reword only', () => {
     let rows = setRowAction(createRows(entries), 1, 'reword')
     rows = setRowMessage(rows, 1, '   ')
-    expect(validateRows(rows).join()).toContain('reword 需要新的提交消息')
+    expect(validateRows(rows, zhT).join()).toContain('reword 需要新的提交消息')
     rows = setRowMessage(rows, 1, '合法消息')
-    expect(validateRows(rows)).toEqual([])
+    expect(validateRows(rows, zhT)).toEqual([])
     // squash 缺省消息合法（自动合并），drop 空消息也合法。
     rows = setRowMessage(setRowAction(createRows(entries), 2, 'squash'), 2, '')
-    expect(validateRows(rows)).toEqual([])
+    expect(validateRows(rows, zhT)).toEqual([])
   })
 
   it('flags empty sequence', () => {
-    expect(validateRows([] as HistoryEditRow[]).length).toBe(1)
+    expect(validateRows([] as HistoryEditRow[], zhT).length).toBe(1)
   })
 })
 
@@ -132,7 +140,7 @@ describe('history edit todo preview', () => {
     rows = setRowAction(rows, 0, 'drop')
     rows = setRowAction(rows, 1, 'fixup')
     rows = setRowAction(rows, 2, 'edit')
-    const lines = renderTodoPreview(rows)
+    const lines = renderTodoPreview(rows, zhT)
     expect(lines[0]).toMatch(/^# drop /)
     expect(lines[1]).toBe(`pick ${entries[1].hash} # 改动 B`)
     expect(lines[2]).toContain('折叠进上一条并保留目标消息')

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { commitButtonState, draftAfterAction, initialCommitMessage } from './commitMessage'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 describe('initial commit message', () => {
   it('uses the generated merge message and removes Git comment lines', () => {
     expect(initialCommitMessage('template message', {
@@ -38,21 +46,21 @@ describe('draft after a write action', () => {
 
 describe('commit button state', () => {
   it('allows an amend with zero staged files (pure message rewrite)', () => {
-    const state = commitButtonState({ stagedCount: 0, busy: false, amend: true })
+    const state = commitButtonState({ stagedCount: 0, busy: false, amend: true }, zhT)
     expect(state.disabled).toBe(false)
     expect(state.label).toBe('修订提交信息')
   })
 
   it('stays disabled without staged files when not amending', () => {
-    expect(commitButtonState({ stagedCount: 0, busy: false, amend: false }).disabled).toBe(true)
+    expect(commitButtonState({ stagedCount: 0, busy: false, amend: false }, zhT).disabled).toBe(true)
   })
 
   it('stays disabled while busy even when amending', () => {
-    expect(commitButtonState({ stagedCount: 0, busy: true, amend: true }).disabled).toBe(true)
+    expect(commitButtonState({ stagedCount: 0, busy: true, amend: true }, zhT).disabled).toBe(true)
   })
 
   it('keeps the staged-file count in the label for normal commits', () => {
-    const state = commitButtonState({ stagedCount: 3, busy: false, amend: false })
+    const state = commitButtonState({ stagedCount: 3, busy: false, amend: false }, zhT)
     expect(state.disabled).toBe(false)
     expect(state.label).toBe('提交 3 个文件')
   })

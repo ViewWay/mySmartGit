@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getLanguage, translate } from '../../i18n'
 import {
   cancelRepositorySearch,
   loadCommitSearchPage,
@@ -52,7 +53,7 @@ export function useSearchRunner(repositoryPath: string | null | undefined) {
 
   const runCommitSearch = useCallback(async (query: CommitSearchQuery) => {
     if (!repositoryPath) {
-      setError('请先选择仓库')
+      setError(translate(getLanguage(), 'search.requiresRepository'))
       return null
     }
     const token = gateRef.current.begin()
@@ -77,7 +78,7 @@ export function useSearchRunner(repositoryPath: string | null | undefined) {
 
   const runTextSearch = useCallback(async (query: TextSearchQuery) => {
     if (!repositoryPath) {
-      setError('请先选择仓库')
+      setError(translate(getLanguage(), 'search.requiresRepository'))
       return null
     }
     const token = gateRef.current.begin()

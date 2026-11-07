@@ -2,18 +2,26 @@ import { describe, expect, it } from 'vitest'
 import type { RepositorySnapshot } from '../../repository'
 import * as workingTree from './workingTreeCommit'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 const { createWorkingTreeCommit, WORKING_TREE_COMMIT_ID } = workingTree
 
 describe('working tree history commit', () => {
   it('does not create a history node for a clean working tree', () => {
-    expect(createWorkingTreeCommit([], 'abc1234')).toBeNull()
+    expect(createWorkingTreeCommit([], 'abc1234', undefined, zhT)).toBeNull()
   })
 
   it('creates a read-only node before HEAD with aggregated file stats', () => {
     const commit = createWorkingTreeCommit([
       { path: 'src/app.ts', type: 'M', add: 7, del: 2, unstaged: true },
       { path: 'README.md', type: 'A', add: 3, del: 0, staged: true },
-    ], 'abcdef0123456789')
+    ], 'abcdef0123456789', undefined, zhT)
 
     expect(commit).toMatchObject({
       id: WORKING_TREE_COMMIT_ID,
@@ -34,7 +42,7 @@ describe('working tree history commit', () => {
       totalSteps: 1,
       conflicts: [],
       steps: [],
-    })
+    }, zhT)
 
     expect(commit).toMatchObject({
       id: WORKING_TREE_COMMIT_ID,
@@ -64,7 +72,7 @@ describe('working tree history commit', () => {
 
     const commit = createWorkingTreeCommit([
       { path: 'src/app.ts', type: 'M', add: 1, del: 0, unstaged: true },
-    ], resolveWorkingTreeParent?.(repository))
+    ], resolveWorkingTreeParent?.(repository), undefined, zhT)
 
     expect(commit?.parent).toBe('main-head')
   })

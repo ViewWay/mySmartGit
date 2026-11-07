@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useEffect, useState } from 'react'
 import { Loader2, Settings2, Sparkles } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -37,6 +38,7 @@ export type CommitMessageAssistantProps = {
  * - API Key 只提交给后端保存，界面永远不回显明文。
  */
 export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply, onNotice }: CommitMessageAssistantProps) {
+  const { t } = useI18n()
   const [settings, setSettings] = useState<AiSettings | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsError, setSettingsError] = useState<string | null>(null)
@@ -66,7 +68,7 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
         setMaxSubjectChars(loaded.maxSubjectChars)
       })
       .catch((error) => {
-        if (active) setSettingsError(describeAiError(error))
+        if (active) setSettingsError(describeAiError(error, t))
       })
     return () => {
       active = false
@@ -80,7 +82,7 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
 
   const generate = async () => {
     if (!repositoryPath) {
-      onNotice?.('请先打开本地仓库')
+      onNotice?.(t('ai.requiresRepository'))
       return
     }
     setBusy(true)
@@ -90,10 +92,10 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
       const options = normalizeAiOptions({ language, style, includeBody, maxSubjectChars })
       const generated = await generateCommitMessage(repositoryPath, options)
       setResult(generated)
-      const notice = generatedMessageNotice(generated)
+      const notice = generatedMessageNotice(generated, t)
       if (notice) onNotice?.(notice)
     } catch (error) {
-      onNotice?.(describeAiError(error))
+      onNotice?.(describeAiError(error, t))
     } finally {
       setBusy(false)
     }
@@ -116,9 +118,9 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
       setApiKey('')
       setBaseUrl(saved.baseUrl)
       setModel(saved.model)
-      onNotice?.('AI 设置已保存')
+      onNotice?.(t('ai.settingsSaved'))
     } catch (error) {
-      setSettingsError(describeAiError(error))
+      setSettingsError(describeAiError(error, t))
     } finally {
       setSaving(false)
     }
@@ -131,9 +133,9 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
       const saved = await clearAiApiKey()
       setSettings(saved)
       setApiKey('')
-      onNotice?.('已清除 AI API Key')
+      onNotice?.(t('ai.keyCleared'))
     } catch (error) {
-      setSettingsError(describeAiError(error))
+      setSettingsError(describeAiError(error, t))
     } finally {
       setSaving(false)
     }
@@ -154,28 +156,28 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
     onApply(decision.message)
     setResult(null)
     setConfirmOverwrite(false)
-    onNotice?.('AI 提交信息已应用到提交框')
+    onNotice?.(t('ai.applied'))
   }
 
   const configured = settings?.apiKeyConfigured === true
 
-  return <section className="ai-assistant" aria-label="AI 提交消息助手">
+  return <section className="ai-assistant" aria-label={t('ai.title')}>
     <div className="ai-assistant-head">
       <div className="ai-assistant-title">
         <Sparkles size={14}/>
-        <strong>AI 提交助手</strong>
-        <span className={`ai-assistant-badge${configured ? ' ready' : ''}`}>{configured ? '已配置' : '未配置 Key'}</span>
+        <strong>{t('ai.subtitle')}</strong>
+        <span className={`ai-assistant-badge${configured ? ' ready' : ''}`}>{configured ? t('ai.configured') : t('ai.keyMissing')}</span>
       </div>
       <button type="button" className="ai-assistant-link" onClick={() => setSettingsOpen((value) => !value)} aria-expanded={settingsOpen}>
-        <Settings2 size={13}/> {settingsOpen ? '收起设置' : '服务设置'}
+        <Settings2 size={13}/> {settingsOpen ? t('ai.collapseSettings') : t('ai.serviceSettings')}
       </button>
     </div>
 
     {settingsOpen && <div className="ai-assistant-settings">
-      <label>服务地址
+      <label>{t('ai.baseUrl')}
         <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" spellCheck={false}/>
       </label>
-      <label>模型
+      <label>{t('ai.model')}
         <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4o-mini" spellCheck={false}/>
       </label>
       <label>API Key
@@ -183,64 +185,64 @@ export function CommitMessageAssistant({ repositoryPath, currentMessage, onApply
           type="password"
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
-          placeholder={configured ? '已保存，留空则保持不变' : '输入 API Key'}
+          placeholder={configured ? t('ai.savedKeepHint') : t('ai.apiKeyPlaceholder')}
           autoComplete="off"
           spellCheck={false}
         />
       </label>
       <div className="ai-assistant-settings-actions">
-        <Button variant="secondary" size="compact" onClick={() => void persistSettings()} disabled={saving}>{saving ? '保存中…' : '保存设置'}</Button>
-        <Button variant="danger" size="compact" onClick={() => void removeApiKey()} disabled={saving || !configured}>清除 Key</Button>
+        <Button variant="secondary" size="compact" onClick={() => void persistSettings()} disabled={saving}>{saving ? t('ai.saving') : t('ai.saveSettings')}</Button>
+        <Button variant="danger" size="compact" onClick={() => void removeApiKey()} disabled={saving || !configured}>{t('ai.clearKey')}</Button>
       </div>
-      <p className="ai-assistant-hint">Key 仅保存在本机后端配置文件（Unix 权限 600），不会写入 Git 配置或提交。</p>
+      <p className="ai-assistant-hint">{t('ai.keyStorageNote')}</p>
     </div>}
 
     {settingsError && <p className="ai-assistant-error" role="alert">{settingsError}</p>}
 
     <div className="ai-assistant-options">
-      <label>语言
-        <select value={language} onChange={(event) => setLanguage(event.target.value as AiLanguage)} aria-label="生成语言">
-          <option value="zh">中文</option>
+      <label>{t('ai.languageLabel')}
+        <select value={language} onChange={(event) => setLanguage(event.target.value as AiLanguage)} aria-label={t('ai.languageSetting')}>
+          <option value="zh">{t('ai.langZh')}</option>
           <option value="en">English</option>
         </select>
       </label>
-      <label>风格
-        <select value={style} onChange={(event) => setStyle(event.target.value as AiMessageStyle)} aria-label="提交消息风格">
-          <option value="conventional">规范（type: summary）</option>
-          <option value="plain">普通</option>
+      <label>{t('ai.styleLabel')}
+        <select value={style} onChange={(event) => setStyle(event.target.value as AiMessageStyle)} aria-label={t('ai.styleSetting')}>
+          <option value="conventional">{t('ai.styleConventional')}</option>
+          <option value="plain">{t('ai.stylePlain')}</option>
         </select>
       </label>
       <label className="ai-assistant-check">
-        <input type="checkbox" checked={includeBody} onChange={(event) => setIncludeBody(event.target.checked)}/> 含正文
+        <input type="checkbox" checked={includeBody} onChange={(event) => setIncludeBody(event.target.checked)}/> {t('ai.styleWithBody')}
       </label>
-      <label>标题上限
+      <label>{t('ai.subjectLimitLabel')}
         <input
           type="number"
           min={AI_SUBJECT_MIN_CHARS}
           max={AI_SUBJECT_MAX_CHARS}
           value={maxSubjectChars}
           onChange={(event) => setMaxSubjectChars(Number(event.target.value))}
-          aria-label="subject 字符上限"
+          aria-label={t('ai.subjectLimitHint')}
         />
       </label>
       <Button variant="secondary" size="compact" className="ai-assistant-generate" onClick={() => void generate()} disabled={busy || !repositoryPath}>
-        {busy ? <Loader2 size={14}/> : <Sparkles size={14}/>} {busy ? '生成中…' : '生成提交信息'}
+        {busy ? <Loader2 size={14}/> : <Sparkles size={14}/>} {busy ? t('ai.generating') : t('ai.generate')}
       </Button>
     </div>
 
-    {!configured && !settingsOpen && <p className="ai-assistant-hint">尚未配置 API Key，请先在“服务设置”中保存。</p>}
+    {!configured && !settingsOpen && <p className="ai-assistant-hint">{t('ai.keyRequiredNotice')}</p>}
 
     {result && <div className="ai-assistant-result">
       <div className="ai-assistant-result-meta">
         <span>{result.model}</span>
-        {result.truncated && <span className="ai-assistant-truncated">已截断</span>}
+        {result.truncated && <span className="ai-assistant-truncated">{t('ai.truncatedBadge')}</span>}
       </div>
       <pre>{composeGeneratedMessage(result)}</pre>
       {result.note && <p className="ai-assistant-note">{result.note}</p>}
-      {confirmOverwrite && <p className="ai-assistant-confirm">提交框已有内容，确认用 AI 生成结果覆盖当前草稿？</p>}
+      {confirmOverwrite && <p className="ai-assistant-confirm">{t('ai.overwriteConfirmMessage')}</p>}
       <div className="ai-assistant-actions">
-        {confirmOverwrite && <Button variant="secondary" size="compact" onClick={() => setConfirmOverwrite(false)}>取消</Button>}
-        <Button variant="primary" size="compact" onClick={apply}>{confirmOverwrite ? '确认覆盖' : '应用到提交框'}</Button>
+        {confirmOverwrite && <Button variant="secondary" size="compact" onClick={() => setConfirmOverwrite(false)}>{t('common.cancel')}</Button>}
+        <Button variant="primary" size="compact" onClick={apply}>{confirmOverwrite ? t('ai.confirmOverwrite') : t('ai.applyToDraft')}</Button>
       </div>
     </div>}
   </section>

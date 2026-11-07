@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Search, X } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -38,6 +39,7 @@ export type CommitTreeBrowserProps = {
  * 「怎么画」全在 CommitTreeView.tsx（纯展示，可脱离后端单测），这里只管「取什么数据」。
  */
 export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally, initialPath }: CommitTreeBrowserProps) {
+  const { t } = useI18n()
   const [index, setIndex] = useState<CommitTreeIndex | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -157,9 +159,9 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
     <div className="commit-tree-pane">
       <div className="commit-tree-toolbar">
         <Search size={13}/>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="按名称过滤（仅已加载节点）" aria-label="过滤文件树"/>
-        {query && <Button variant="icon" size="compact" onClick={() => setQuery('')} title="清除过滤" aria-label="清除过滤"><X size={13}/></Button>}
-        <Button variant="icon" size="compact" onClick={() => loadTree('reload')} title="重新加载文件树" aria-label="重新加载文件树"><RefreshCw size={13}/></Button>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('repository.tree.filterPlaceholder')} aria-label={t('repository.tree.filterLabel')}/>
+        {query && <Button variant="icon" size="compact" onClick={() => setQuery('')} title={t('repository.tree.clearFilter')} aria-label={t('repository.tree.clearFilter')}><X size={13}/></Button>}
+        <Button variant="icon" size="compact" onClick={() => loadTree('reload')} title={t('repository.tree.reload')} aria-label={t('repository.tree.reload')}><RefreshCw size={13}/></Button>
       </div>
       <CommitTreeSummary
         loading={loading}
@@ -174,7 +176,7 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
         loading={loading}
         hasIndex={Boolean(index)}
         query={query}
-        label={`提交 ${reference} 的文件树`}
+        label={t('repository.tree.titleOf', { reference })}
         onActivate={handleActivate}/>
     </div>
     <CommitTreePreview

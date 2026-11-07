@@ -1,6 +1,35 @@
 import { describe, expect, it } from 'vitest'
 import type { RepositoryDiffLine } from '../../repository'
-import { buildStagePatch, changeBlock, changeLine, diffActionEdgeSpace, diffOverviewBounds, diffOverviewMarkers, diffOverviewViewport, diffSplitRowHeight, shouldJumpToFirstChange, shouldRenderLoadedRows } from './DiffPanel'
+import { buildStagePatch, changeBlock, changeLine, diffActionEdgeSpace, diffOverviewBounds, diffOverviewMarkers, diffOverviewViewport, diffSplitRowHeight, diffVirtualWindow, diffScrollTarget, diffReflowScrollTop, shouldJumpToFirstChange, shouldRenderLoadedRows } from './DiffPanel'
+
+// These fixtures catch constant-height indexing and fixed row-count viewport limits.
+describe('variable diff navigation', () => {
+  it('keeps the visible source row and relative position when width or font changes', () => {
+    expect(diffReflowScrollTop([0, 24, 1024, 1048], [0, 24, 84, 108], 524, 24)).toBe(54)
+    expect(diffReflowScrollTop([0, 24, 48], [0, 60, 120], 24, 24)).toBe(60)
+    expect(diffReflowScrollTop([0, 60, 120], [0, 24, 48], 60, 400)).toBe(0)
+  })
+
+  it('locates search/change targets after tall rows using prefix offsets', () => {
+    expect(diffScrollTarget([0, 24, 1024, 1048, 1080], 2, 400)).toBe(824)
+    expect(diffScrollTarget([0, 24, 1024], 0, 400)).toBe(0)
+  })
+
+  it('includes a partially visible tall row plus viewport-sized overscan', () => {
+    expect(diffVirtualWindow([0, 24, 1024, 1048, 1080], 800, 240, 24)).toEqual({ start: 1, end: 4 })
+  })
+
+  it('fills tall viewports rather than stopping after a fixed number of rows', () => {
+    const offsets = Array.from({ length: 401 }, (_, index) => index * 24)
+    expect(diffVirtualWindow(offsets, 0, 4000, 576)).toEqual({ start: 0, end: 191 })
+    expect(diffVirtualWindow(offsets, 6000, 3000, 576)).toEqual({ start: 226, end: 400 })
+  })
+
+  it('clamps a stale scroll position after resizing and handles an empty list', () => {
+    expect(diffVirtualWindow([0, 24, 48, 72], 900, 48, 0)).toEqual({ start: 1, end: 3 })
+    expect(diffVirtualWindow([0], 0, 400, 24)).toEqual({ start: 0, end: 0 })
+  })
+})
 
 describe('diffOverviewBounds', () => {
   it('ends above the horizontal scrollbar when it consumes viewport height', () => {

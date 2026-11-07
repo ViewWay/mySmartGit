@@ -1,3 +1,5 @@
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 import type { ImageFileDiff, MediaBlob } from '../../repository'
 
 /**
@@ -17,10 +19,8 @@ export type ImageDiffMode = 'side' | 'overlay' | 'difference'
 
 export const IMAGE_DIFF_MODES: ImageDiffMode[] = ['side', 'overlay', 'difference']
 
-export const IMAGE_MODE_LABELS: Record<ImageDiffMode, string> = {
-  side: '并排',
-  overlay: '叠加',
-  difference: '差值',
+export function imageModeLabel(mode: ImageDiffMode, t: Translate): string {
+  return mode === 'side' ? t('image.modeSideBySide') : mode === 'overlay' ? t('image.modeOverlay') : t('image.modeDifference')
 }
 
 export const ZOOM_MIN = 0.1
@@ -141,28 +141,28 @@ export function formatByteSize(bytes: number): string {
   return `${value.toFixed(digits)} ${units[index]}`
 }
 
-export function formatImageDimensions(blob: MediaBlob | null | undefined): string {
-  if (!blob) return '无此侧'
+export function formatImageDimensions(blob: MediaBlob | null | undefined, t: Translate): string {
+  if (!blob) return t('image.sideMissing')
   if (blob.width && blob.height) return `${blob.width} × ${blob.height}`
-  return '尺寸未知'
+  return t('image.sizeUnknown')
 }
 
 /** 一行元数据：`PNG · 1024 × 768 · 256 KB`，无法预览时也保证有内容可解释。 */
-export function describeBlob(blob: MediaBlob | null | undefined): string {
-  if (!blob) return '无此侧'
-  const parts = [(blob.extension || blob.mime).toUpperCase(), formatImageDimensions(blob), formatByteSize(blob.sizeBytes)]
+export function describeBlob(blob: MediaBlob | null | undefined, t: Translate): string {
+  if (!blob) return t('image.sideMissing')
+  const parts = [(blob.extension || blob.mime).toUpperCase(), formatImageDimensions(blob, t), formatByteSize(blob.sizeBytes)]
   // 阈值文案直接引用与后端对齐的那个常量，避免「文档说 4 MiB、代码说别的」。
-  if (blob.tooLarge) parts.push(`超过预览上限（${formatByteSize(MEDIA_PREVIEW_MAX_BYTES)}），仅显示元数据`)
+  if (blob.tooLarge) parts.push(t('image.metaOnlyAbove', { limit: formatByteSize(MEDIA_PREVIEW_MAX_BYTES) }))
   return parts.join(' · ')
 }
 
-export function describeImageDiff(pair: ImageFileDiff | null): string {
+export function describeImageDiff(pair: ImageFileDiff | null, t: Translate): string {
   if (!pair) return ''
   const sides = [pair.before, pair.after].filter(Boolean).length
-  if (pair.identical) return '两侧内容一致（无像素差异）'
-  if (sides === 1 && !pair.before) return '新增文件，无变更前'
-  if (sides === 1 && !pair.after) return '删除文件，无变更后'
-  return `${sides} 侧可比较`
+  if (pair.identical) return t('image.identicalPixels')
+  if (sides === 1 && !pair.before) return t('image.addedNoBefore')
+  if (sides === 1 && !pair.after) return t('image.deletedNoAfter')
+  return t('image.comparableSides', { count: sides })
 }
 
 export type FitBox = { width: number; height: number }

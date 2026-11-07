@@ -18,6 +18,14 @@ import {
   type CreatePullRequestForm,
 } from './hostingModel'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 const pr = (overrides: Partial<HostingPullRequest> = {}): HostingPullRequest => ({
   number: 12,
   title: 'Add hosting panel',
@@ -59,11 +67,11 @@ describe('托管平台文案', () => {
       tokenConfigured: false,
       ...overrides,
     })
-    expect(hostingSettingsSummary(null)).toContain('正在读取')
-    expect(hostingSettingsSummary(settings())).toContain('尚未保存')
-    expect(hostingSettingsSummary(settings({ tokenConfigured: true }))).toContain('已保存访问令牌')
+    expect(hostingSettingsSummary(null, zhT)).toContain('正在读取')
+    expect(hostingSettingsSummary(settings(), zhT)).toContain('尚未保存')
+    expect(hostingSettingsSummary(settings({ tokenConfigured: true }), zhT)).toContain('已保存访问令牌')
     expect(
-      hostingSettingsSummary(settings({ provider: 'gitlab', host: 'gitlab.example.com' })),
+      hostingSettingsSummary(settings({ provider: 'gitlab', host: 'gitlab.example.com' }), zhT),
     ).toContain('gitlab.example.com')
   })
 })
@@ -72,31 +80,31 @@ describe('CI 状态映射', () => {
   it('把四种状态映射为样式与中文文案', () => {
     for (const status of ['success', 'failure', 'pending', 'unknown'] as const) {
       expect(hostingCiTone(status)).toBe(status)
-      expect(hostingCiLabel(status)).toContain('CI')
+      expect(hostingCiLabel(status, zhT)).toContain('CI')
     }
-    expect(hostingCiLabel('success')).toBe('CI 通过')
-    expect(hostingCiLabel('failure')).toBe('CI 失败')
-    expect(hostingCiLabel('pending')).toBe('CI 进行中')
-    expect(hostingCiLabel('unknown')).toBe('CI 未知')
+    expect(hostingCiLabel('success', zhT)).toBe('CI 通过')
+    expect(hostingCiLabel('failure', zhT)).toBe('CI 失败')
+    expect(hostingCiLabel('pending', zhT)).toBe('CI 进行中')
+    expect(hostingCiLabel('unknown', zhT)).toBe('CI 未知')
     expect(hostingCiTone('something-new')).toBe('unknown')
-    expect(hostingCiLabel('something-new')).toBe('CI 未知')
+    expect(hostingCiLabel('something-new', zhT)).toBe('CI 未知')
   })
 })
 
 describe('设置表单校验', () => {
   it('令牌留空表示保留，拒绝空白与控制字符', () => {
-    expect(validateHostingToken('')).toBeNull()
-    expect(validateHostingToken('   ')).toBeNull()
-    expect(validateHostingToken('ghp_abcdef123456')).toBeNull()
-    expect(validateHostingToken('token with space')).toContain('空白')
-    expect(validateHostingToken('token\ninjected')).toContain('空白')
-    expect(validateHostingToken('a'.repeat(4097))).toContain('过长')
+    expect(validateHostingToken('', zhT)).toBeNull()
+    expect(validateHostingToken('   ', zhT)).toBeNull()
+    expect(validateHostingToken('ghp_abcdef123456', zhT)).toBeNull()
+    expect(validateHostingToken('token with space', zhT)).toContain('空白')
+    expect(validateHostingToken('token\ninjected', zhT)).toContain('空白')
+    expect(validateHostingToken('a'.repeat(4097), zhT)).toContain('过长')
   })
 
   it('主机名允许留空与端口，拒绝协议、路径与凭据', () => {
-    expect(validateHostingHost('', 'github')).toBeNull()
-    expect(validateHostingHost(' GitHub.COM ', 'github')).toBeNull()
-    expect(validateHostingHost('gitlab.example.com:8443', 'gitlab')).toBeNull()
+    expect(validateHostingHost('', 'github', zhT)).toBeNull()
+    expect(validateHostingHost(' GitHub.COM ', 'github', zhT)).toBeNull()
+    expect(validateHostingHost('gitlab.example.com:8443', 'gitlab', zhT)).toBeNull()
     for (const rejected of [
       'https://github.com',
       'github.com/owner',
@@ -109,19 +117,19 @@ describe('设置表单校验', () => {
       'github.com:0',
       'github.com:70000',
     ]) {
-      expect(validateHostingHost(rejected, 'github'), rejected).not.toBeNull()
+      expect(validateHostingHost(rejected, 'github', zhT), rejected).not.toBeNull()
     }
   })
 })
 
 describe('PR/MR 展示模型', () => {
   it('草稿优先于原始 state，并拼出摘要', () => {
-    expect(pullRequestStateLabel(pr())).toBe('开放')
-    expect(pullRequestStateLabel(pr({ state: 'opened' }))).toBe('开放')
-    expect(pullRequestStateLabel(pr({ draft: true }))).toBe('草稿')
-    expect(pullRequestStateLabel(pr({ state: 'closed' }))).toBe('closed')
+    expect(pullRequestStateLabel(pr(), zhT)).toBe('开放')
+    expect(pullRequestStateLabel(pr({ state: 'opened' }), zhT)).toBe('开放')
+    expect(pullRequestStateLabel(pr({ draft: true }), zhT)).toBe('草稿')
+    expect(pullRequestStateLabel(pr({ state: 'closed' }), zhT)).toBe('closed')
     expect(pullRequestBranchLabel(pr())).toBe('feature/hosting → main')
-    expect(summarizePullRequest(pr())).toBe('开放 · feature/hosting → main · octocat')
+    expect(summarizePullRequest(pr(), zhT)).toBe('开放 · feature/hosting → main · octocat')
   })
 
   it('按目标分支出现次数推断默认分支，空列表回退 main', () => {
@@ -145,7 +153,7 @@ describe('PR/MR 展示模型', () => {
 
 describe('创建 PR/MR 校验与请求体', () => {
   it('接受合法表单并按平台构造请求体', () => {
-    expect(validateCreatePullRequestForm(form(), 'github')).toBeNull()
+    expect(validateCreatePullRequestForm(form(), 'github', zhT)).toBeNull()
     const github = buildCreatePullRequestInput(
       form({ title: '  Add hosting  ', sourceBranch: ' feature/hosting ' }),
       'github',
@@ -163,35 +171,35 @@ describe('创建 PR/MR 校验与请求体', () => {
   })
 
   it('拒绝空标题、换行标题、空分支与相同分支', () => {
-    expect(validateCreatePullRequestForm(form({ title: '   ' }), 'github')).toContain('不能为空')
-    expect(validateCreatePullRequestForm(form({ title: 'a'.repeat(257) }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ title: '   ' }), 'github', zhT)).toContain('不能为空')
+    expect(validateCreatePullRequestForm(form({ title: 'a'.repeat(257) }), 'github', zhT)).toContain(
       '过长',
     )
-    expect(validateCreatePullRequestForm(form({ title: 'bad\nInjected' }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ title: 'bad\nInjected' }), 'github', zhT)).toContain(
       '控制字符',
     )
-    expect(validateCreatePullRequestForm(form({ sourceBranch: '' }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ sourceBranch: '' }), 'github', zhT)).toContain(
       '源分支不能为空',
     )
-    expect(validateCreatePullRequestForm(form({ targetBranch: '  ' }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ targetBranch: '  ' }), 'github', zhT)).toContain(
       '目标分支不能为空',
     )
-    expect(validateCreatePullRequestForm(form({ targetBranch: 'feature/hosting' }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ targetBranch: 'feature/hosting' }), 'github', zhT)).toContain(
       '不能相同',
     )
-    expect(validateCreatePullRequestForm(form({ sourceBranch: 'bad branch' }), 'gitlab')).toContain(
+    expect(validateCreatePullRequestForm(form({ sourceBranch: 'bad branch' }), 'gitlab', zhT)).toContain(
       '空白',
     )
-    expect(validateCreatePullRequestForm(form({ sourceBranch: 'feature..x' }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ sourceBranch: 'feature..x' }), 'github', zhT)).toContain(
       '不允许',
     )
-    expect(validateCreatePullRequestForm(form({ sourceBranch: '-feature' }), 'github')).toContain(
+    expect(validateCreatePullRequestForm(form({ sourceBranch: '-feature' }), 'github', zhT)).toContain(
       '格式无效',
     )
-    expect(validateCreatePullRequestForm(form({ body: 'a\0b' }), 'github')).toContain('NUL')
+    expect(validateCreatePullRequestForm(form({ body: 'a\0b' }), 'github', zhT)).toContain('NUL')
   })
 
   it('GitLab 使用 MR 文案', () => {
-    expect(validateCreatePullRequestForm(form({ title: '' }), 'gitlab')).toContain('MR 标题')
+    expect(validateCreatePullRequestForm(form({ title: '' }), 'gitlab', zhT)).toContain('MR 标题')
   })
 })

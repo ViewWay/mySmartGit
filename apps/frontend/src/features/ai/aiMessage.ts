@@ -1,3 +1,5 @@
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 import type { AiCommitMessage, AiGenerateOptions, AiLanguage, AiMessageStyle } from '../../repository'
 
 export type NormalizedAiOptions = {
@@ -71,15 +73,15 @@ export function applyGeneratedDraft(input: {
 }
 
 /** 生成结果的提示文案：优先展示后端 note（来源/截断），否则用 truncated 兜底。 */
-export function generatedMessageNotice(result: Pick<AiCommitMessage, 'note' | 'truncated'>) {
+export function generatedMessageNotice(result: Pick<AiCommitMessage, 'note' | 'truncated'>, t: Translate) {
   const note = result.note?.trim()
   if (note) return note
-  return result.truncated ? '生成内容已截断，请检查后再使用' : null
+  return result.truncated ? t('ai.truncated') : null
 }
 
 /** 统一错误文案；后端已脱敏，这里只做空值与异常兜底。 */
-export function describeAiError(error: unknown) {
+export function describeAiError(error: unknown, t: Translate) {
   if (error instanceof Error && error.message.trim()) return error.message.trim()
   if (typeof error === 'string' && error.trim()) return error.trim()
-  return 'AI 生成失败，请稍后重试'
+  return t('ai.failed')
 }

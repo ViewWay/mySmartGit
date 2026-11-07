@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CloudDownload, FolderGit2, FolderOpen, Plus, RefreshCw, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { cloneRepositoryWithSubmodules, createRepository, pickRepositoryDirectory, type RepositoryDetails } from '../../repository'
+import { useI18n } from '../../i18n'
 import { parseCloneDepth } from './submoduleAddForm'
 
 export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }: {
@@ -10,6 +11,7 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
   onClose: () => void
   onCreated: (repository: RepositoryDetails) => void
 }) {
+  const { t } = useI18n()
   const [source, setSource] = useState('')
   const [parent, setParent] = useState(initialParent)
   const [name, setName] = useState('')
@@ -20,7 +22,7 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
   const dialogRef = useRef<HTMLElement>(null)
   const destination = parent ? `${parent.replace(/[\\/]+$/, '')}${parent.includes('\\') ? '\\' : '/'}${name}` : ''
   const validName = Boolean(name.trim()) && !/^[.]+$|[<>:"/\\|?*\x00-\x1f]|[. ]$/.test(name)
-  const cloneDepth = parseCloneDepth(depth)
+  const cloneDepth = parseCloneDepth(depth, t)
   const canSubmit = validName && Boolean(parent.trim()) && (mode !== 'clone' || (Boolean(source.trim()) && !cloneDepth.error))
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null
@@ -41,7 +43,7 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
 
   const browse = async () => {
     try {
-      const path = await pickRepositoryDirectory('选择仓库的父目录')
+      const path = await pickRepositoryDirectory(t('repository.add.pickParentTitle'))
       if (path) setParent(path)
     } catch (error) { setError(String(error)) }
   }
@@ -64,22 +66,22 @@ export function AddRepositoryDialog({ mode, initialParent, onClose, onCreated }:
         if (document.activeElement === (event.shiftKey ? items[0] : items[items.length - 1])) { event.preventDefault(); target?.focus() }
       }
     }}>
-      <div className="branch-dialog-heading"><span className="branch-dialog-icon"><FolderGit2 size={19}/></span><div><h2 id="repository-add-title">{mode === 'clone' ? '克隆仓库' : '初始化仓库'}</h2><p>{mode === 'clone' ? '克隆远程仓库，或复制已有本地仓库。' : '创建一个新的本地 Git 仓库。'}</p></div><Button variant="icon" title="关闭" disabled={busy} onClick={onClose}><X size={17}/></Button></div>
+      <div className="branch-dialog-heading"><span className="branch-dialog-icon"><FolderGit2 size={19}/></span><div><h2 id="repository-add-title">{mode === 'clone' ? t('repository.add.cloneTitle') : t('repository.add.initTitle')}</h2><p>{mode === 'clone' ? t('repository.add.cloneHint') : t('repository.add.initHint')}</p></div><Button variant="icon" title={t('common.close')} disabled={busy} onClick={onClose}><X size={17}/></Button></div>
       <form onSubmit={(event) => { event.preventDefault(); void submit() }}>
-        {mode === 'clone' && <label>仓库地址<input value={source} onChange={(event) => setSource(event.target.value)} onBlur={() => {
+        {mode === 'clone' && <label>{t('repository.add.source')}<input value={source} onChange={(event) => setSource(event.target.value)} onBlur={() => {
           if (!name) setName(source.trim().replace(/[\\/]+$/, '').split(/[/:\\]/).pop()?.replace(/\.git$/, '') ?? '')
-        }} placeholder="https://… / git@… / 本地仓库路径" spellCheck={false} disabled={busy}/></label>}
+        }} placeholder={t('repository.add.sourcePlaceholder')} spellCheck={false} disabled={busy}/></label>}
         {mode === 'clone' && <div className="repository-clone-options">
-          <label className="repository-checkbox"><input type="checkbox" checked={recurse} onChange={(event) => setRecurse(event.target.checked)} disabled={busy}/><span>递归克隆 Submodule（--recurse-submodules，含嵌套）</span></label>
-          <label>浅克隆深度（可选）<input value={depth} onChange={(event) => setDepth(event.target.value)} placeholder="留空＝完整历史" inputMode="numeric" spellCheck={false} disabled={busy}/></label>
+          <label className="repository-checkbox"><input type="checkbox" checked={recurse} onChange={(event) => setRecurse(event.target.checked)} disabled={busy}/><span>{t('repository.add.recurseSubmodules')}</span></label>
+          <label>{t('repository.add.depth')}<input value={depth} onChange={(event) => setDepth(event.target.value)} placeholder={t('repository.add.depthPlaceholder')} inputMode="numeric" spellCheck={false} disabled={busy}/></label>
           {cloneDepth.error && <p className="repository-inline-error" role="alert">{cloneDepth.error}</p>}
-          <small>浅克隆会把本地路径改写为 file:// 以让 --depth 真正生效；递归克隆失败时会脱敏回显子模块地址。</small>
+          <small>{t('repository.add.depthNote')}</small>
         </div>}
-        <label>父目录<span className="repository-directory-input"><input value={parent} onChange={(event) => setParent(event.target.value)} placeholder="选择或输入父目录" disabled={busy}/><Button type="button" variant="secondary" onClick={() => void browse()} disabled={busy} title="选择父目录"><FolderOpen size={15}/></Button></span></label>
-        <label>仓库文件夹名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="my-project" spellCheck={false} disabled={busy}/></label>
-        <div className="repository-destination"><span>将保存到</span><code>{destination || '请选择父目录并填写名称'}</code><small>目标文件夹须为新目录或空目录。</small></div>
+        <label>{t('repository.add.parent')}<span className="repository-directory-input"><input value={parent} onChange={(event) => setParent(event.target.value)} placeholder={t('repository.add.parentPlaceholder')} disabled={busy}/><Button type="button" variant="secondary" onClick={() => void browse()} disabled={busy} title={t('repository.add.pickParent')}><FolderOpen size={15}/></Button></span></label>
+        <label>{t('repository.add.name')}<input value={name} onChange={(event) => setName(event.target.value)} placeholder="my-project" spellCheck={false} disabled={busy}/></label>
+        <div className="repository-destination"><span>{t('repository.add.destination')}</span><code>{destination || t('repository.add.destinationHint')}</code><small>{t('repository.add.destinationNote')}</small></div>
         {error && <p className="repository-inline-error" role="alert">{error}</p>}
-        <div className="branch-dialog-actions"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>取消</Button><Button type="submit" variant="primary" disabled={!canSubmit || busy}>{busy ? <RefreshCw size={14} className="spin"/> : mode === 'clone' ? <CloudDownload size={14}/> : <Plus size={14}/>}<span>{busy ? (mode === 'clone' ? '正在克隆…' : '正在创建…') : mode === 'clone' ? '克隆仓库' : '创建仓库'}</span></Button></div>
+        <div className="branch-dialog-actions"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{t('common.cancel')}</Button><Button type="submit" variant="primary" disabled={!canSubmit || busy}>{busy ? <RefreshCw size={14} className="spin"/> : mode === 'clone' ? <CloudDownload size={14}/> : <Plus size={14}/>}<span>{busy ? (mode === 'clone' ? t('repository.add.cloning') : t('repository.add.creating')) : mode === 'clone' ? t('repository.add.clone') : t('repository.add.create')}</span></Button></div>
       </form>
     </section>
   </div>

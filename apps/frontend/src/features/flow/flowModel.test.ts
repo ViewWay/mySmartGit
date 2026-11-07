@@ -21,6 +21,14 @@ import {
   validateGitflowTagName,
 } from './flowModel'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 const config: GitflowConfig = {
   mainBranch: 'main',
   developBranch: 'develop',
@@ -66,49 +74,49 @@ describe('Gitflow 分支命名与校验', () => {
   })
 
   it('接受常见短名，拒绝选项注入、空白、换行与非法引用字符', () => {
-    expect(validateGitflowLeafName(config, 'feature', 'login')).toBeNull()
-    expect(validateGitflowLeafName(config, 'release', '1.0.0')).toBeNull()
+    expect(validateGitflowLeafName(config, 'feature', 'login', zhT)).toBeNull()
+    expect(validateGitflowLeafName(config, 'release', '1.0.0', zhT)).toBeNull()
     for (const name of ['-x', 'bad name', 'bad\nname', 'a..b', 'a~b', 'a.lock', 'a.', 'a@{b}', 'a//b', 'a?b']) {
-      expect(validateGitflowLeafName(config, 'feature', name), name).not.toBeNull()
+      expect(validateGitflowLeafName(config, 'feature', name, zhT), name).not.toBeNull()
     }
-    expect(validateGitflowLeafName(config, 'feature', '   ')).toContain('不能为空')
+    expect(validateGitflowLeafName(config, 'feature', '   ', zhT)).toContain('不能为空')
   })
 
   it('分支名与配置前缀复用同一套规则', () => {
-    expect(validateGitflowBranchName('main')).toBeNull()
-    expect(validateGitflowBranchName('-main')).toContain('不能以 - 开头')
-    expect(validateGitflowBranchName('HEAD')).toContain('HEAD')
-    expect(validateGitflowPrefix('feature/')).toBeNull()
-    expect(validateGitflowPrefix('')).toContain('不能为空')
-    expect(validateGitflowPrefix('', true)).toBeNull()
-    expect(validateGitflowPrefix('-bad/')).toContain('不能以 - 开头')
+    expect(validateGitflowBranchName('main', zhT)).toBeNull()
+    expect(validateGitflowBranchName('-main', zhT)).toContain('不能以 - 开头')
+    expect(validateGitflowBranchName('HEAD', zhT)).toContain('HEAD')
+    expect(validateGitflowPrefix('feature/', false, zhT)).toBeNull()
+    expect(validateGitflowPrefix('', false, zhT)).toContain('不能为空')
+    expect(validateGitflowPrefix('', true, zhT)).toBeNull()
+    expect(validateGitflowPrefix('-bad/', false, zhT)).toContain('不能以 - 开头')
   })
 
   it('配置校验返回全部错误：同名主干、空前缀、非法标签前缀', () => {
-    expect(validateGitflowConfig(config)).toEqual([])
-    expect(validateGitflowConfig({ ...config, developBranch: 'main' })).toContain('主干分支与 develop 分支不能相同')
-    expect(validateGitflowConfig({ ...config, featurePrefix: '' }).join(' ')).toContain('feature 前缀')
-    expect(validateGitflowConfig({ ...config, tagPrefix: 'v 1' }).join(' ')).toContain('标签前缀')
+    expect(validateGitflowConfig(config, zhT)).toEqual([])
+    expect(validateGitflowConfig({ ...config, developBranch: 'main' }, zhT)).toContain('主干分支与 develop 分支不能相同')
+    expect(validateGitflowConfig({ ...config, featurePrefix: '' }, zhT).join(' ')).toContain('feature 前缀')
+    expect(validateGitflowConfig({ ...config, tagPrefix: 'v 1' }, zhT).join(' ')).toContain('标签前缀')
   })
 
   it('标签名按 tagPrefix 拼接并校验', () => {
     expect(gitflowTagName(config, '1.0.0')).toBe('v1.0.0')
-    expect(validateGitflowTagName(config, '1.0.0')).toBeNull()
-    expect(validateGitflowTagName(config, '-1')).toContain('不能以 - 开头')
+    expect(validateGitflowTagName(config, '1.0.0', zhT)).toBeNull()
+    expect(validateGitflowTagName(config, '-1', zhT)).toContain('不能以 - 开头')
   })
 })
 
 describe('Gitflow 分组与操作限制', () => {
   it('按四类前缀分组并保留完整分支名', () => {
-    const groups = gitflowGroups(branches, config)
+    const groups = gitflowGroups(branches, config, zhT)
     expect(groups.map((group) => group.kind)).toEqual(['feature', 'release', 'hotfix', 'support'])
     expect(groups[0].branches).toEqual([
       { name: 'login', full: 'feature/login' },
       { name: 'search', full: 'feature/search' },
     ])
     expect(groups[3].branches).toEqual([{ name: 'lts', full: 'support/lts' }])
-    expect(gitflowKindLabel('hotfix')).toBe('热修复分支')
-    expect(gitflowGroups(null, config)).toEqual([])
+    expect(gitflowKindLabel('hotfix', zhT)).toBe('热修复分支')
+    expect(gitflowGroups(null, config, zhT)).toEqual([])
   })
 
   it('support 不可 finish，只有 release/hotfix 可打标签', () => {
@@ -123,10 +131,10 @@ describe('Gitflow 分组与操作限制', () => {
 describe('Gitflow 完成报告展示模型', () => {
   it('成功 / 冲突 / 失败三态标题', () => {
     expect(finishReportTone(report())).toBe('success')
-    expect(finishReportHeadline(report())).toBe('已完成 release/1.0.0')
-    expect(finishReportHeadline(report({ completed: false, conflicts: true }))).toContain('冲突')
+    expect(finishReportHeadline(report(), zhT)).toBe('已完成 release/1.0.0')
+    expect(finishReportHeadline(report({ completed: false, conflicts: true }), zhT)).toContain('冲突')
     expect(finishReportTone(report({ completed: false, conflicts: false }))).toBe('failed')
-    expect(finishReportHeadline(report({ completed: false, conflicts: false }))).toContain('未完成')
+    expect(finishReportHeadline(report({ completed: false, conflicts: false }), zhT)).toContain('未完成')
   })
 
   it('步骤行带状态标签、细节与 guidance', () => {
@@ -138,11 +146,11 @@ describe('Gitflow 完成报告展示模型', () => {
         { action: 'merge --no-ff release/1.0.0 -> main', status: 'conflict', detail: 'CONFLICT (content)' },
         { action: 'delete release/1.0.0', status: 'skipped' },
       ],
-    }))
+    }), zhT)
     expect(lines[0]).toBe('冲突 · merge --no-ff release/1.0.0 -> main：CONFLICT (content)')
     expect(lines[1]).toBe('跳过 · delete release/1.0.0')
     expect(lines[2]).toContain('MERGE_HEAD')
-    expect(stepStatusLabel('failed')).toBe('失败')
+    expect(stepStatusLabel('failed', zhT)).toBe('失败')
   })
 
   it('统计各状态步骤数', () => {

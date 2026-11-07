@@ -32,6 +32,14 @@ import {
   validatePipelineDraft,
 } from './terminalModel'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 const report = (overrides: Partial<CommandRunReport> = {}): CommandRunReport => ({
   runId: 'run-1',
   commandId: 'status',
@@ -89,21 +97,21 @@ describe('终端尺寸与输入', () => {
   })
 
   it('Shell 展示名取路径最后一段', () => {
-    expect(terminalShellLabel('/bin/zsh')).toBe('zsh')
-    expect(terminalShellLabel('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')).toBe(
+    expect(terminalShellLabel('/bin/zsh', zhT)).toBe('zsh')
+    expect(terminalShellLabel('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', zhT)).toBe(
       'powershell.exe',
     )
-    expect(terminalShellLabel('bash')).toBe('bash')
-    expect(terminalShellLabel('   ')).toBe('Shell')
+    expect(terminalShellLabel('bash', zhT)).toBe('bash')
+    expect(terminalShellLabel('   ', zhT)).toBe('Shell')
   })
 })
 
 describe('终端状态文案', () => {
   it('区分运行中、成功退出、失败退出与无退出码', () => {
-    expect(formatTerminalExit({ alive: true, exitCode: null })).toBe('运行中')
-    expect(formatTerminalExit({ alive: false, exitCode: 0 })).toBe('进程已退出（代码 0）')
-    expect(formatTerminalExit({ alive: false, exitCode: 2 })).toBe('进程已退出（代码 2）')
-    expect(formatTerminalExit({ alive: false, exitCode: null })).toBe('进程已退出')
+    expect(formatTerminalExit({ alive: true, exitCode: null }, zhT)).toBe('运行中')
+    expect(formatTerminalExit({ alive: false, exitCode: 0 }, zhT)).toBe('进程已退出（代码 0）')
+    expect(formatTerminalExit({ alive: false, exitCode: 2 }, zhT)).toBe('进程已退出（代码 2）')
+    expect(formatTerminalExit({ alive: false, exitCode: null }, zhT)).toBe('进程已退出')
     expect(terminalExitTone({ alive: true })).toBe('running')
     expect(terminalExitTone({ alive: false, exitCode: 0 })).toBe('success')
     expect(terminalExitTone({ alive: false, exitCode: 1 })).toBe('failure')
@@ -111,18 +119,18 @@ describe('终端状态文案', () => {
   })
 
   it('截断提示只在 truncated 时出现', () => {
-    expect(terminalTruncatedNotice(false)).toBeNull()
-    expect(terminalTruncatedNotice(true)).toContain('256 KiB')
+    expect(terminalTruncatedNotice(false, zhT)).toBeNull()
+    expect(terminalTruncatedNotice(true, zhT)).toContain('256 KiB')
   })
 })
 
 describe('流水线执行结果', () => {
   it('按取消 / 超时 / 成功 / 失败排序展示', () => {
-    expect(formatCommandRunExit(report())).toBe('成功（代码 0）')
-    expect(formatCommandRunExit(report({ exitCode: 3 }))).toBe('失败（代码 3）')
-    expect(formatCommandRunExit(report({ timedOut: true, exitCode: null }))).toBe('已超时')
-    expect(formatCommandRunExit(report({ cancelled: true, timedOut: true }))).toBe('已取消')
-    expect(formatCommandRunExit(report({ exitCode: null }))).toBe('已结束（无退出码）')
+    expect(formatCommandRunExit(report(), zhT)).toBe('成功（代码 0）')
+    expect(formatCommandRunExit(report({ exitCode: 3 }), zhT)).toBe('失败（代码 3）')
+    expect(formatCommandRunExit(report({ timedOut: true, exitCode: null }), zhT)).toBe('已超时')
+    expect(formatCommandRunExit(report({ cancelled: true, timedOut: true }), zhT)).toBe('已取消')
+    expect(formatCommandRunExit(report({ exitCode: null }), zhT)).toBe('已结束（无退出码）')
     expect(commandRunTone(report())).toBe('success')
     expect(commandRunTone(report({ exitCode: 1 }))).toBe('danger')
     expect(commandRunTone(report({ timedOut: true }))).toBe('warning')
@@ -131,12 +139,12 @@ describe('流水线执行结果', () => {
   })
 
   it('摘要包含状态、用时与截断标记', () => {
-    expect(commandRunSummary(report())).toBe('成功（代码 0） · 用时 1.2 秒')
-    expect(commandRunSummary(report({ durationMs: 250, truncated: true }))).toContain('250 ms')
-    expect(commandRunSummary(report({ durationMs: 250, truncated: true }))).toContain('输出已截断')
-    expect(formatRunDuration(0)).toBe('0 ms')
-    expect(formatRunDuration(65_000)).toBe('1 分 5 秒')
-    expect(formatRunDuration(Number.NaN)).toBe('—')
+    expect(commandRunSummary(report(), zhT)).toBe('成功（代码 0） · 用时 1.2 秒')
+    expect(commandRunSummary(report({ durationMs: 250, truncated: true }), zhT)).toContain('250 ms')
+    expect(commandRunSummary(report({ durationMs: 250, truncated: true }), zhT)).toContain('输出已截断')
+    expect(formatRunDuration(0, zhT)).toBe('0 ms')
+    expect(formatRunDuration(65_000, zhT)).toBe('1 分 5 秒')
+    expect(formatRunDuration(Number.NaN, zhT)).toBe('—')
     expect(PIPELINE_DEFAULT_TIMEOUT_SECONDS).toBe(120)
   })
 })
@@ -150,7 +158,7 @@ describe('命令草稿校验', () => {
       argsText: 'status\n--short\n\n  --branch  \n',
       cwdRelative: 'packages/app',
     }
-    expect(validatePipelineDraft(draft)).toBeNull()
+    expect(validatePipelineDraft(draft, zhT)).toBeNull()
     const parsed = pipelineCommandFromDraft(draft, ' custom-1 ')
     expect(parsed).toEqual({
       id: 'custom-1',
@@ -166,37 +174,37 @@ describe('命令草稿校验', () => {
 
   it('拒绝空名称、空程序与过长参数', () => {
     const draft = emptyPipelineDraft()
-    expect(validatePipelineDraft(draft)).toContain('名称不能为空')
-    expect(validatePipelineDraft({ ...draft, name: 'x' })).toContain('程序不能为空')
+    expect(validatePipelineDraft(draft, zhT)).toContain('名称不能为空')
+    expect(validatePipelineDraft({ ...draft, name: 'x' }, zhT)).toContain('程序不能为空')
     expect(
       validatePipelineDraft({
         ...draft,
         name: 'x',
         program: 'echo',
         argsText: Array.from({ length: PIPELINE_MAX_ARGS + 1 }, (_, index) => String(index)).join('\n'),
-      }),
+      }, zhT),
     ).toContain('参数过多')
     expect(
-      validatePipelineDraft({ ...draft, name: 'x', program: 'echo', argsText: 'a'.repeat(4097) }),
+      validatePipelineDraft({ ...draft, name: 'x', program: 'echo', argsText: 'a'.repeat(4097) }, zhT),
     ).toContain('单个参数过长')
   })
 
   it('拒绝转义工作目录与绝对路径', () => {
-    expect(validatePipelineCwd('')).toBeNull()
-    expect(validatePipelineCwd('packages/app')).toBeNull()
-    expect(validatePipelineCwd('../outside')).toContain('..')
-    expect(validatePipelineCwd('packages/../../outside')).toContain('..')
-    expect(validatePipelineCwd('/tmp')).toContain('绝对路径')
-    expect(validatePipelineCwd('C:\\tmp')).toContain('绝对路径')
-    expect(validatePipelineCwd('a\u0000b')).toContain('控制字符')
-    expect(validatePipelineDraft({ ...emptyPipelineDraft(), name: 'x', program: 'pwd', cwdRelative: '../x' }))
+    expect(validatePipelineCwd('', zhT)).toBeNull()
+    expect(validatePipelineCwd('packages/app', zhT)).toBeNull()
+    expect(validatePipelineCwd('../outside', zhT)).toContain('..')
+    expect(validatePipelineCwd('packages/../../outside', zhT)).toContain('..')
+    expect(validatePipelineCwd('/tmp', zhT)).toContain('绝对路径')
+    expect(validatePipelineCwd('C:\\tmp', zhT)).toContain('绝对路径')
+    expect(validatePipelineCwd('a\u0000b', zhT)).toContain('控制字符')
+    expect(validatePipelineDraft({ ...emptyPipelineDraft(), name: 'x', program: 'pwd', cwdRelative: '../x' }, zhT))
       .toContain('..')
   })
 
   it('工作目录安全说明区分空、合法与非法输入', () => {
-    expect(pipelineCwdSafetyNote('')).toContain('仓库根目录')
-    expect(pipelineCwdSafetyNote('packages/app')).toContain('符号链接逃逸')
-    expect(pipelineCwdSafetyNote('../x')).toContain('..')
+    expect(pipelineCwdSafetyNote('', zhT)).toContain('仓库根目录')
+    expect(pipelineCwdSafetyNote('packages/app', zhT)).toContain('符号链接逃逸')
+    expect(pipelineCwdSafetyNote('../x', zhT)).toContain('..')
   })
 
   it('从命令还原草稿并保留可选工作目录', () => {
@@ -228,12 +236,12 @@ describe('命令列表辅助', () => {
   })
 
   it('列表摘要为空与非空分别给出提示', () => {
-    expect(pipelineCommandsSummary([])).toContain('还没有')
-    expect(pipelineCommandsSummary([command()])).toContain('1 条')
+    expect(pipelineCommandsSummary([], zhT)).toContain('还没有')
+    expect(pipelineCommandsSummary([command()], zhT)).toContain('1 条')
   })
 
   it('内置示例不经过 shell 且都是只读 git 命令', () => {
-    const builtins = builtinPipelineCommands()
+    const builtins = builtinPipelineCommands(zhT)
     expect(builtins.length).toBeGreaterThan(0)
     for (const item of builtins) {
       expect(item.program).toBe('git')

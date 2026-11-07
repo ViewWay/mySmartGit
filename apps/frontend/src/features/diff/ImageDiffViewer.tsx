@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Columns2, Contrast, ExternalLink, ImageOff, Layers, Maximize, Minus, Plus, RotateCcw, TriangleAlert } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -6,7 +7,7 @@ import type { ImageFileDiff, MediaBlob } from '../../repository'
 import {
   CHECKERBOARD_STYLE,
   IMAGE_DIFF_MODES,
-  IMAGE_MODE_LABELS,
+  imageModeLabel,
   canCompare,
   clampSlider,
   clampZoom,
@@ -61,6 +62,7 @@ function sideLabel(blob: MediaBlob | null | undefined, fallback: string) {
  * 任何不可预览的情形都走优雅降级：给出原因、给出元数据、给出外部打开入口。
  */
 export function ImageDiffViewer({ path, pair, loading = false, error = null, onRetry, onOpenExternally, onExitToText, variant = 'diff', mode: controlledMode, zoom: controlledZoom, slider: controlledSlider, checkerboard: controlledCheckerboard, differenceFailed: controlledDifferenceFailed }: ImageDiffViewerProps) {
+  const { t } = useI18n()
   const [storedMode, setMode] = usePersistentState<ImageDiffMode>('branchline.imageDiffMode.v1', 'side', isImageDiffMode)
   const single = variant === 'single'
   const requestedMode: ImageDiffMode = single ? 'side' : (controlledMode ?? storedMode)
@@ -144,12 +146,12 @@ export function ImageDiffViewer({ path, pair, loading = false, error = null, onR
     let cancelled = false
     const load = (url: string) => new Promise<HTMLImageElement>((resolve, reject) => {
       if (typeof Image === 'undefined') {
-        reject(new Error('当前环境不支持图片解码'))
+        reject(new Error(t('image.decodeUnsupported')))
         return
       }
       const image = new Image()
       image.onload = () => resolve(image)
-      image.onerror = () => reject(new Error('图片解码失败'))
+      image.onerror = () => reject(new Error(t('image.decodeFailed')))
       image.src = url
     })
     Promise.all([load(beforeUrl), load(afterUrl)]).then(([before, after]) => {
@@ -180,60 +182,60 @@ export function ImageDiffViewer({ path, pair, loading = false, error = null, onR
 
   const frameStyle = { width: `${box.width}px`, height: `${box.height}px` }
 
-  return <section className="image-diff-panel" aria-label={`图片差异预览 ${path}`}>
+  return <section className="image-diff-panel" aria-label={t('image.previewAria', { path })}>
     <div className="image-diff-toolbar">
-      {!single && <div className="segmented icon-segmented" role="group" aria-label="对比模式">
+      {!single && <div className="segmented icon-segmented" role="group" aria-label={t('image.compareMode')}>
         {IMAGE_DIFF_MODES.map((candidate) => <button
           key={candidate}
           type="button"
           className={mode === candidate ? 'active' : ''}
           aria-pressed={mode === candidate}
-          title={`${IMAGE_MODE_LABELS[candidate]}对比${candidate !== 'side' && !comparable ? '（需要两侧都有图）' : ''}`}
+          title={`${imageModeLabel(candidate, t)}${t('image.compareSuffix')}${candidate !== 'side' && !comparable ? t('image.compareModeNeedsBoth') : ''}`}
           onClick={() => setMode(candidate)}
         >
           {candidate === 'side' ? <Columns2 size={14}/> : candidate === 'overlay' ? <Layers size={14}/> : <Contrast size={14}/>}
-          <span>{IMAGE_MODE_LABELS[candidate]}</span>
+          <span>{imageModeLabel(candidate, t)}</span>
         </button>)}
       </div>}
-      <div className="segmented icon-segmented" role="group" aria-label="缩放">
-        <button type="button" onClick={() => setZoom((value) => zoomBy(value, -1))} title="缩小" aria-label="缩小"><Minus size={14}/></button>
-        <button type="button" className="image-diff-zoom-readout" onClick={() => setZoom(1)} title="恢复 100%">{Math.round(clampZoom(zoom) * 100)}%</button>
-        <button type="button" onClick={() => setZoom((value) => zoomBy(value, 1))} title="放大" aria-label="放大"><Plus size={14}/></button>
+      <div className="segmented icon-segmented" role="group" aria-label={t('image.zoom')}>
+        <button type="button" onClick={() => setZoom((value) => zoomBy(value, -1))} title={t('image.zoomOut')} aria-label={t('image.zoomOut')}><Minus size={14}/></button>
+        <button type="button" className="image-diff-zoom-readout" onClick={() => setZoom(1)} title={t('image.zoomReset')}>{Math.round(clampZoom(zoom) * 100)}%</button>
+        <button type="button" onClick={() => setZoom((value) => zoomBy(value, 1))} title={t('image.zoomIn')} aria-label={t('image.zoomIn')}><Plus size={14}/></button>
       </div>
-      <Button size="compact" variant={fitToWindow ? 'primary' : 'secondary'} active={fitToWindow} onClick={() => setFitToWindow((value) => !value)} title="适应窗口"><Maximize size={13}/><span>适应窗口</span></Button>
-      <Button size="compact" variant={checkerboard ? 'primary' : 'secondary'} active={checkerboard} onClick={() => setCheckerboard((value) => !value)} title="棋盘格透明背景">透明底</Button>
-      {!single && typeof pair === 'object' && pair !== null && <span className="image-diff-meta-hint">{describeImageDiff(pair)}</span>}
+      <Button size="compact" variant={fitToWindow ? 'primary' : 'secondary'} active={fitToWindow} onClick={() => setFitToWindow((value) => !value)} title={t('image.fitWindow')}><Maximize size={13}/><span>{t('image.fitWindow')}</span></Button>
+      <Button size="compact" variant={checkerboard ? 'primary' : 'secondary'} active={checkerboard} onClick={() => setCheckerboard((value) => !value)} title={t('image.checkerboard')}>{t('image.transparent')}</Button>
+      {!single && typeof pair === 'object' && pair !== null && <span className="image-diff-meta-hint">{describeImageDiff(pair, t)}</span>}
       <span className="image-diff-spacer"/>
-      {onExitToText && <Button size="compact" onClick={onExitToText} title="改用文本 Diff 查看"><RotateCcw size={13}/><span>文本 Diff</span></Button>}
-      {onOpenExternally && <Button size="compact" onClick={onOpenExternally} title="用系统默认程序打开"><ExternalLink size={13}/><span>外部打开</span></Button>}
+      {onExitToText && <Button size="compact" onClick={onExitToText} title={t('image.switchToText')}><RotateCcw size={13}/><span>{t('image.textDiff')}</span></Button>}
+      {onOpenExternally && <Button size="compact" onClick={onOpenExternally} title={t('image.openExternally')}><ExternalLink size={13}/><span>{t('image.externalOpen')}</span></Button>}
     </div>
 
     <div className="image-diff-meta">
       <dl>
-        {!single && <><dt>变更前</dt><dd>{describeBlob(pair?.before ?? null)}</dd></>}
-        <dt>{single ? '文件' : '变更后'}</dt><dd>{describeBlob(pair?.after ?? null)}</dd>
+        {!single && <><dt>{t('image.before')}</dt><dd>{describeBlob(pair?.before ?? null, t)}</dd></>}
+        <dt>{single ? t('image.file') : t('image.after')}</dt><dd>{describeBlob(pair?.after ?? null, t)}</dd>
       </dl>
-      <span className="image-diff-hint">{status === 'too-large' ? '图片超过预览上限，仅读取元数据；不会整体载入内存。' : ''}</span>
+      <span className="image-diff-hint">{status === 'too-large' ? t('image.tooLargeMetaOnly') : ''}</span>
     </div>
 
     <div ref={viewportRef} className={`image-diff-viewport ${checkerboard ? 'image-diff-transparent-backing' : ''}`}>
-      {status === 'idle' && <div className="image-diff-message"><strong>正在准备预览…</strong><span>读取变更前 / 变更后两个版本后即可对比。</span></div>}
-      {status === 'loading' && <div className="image-diff-message"><strong>正在读取图片…</strong><span>超大文件只会读取元数据，不整体进内存。</span></div>}
-      {status === 'error' && <Degradation title="无法读取图片差异" detail={error ?? pair?.error ?? '后端返回失败。'} onRetry={onRetry} onOpenExternally={onOpenExternally}/>}
-      {status === 'missing' && <Degradation title="该文件在该版本不存在" detail="两侧都取不到 blob：可能是重命名、子模组指针变更或路径不在该 ref 下。" onOpenExternally={onOpenExternally}/>}
-      {status === 'unsupported' && <Degradation title="无法预览该文件" detail={`MIME 推断为 ${pair?.after?.mime ?? pair?.before?.mime ?? '未知'}，不是可解码的图片或 SVG。可以用外部程序打开。`} onOpenExternally={onOpenExternally}/>}
-      {status === 'too-large' && <Degradation title="图片过大，仅显示元数据" detail={`${describeBlob(pair?.after ?? pair?.before)}。为避免把整张图读进内存，只取了文件头。`} onOpenExternally={onOpenExternally}/>}
-      {mode === 'difference' && differenceFailed && <Degradation title="差值模式不可用" detail={`${differenceFailed}；SVG 只有 viewBox 而无显式尺寸时可能无法解码为位图。`} onRetry={onRetry} onOpenExternally={onOpenExternally}/>}
+      {status === 'idle' && <div className="image-diff-message"><strong>{t('image.preparing')}</strong><span>{t('image.needBothVersions')}</span></div>}
+      {status === 'loading' && <div className="image-diff-message"><strong>{t('image.loading')}</strong><span>{t('image.largeMetaNote')}</span></div>}
+      {status === 'error' && <Degradation title={t('image.loadFailed')} detail={error ?? pair?.error ?? t('image.backendFailed')} onRetry={onRetry} onOpenExternally={onOpenExternally}/>}
+      {status === 'missing' && <Degradation title={t('image.missingAtRevision')} detail={t('image.noBlobBothSides')} onOpenExternally={onOpenExternally}/>}
+      {status === 'unsupported' && <Degradation title={t('image.previewFailed')} detail={t('image.mimeUnsupported', { mime: pair?.after?.mime ?? pair?.before?.mime ?? t('image.mimeUnknown') })} onOpenExternally={onOpenExternally}/>}
+      {status === 'too-large' && <Degradation title={t('image.tooLargeMetaOnlyShort')} detail={t('image.tooLargeDetail', { meta: describeBlob(pair?.after ?? pair?.before, t) })} onOpenExternally={onOpenExternally}/>}
+      {mode === 'difference' && differenceFailed && <Degradation title={t('image.diffModeUnavailable')} detail={`${differenceFailed}${t('image.differenceFailedHint')}`} onRetry={onRetry} onOpenExternally={onOpenExternally}/>}
 
       {(status === 'ready' || status === 'missing') && mode === 'side' && <div className="image-diff-side-by-side">
-        {!single && <ImageSide label={sideLabel(pair?.before, '变更前')} url={beforeUrl} blob={pair?.before} frameStyle={frameStyle} checkerboard={checkerboard} onLoad={handleImageLoad}/>}
-        <ImageSide label={single ? '文件内容' : sideLabel(pair?.after, '变更后')} url={afterUrl} blob={pair?.after} frameStyle={frameStyle} checkerboard={checkerboard} onLoad={handleImageLoad}/>
+        {!single && <ImageSide label={sideLabel(pair?.before, t('image.before'))} url={beforeUrl} blob={pair?.before} frameStyle={frameStyle} checkerboard={checkerboard} onLoad={handleImageLoad}/>}
+        <ImageSide label={single ? t('image.fileContent') : sideLabel(pair?.after, t('image.after'))} url={afterUrl} blob={pair?.after} frameStyle={frameStyle} checkerboard={checkerboard} onLoad={handleImageLoad}/>
       </div>}
 
       {status === 'ready' && mode === 'overlay' && comparable && <div className="image-diff-cell">
         <div className="image-diff-frame" style={{ ...frameStyle, ...(checkerboard ? CHECKERBOARD_STYLE : {}) }}>
-          <img className="image-diff-image" style={{ ...frameStyle, objectFit: 'contain' }} src={beforeUrl ?? undefined} alt="变更前" onLoad={handleImageLoad}/>
-          <img className="image-diff-image image-diff-image--clipped" style={{ ...frameStyle, objectFit: 'contain', clipPath: overlayClipPath(slider) }} src={afterUrl ?? undefined} alt="变更后（按滑块裁剪显示）" onLoad={handleImageLoad}/>
+          <img className="image-diff-image" style={{ ...frameStyle, objectFit: 'contain' }} src={beforeUrl ?? undefined} alt={t('image.before')} onLoad={handleImageLoad}/>
+          <img className="image-diff-image image-diff-image--clipped" style={{ ...frameStyle, objectFit: 'contain', clipPath: overlayClipPath(slider) }} src={afterUrl ?? undefined} alt={t('image.afterSliderNote')} onLoad={handleImageLoad}/>
         </div>
       </div>}
 
@@ -241,8 +243,8 @@ export function ImageDiffViewer({ path, pair, loading = false, error = null, onR
     </div>
 
     {status === 'ready' && mode === 'overlay' && comparable && <div className="image-diff-slider-row">
-      <span>叠加位置</span>
-      <input type="range" min={0} max={100} step={1} value={clampSlider(slider)} onChange={(event) => setSlider(Number(event.target.value))} aria-label="叠加对比滑块"/>
+      <span>{t('image.overlayPosition')}</span>
+      <input type="range" min={0} max={100} step={1} value={clampSlider(slider)} onChange={(event) => setSlider(Number(event.target.value))} aria-label={t('image.overlaySlider')}/>
       <span className="image-diff-zoom-readout">{Math.round(clampSlider(slider))}%</span>
     </div>}
   </section>
@@ -256,30 +258,34 @@ function ImageSide({ label, url, blob, frameStyle, checkerboard, onLoad }: {
   checkerboard: boolean
   onLoad: (event: { currentTarget: HTMLImageElement }) => void
 }) {
+  const { t } = useI18n()
   const status = resolveSideStatus(blob)
   return <div className="image-diff-cell">
     <span className="image-diff-cell-label">{label}</span>
     {status === 'ready' && <div className="image-diff-frame" style={{ ...frameStyle, ...(checkerboard ? CHECKERBOARD_STYLE : {}) }}>
       <img className="image-diff-image" style={{ ...frameStyle, objectFit: 'contain' }} src={url ?? undefined} alt={label} onLoad={onLoad}/>
     </div>}
-    {status !== 'ready' && <div className="image-diff-message"><strong>{STATUS_TEXT[status].title}</strong><span>{STATUS_TEXT[status].detail(describeBlob(blob))}</span></div>}
+    {status !== 'ready' && <div className="image-diff-message"><strong>{statusText(status, t).title}</strong><span>{statusText(status, t).detail(describeBlob(blob, t))}</span></div>}
   </div>
 }
 
-const STATUS_TEXT: Record<SideStatus, { title: string; detail: (meta: string) => string }> = {
-  ready: { title: '', detail: () => '' },
-  missing: { title: '该版本没有此文件', detail: () => '新增或删除的一侧，无法成图对比。' },
-  'too-large': { title: '图片过大，仅显示元数据', detail: (meta) => `${meta} 为避免整体载入，只读取了文件头。` },
-  unsupported: { title: '无法预览', detail: (meta) => `${meta} 不是可解码的图片或 SVG。` },
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
+function statusText(status: SideStatus, t: Translate): { title: string; detail: (meta: string) => string } {
+  if (status === 'missing') return { title: t('image.statusMissingTitle'), detail: () => t('image.statusMissingDetail') }
+  if (status === 'too-large') return { title: t('image.statusTooLargeTitle'), detail: (meta) => t('image.statusTooLargeDetail', { meta }) }
+  if (status === 'unsupported') return { title: t('image.statusUnsupportedTitle'), detail: (meta) => t('image.statusUnsupportedDetail', { meta }) }
+  return { title: '', detail: () => '' }
 }
 
 function Degradation({ title, detail, onRetry, onOpenExternally }: { title: string; detail: string; onRetry?: () => void; onOpenExternally?: () => void }) {
+  const { t } = useI18n()
   return <div className="image-diff-message">
     <strong><ImageOff size={13}/> {title}</strong>
     <span>{detail}</span>
     {(onRetry || onOpenExternally) && <span className="image-diff-message-actions">
-      {onRetry && <Button size="compact" onClick={onRetry}><TriangleAlert size={13}/><span>重试</span></Button>}
-      {onOpenExternally && <Button size="compact" onClick={onOpenExternally}><ExternalLink size={13}/><span>用外部程序打开</span></Button>}
+      {onRetry && <Button size="compact" onClick={onRetry}><TriangleAlert size={13}/><span>{t('image.retry')}</span></Button>}
+      {onOpenExternally && <Button size="compact" onClick={onOpenExternally}><ExternalLink size={13}/><span>{t('image.openWithExternal')}</span></Button>}
     </span>}
   </div>
 }

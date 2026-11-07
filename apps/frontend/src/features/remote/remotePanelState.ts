@@ -16,24 +16,28 @@ export function isSilentNoop(report: RemoteOperationReport): boolean {
 }
 
 /** 确认框文案：摘要 + 警告 + 受影响对象，破坏性影响必须在确认前读得到。 */
-export function confirmationMessage(report: RemoteOperationReport): string {
+export function confirmationMessage(report: RemoteOperationReport, t: Translate): string {
   const lines = [report.summary]
   lines.push(...(report.warnings ?? []).map((warning) => `· ${warning}`))
   const affected = (report.affected ?? []).slice(0, 12)
-  if (affected.length) lines.push(`受影响：${affected.join('、')}${(report.affected?.length ?? 0) > affected.length ? ' 等' : ''}`)
+  if (affected.length) lines.push(t('repository.report.affected', { paths: affected.join('、'), truncated: (report.affected?.length ?? 0) > affected.length ? t('repository.tag.reportSuffix') : '' }))
   return lines.join('\n')
 }
 
-export const CANCELLED_NOTICE = '已取消，仓库未发生改动'
+type Translate = (key: string, params?: Record<string, string | number>) => string
 
-/** 未单独配置 push 地址时，Git 沿用 fetch 地址，这里如实展示而不是伪造一条。 */
-export function pushUrlText(remote: RepositoryRemoteDetail): string {
-  if (remote.pushUrls.length) return remote.pushUrls.join(' / ')
-  return `沿用 fetch：${fetchUrlText(remote)}`
+export function cancelledNotice(t: Translate): string {
+  return t('repository.tag.cancelledNotice')
 }
 
-export function fetchUrlText(remote: RepositoryRemoteDetail): string {
-  return remote.fetchUrls.join(' / ') || '未配置 fetch 地址'
+/** 未单独配置 push 地址时，Git 沿用 fetch 地址，这里如实展示而不是伪造一条。 */
+export function pushUrlText(remote: RepositoryRemoteDetail, t: Translate): string {
+  if (remote.pushUrls.length) return remote.pushUrls.join(' / ')
+  return t('repository.tag.pushFollowsFetch', { url: fetchUrlText(remote, t) })
+}
+
+export function fetchUrlText(remote: RepositoryRemoteDetail, t: Translate): string {
+  return remote.fetchUrls.join(' / ') || t('repository.tag.noFetchUrl')
 }
 
 /** 可作上游的远端分支：必须带远程前缀，且排除 refs/remotes/<远程>/HEAD。 */
@@ -52,15 +56,15 @@ export function splitUpstream(value: string | null | undefined): { remote: strin
   return { remote: trimmed.slice(0, separator), branch: trimmed.slice(separator + 1) }
 }
 
-export function tagKindLabel(kind: RepositoryTagDetail['kind']): string {
-  return kind === 'annotated' ? '注释标签' : '轻量标签'
+export function tagKindLabel(kind: RepositoryTagDetail['kind'], t: Translate): string {
+  return t(kind === 'annotated' ? 'repository.tag.kindAnnotated' : 'repository.tag.kindLightweight')
 }
 
 /** 标签风险提示：轻量标签无法带说明、签名标签删除后无法再校验、孤立提交可能被 GC。 */
-export function tagRiskText(tag: RepositoryTagDetail): string | null {
-  if (tag.signed) return '签名标签：删除后本地无法再校验该签名'
-  if (!tag.onBranch) return '指向的提交不在任何本地分支上，删除后可能被 GC 回收'
-  if (tag.kind === 'lightweight') return '轻量标签：没有打标签人与说明，推送后信息量最少'
+export function tagRiskText(tag: RepositoryTagDetail, t: Translate): string | null {
+  if (tag.signed) return t('repository.tag.signedDeleteWarning')
+  if (!tag.onBranch) return t('repository.tag.unreachableWarning')
+  if (tag.kind === 'lightweight') return t('repository.tag.lightweightWarning')
   return null
 }
 
@@ -72,7 +76,7 @@ export function filterTags(tags: RepositoryTagDetail[], query: string): Reposito
 }
 
 /** 凭据被脱敏时给用户的解释，避免误以为地址坏了。 */
-export function credentialNotice(remote: RepositoryRemoteDetail): string | null {
+export function credentialNotice(remote: RepositoryRemoteDetail, t: Translate): string | null {
   if (!remote.credentialsRedacted) return null
-  return '该远程的 URL 内嵌了凭据，展示时已替换为 [redacted]；建议改用凭据管理器或 SSH'
+  return t('repository.tag.redactedWarning')
 }

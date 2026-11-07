@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useState } from 'react'
 import { Tag, X } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -24,6 +25,7 @@ export function CreateTagDialog({ existingTags, defaultCommit, busy, onClose, on
   onClose: () => void
   onSubmit: (payload: CreateTagPayload) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [tag, setTag] = useState('')
   const [commit, setCommit] = useState(defaultCommit || 'HEAD')
   const [message, setMessage] = useState('')
@@ -36,28 +38,28 @@ export function CreateTagDialog({ existingTags, defaultCommit, busy, onClose, on
   const key = signingKey.trim()
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
-    <section className="branch-dialog worktree-dialog" role="dialog" aria-modal="true" aria-label="创建标签">
-      <div className="branch-dialog-heading"><span className="branch-dialog-icon"><Tag size={18}/></span><div><h2>创建标签</h2><p>注释标签会记录打标签人与说明；签名标签额外写入 GPG 签名。</p></div><Button variant="icon" onClick={onClose} disabled={busy} title="关闭"><X size={16}/></Button></div>
+    <section className="branch-dialog worktree-dialog" role="dialog" aria-modal="true" aria-label={t('repository.tag.dialogTitle')}>
+      <div className="branch-dialog-heading"><span className="branch-dialog-icon"><Tag size={18}/></span><div><h2>{t('repository.tag.dialogTitle')}</h2><p>{t('repository.tag.dialogHint')}</p></div><Button variant="icon" onClick={onClose} disabled={busy} title={t('common.close')}><X size={16}/></Button></div>
       <form onSubmit={(event) => { event.preventDefault(); if (valid) void onSubmit({ tag: name, commit: commit.trim(), message: message.trim(), signed, signingKey: key || undefined, force }) }}>
-        <label>标签名称</label>
+        <label>{t('repository.tag.name')}</label>
         <div className="branch-name-input"><input autoFocus value={tag} onChange={(event) => setTag(event.target.value)} placeholder="v1.2.0"/></div>
-        {taken && <div className="branch-dialog-hint">{`标签 ${name} 已存在${force ? '，将按覆盖模式提交（仍需确认）' : '，请勾选覆盖模式或换个名称'}`}</div>}
-        <label>目标提交</label>
-        <div className="branch-name-input"><input value={commit} onChange={(event) => setCommit(event.target.value)} placeholder="HEAD、提交哈希或分支名"/></div>
-        <label>标签类型</label>
+        {taken && <div className="branch-dialog-hint">{t('tag.existsWithMode', { name, mode: force ? t('repository.tag.overwriteExists') : t('repository.tag.overwriteRequired') })}</div>}
+        <label>{t('repository.tag.target')}</label>
+        <div className="branch-name-input"><input value={commit} onChange={(event) => setCommit(event.target.value)} placeholder={t('repository.tag.targetPlaceholder')}/></div>
+        <label>{t('repository.tag.type')}</label>
         <div className="segmented worktree-mode">
-          <button type="button" className={!signed ? 'active' : ''} onClick={() => setSigned(false)}>注释标签 -a</button>
-          <button type="button" className={signed ? 'active' : ''} onClick={() => setSigned(true)}>签名标签 -s</button>
+          <button type="button" className={!signed ? 'active' : ''} onClick={() => setSigned(false)}>{t('repository.type.annotated')}</button>
+          <button type="button" className={signed ? 'active' : ''} onClick={() => setSigned(true)}>{t('repository.type.signed')}</button>
         </div>
-        <label>标签说明（必填）</label>
-        <div className="branch-name-input"><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="本次发布的要点"/></div>
+        <label>{t('repository.tag.messageLabel')}</label>
+        <div className="branch-name-input"><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder={t('repository.tag.messagePlaceholder')}/></div>
         {signed && <>
-          <label>签名密钥（可选，留空用 user.signingkey）</label>
-          <div className="branch-name-input"><input value={signingKey} onChange={(event) => setSigningKey(event.target.value)} placeholder="密钥指纹或邮箱"/></div>
+          <label>{t('repository.tag.keyLabel')}</label>
+          <div className="branch-name-input"><input value={signingKey} onChange={(event) => setSigningKey(event.target.value)} placeholder={t('repository.tag.keyPlaceholder')}/></div>
         </>}
-        <label className="auto-fetch-toggle"><span><strong>覆盖同名标签</strong><small>会先把「从哪个提交移到哪个提交」给你确认</small></span><input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)}/><span className="toggle-track" aria-hidden="true"><span/></span></label>
-        <div className="branch-dialog-hint">签名标签需要本机 GPG 与可用私钥；签署失败时不会降级成轻量标签冒充已签名。</div>
-        <div className="branch-dialog-actions"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>取消</Button><Button type="submit" variant="primary" disabled={!valid || busy}>{busy ? '正在创建…' : signed ? '创建签名标签' : '创建注释标签'}</Button></div>
+        <label className="auto-fetch-toggle"><span><strong>{t('repository.tag.overwrite')}</strong><small>{t('repository.tag.overwriteNote')}</small></span><input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)}/><span className="toggle-track" aria-hidden="true"><span/></span></label>
+        <div className="branch-dialog-hint">{t('repository.tag.gpgNote')}</div>
+        <div className="branch-dialog-actions"><Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{t('common.cancel')}</Button><Button type="submit" variant="primary" disabled={!valid || busy}>{busy ? t('repository.tag.creating') : signed ? t('repository.tag.createSigned') : t('repository.tag.createAnnotated')}</Button></div>
       </form>
     </section>
   </div>

@@ -12,10 +12,12 @@ export function asPanelKind(kind: RepositoryOperationState['kind']): PanelOperat
   return kind as PanelOperationKind
 }
 
-export function continueActionLabel(kind: PanelOperationKind): string {
-  if (kind === 'rebase') return '继续变基'
-  if (kind === 'revert') return '继续还原'
-  return '继续操作'
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
+export function continueActionLabel(kind: PanelOperationKind, t: Translate): string {
+  if (kind === 'rebase') return t('operation.continueRebase')
+  if (kind === 'revert') return t('operation.continueRevert')
+  return t('operation.continueGeneric')
 }
 
 /** Git 支持 --skip 的操作类型；merge 冲突没有“跳过”语义。 */
@@ -28,6 +30,6 @@ export function showsStepRoute(kind: PanelOperationKind): boolean {
   return kind === 'rebase' || kind === 'revert'
 }
 
-export function stepRouteLabel(kind: PanelOperationKind): string {
-  return kind === 'rebase' ? '变基线路' : '还原序列'
+export function stepRouteLabel(kind: PanelOperationKind, t: Translate): string {
+  return kind === 'rebase' ? t('operation.routeRebase') : t('operation.routeRevert')
 }

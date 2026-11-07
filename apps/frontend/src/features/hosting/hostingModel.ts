@@ -26,6 +26,8 @@ export const HOSTING_DEFAULT_HOSTS: Record<HostingProvider, string> = {
   gitlab: 'gitlab.com',
 }
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 export type HostingCiTone = 'success' | 'failure' | 'pending' | 'unknown'
 
 export type CreatePullRequestForm = {
@@ -36,11 +38,15 @@ export type CreatePullRequestForm = {
   draft: boolean
 }
 
-const CI_LABELS: Record<HostingCiStatus, string> = {
-  success: 'CI 通过',
-  failure: 'CI 失败',
-  pending: 'CI 进行中',
-  unknown: 'CI 未知',
+const CI_KEYS: Record<HostingCiStatus, string> = {
+  success: 'hosting.ciPass',
+  failure: 'hosting.ciFail',
+  pending: 'hosting.ciRunning',
+  unknown: 'hosting.ciUnknown',
+}
+
+function ciLabel(status: HostingCiStatus, t: Translate): string {
+  return t(CI_KEYS[status])
 }
 
 const CI_TONES: Record<HostingCiStatus, HostingCiTone> = {
@@ -67,18 +73,19 @@ export function hostingCiTone(status: string): HostingCiTone {
   return CI_TONES[status as HostingCiStatus] ?? 'unknown'
 }
 
-export function hostingCiLabel(status: string): string {
-  return CI_LABELS[status as HostingCiStatus] ?? CI_LABELS.unknown
+export function hostingCiLabel(status: string, t: Translate): string {
+  const key = CI_KEYS[status as HostingCiStatus] ?? CI_KEYS.unknown
+  return t(key)
 }
 
 /** 设置页摘要：令牌只显示「已配置 / 未配置」，不回显内容。 */
-export function hostingSettingsSummary(settings: HostingSettings | null): string {
-  if (!settings) return '正在读取托管设置…'
+export function hostingSettingsSummary(settings: HostingSettings | null, t: Translate): string {
+  if (!settings) return t('hosting.readingSettings')
   const label = hostingProviderLabel(settings.provider)
   const host = settings.host?.trim() || hostingDefaultHost(settings.provider)
   return settings.tokenConfigured
-    ? `${label}（${host}）已保存访问令牌`
-    : `${label}（${host}）尚未保存访问令牌`
+    ? t('hosting.summaryWithToken', { label, host })
+    : t('hosting.summaryWithoutToken', { label, host })
 }
 
 function isControl(value: string): boolean {
@@ -92,37 +99,37 @@ function isControlOrSpace(value: string): boolean {
 }
 
 /** 空字符串表示「保留已保存的令牌」，返回 null 表示通过。 */
-export function validateHostingToken(token: string): string | null {
+export function validateHostingToken(token: string, t: Translate): string | null {
   const value = token.trim()
   if (!value) return null
-  if ([...value].length > 4096) return '访问令牌过长'
-  if (isControlOrSpace(value)) return '访问令牌不能包含空白或控制字符'
+  if ([...value].length > 4096) return t('hosting.tokenTooLong')
+  if (isControlOrSpace(value)) return t('hosting.tokenIllegalChars')
   return null
 }
 
 /** 空字符串表示使用提供商默认主机，返回 null 表示通过。 */
-export function validateHostingHost(host: string, provider: HostingProvider): string | null {
+export function validateHostingHost(host: string, provider: HostingProvider, t: Translate): string | null {
   const value = host.trim().toLowerCase()
   if (!value) return null
-  if (value.length > 259) return '主机名过长'
-  if (isControlOrSpace(value)) return '主机名不能包含空白或控制字符'
+  if (value.length > 259) return t('hosting.hostTooLong')
+  if (isControlOrSpace(value)) return t('hosting.hostIllegalChars')
   for (const rejected of ['://', '/', '\\', '@', '?', '#']) {
     if (value.includes(rejected)) {
-      return `主机名必须是裸主机名，${hostingProviderLabel(provider)} 默认是 ${hostingDefaultHost(provider)}`
+      return t('hosting.bareHostName', { provider: hostingProviderLabel(provider), host: hostingDefaultHost(provider) })
     }
   }
   const [hostname, port] = splitHostPort(value)
-  if (!hostname) return '主机名不能为空'
+  if (!hostname) return t('hosting.hostRequired')
   const labels = hostname.split('.')
   for (const label of labels) {
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) {
-      return '主机名格式无效'
+      return t('hosting.hostInvalid')
     }
   }
   if (port !== null) {
-    if (!/^\d+$/.test(port)) return '主机端口格式无效'
+    if (!/^\d+$/.test(port)) return t('hosting.portInvalid')
     const numeric = Number(port)
-    if (!Number.isInteger(numeric) || numeric < 1 || numeric > 65535) return '主机端口格式无效'
+    if (!Number.isInteger(numeric) || numeric < 1 || numeric > 65535) return t('hosting.portInvalid')
   }
   return null
 }
@@ -133,19 +140,19 @@ function splitHostPort(value: string): [string, string | null] {
   return [value.slice(0, index), value.slice(index + 1)]
 }
 
-function validateBranchName(branch: string, label: string): string | null {
+function validateBranchName(branch: string, label: string, t: Translate): string | null {
   const value = branch.trim()
-  if (!value) return `${label}不能为空`
-  if ([...value].length > 255) return `${label}过长`
-  if (isControlOrSpace(value)) return `${label}不能包含空白或控制字符`
-  if (value.startsWith('-') || value.startsWith('/') || value.endsWith('/')) return `${label}格式无效`
-  if (value.endsWith('.') || value.endsWith('.lock')) return `${label}格式无效`
+  if (!value) return t('hosting.fieldRequired', { label })
+  if ([...value].length > 255) return t('hosting.fieldTooLong', { label })
+  if (isControlOrSpace(value)) return t('hosting.fieldControlChars', { label })
+  if (value.startsWith('-') || value.startsWith('/') || value.endsWith('/')) return t('hosting.fieldInvalid', { label })
+  if (value.endsWith('.') || value.endsWith('.lock')) return t('hosting.fieldInvalid', { label })
   if (
     value.includes('..') ||
     value.includes('//') ||
     [...value].some((character) => '\\~^:?*['.includes(character))
   ) {
-    return `${label}包含 Git 不允许的字符`
+    return t('hosting.fieldForbiddenChars', { label })
   }
   return null
 }
@@ -154,20 +161,21 @@ function validateBranchName(branch: string, label: string): string | null {
 export function validateCreatePullRequestForm(
   form: CreatePullRequestForm,
   provider: HostingProvider,
+  t: Translate,
 ): string | null {
   const noun = provider === 'gitlab' ? 'MR' : 'PR'
   const title = form.title.trim()
-  if (!title) return `${noun} 标题不能为空`
-  if ([...title].length > 256) return `${noun} 标题过长（上限 256 字符）`
-  if (isControl(title)) return `${noun} 标题不能包含换行或控制字符`
-  if ([...form.body].length > 64 * 1024) return `${noun} 描述过长`
-  if (form.body.includes('\0')) return `${noun} 描述不能包含 NUL`
-  const source = validateBranchName(form.sourceBranch, '源分支')
+  if (!title) return t('hosting.titleRequired', { noun })
+  if ([...title].length > 256) return t('hosting.titleTooLong', { noun })
+  if (isControl(title)) return t('hosting.titleIllegalChars', { noun })
+  if ([...form.body].length > 64 * 1024) return t('hosting.bodyTooLong', { noun })
+  if (form.body.includes('\0')) return t('hosting.bodyContainsNul', { noun })
+  const source = validateBranchName(form.sourceBranch, t('hosting.sourceBranch'), t)
   if (source) return source
-  const target = validateBranchName(form.targetBranch, '目标分支')
+  const target = validateBranchName(form.targetBranch, t('hosting.targetBranch'), t)
   if (target) return target
   if (form.sourceBranch.trim() === form.targetBranch.trim()) {
-    return '源分支与目标分支不能相同'
+    return t('hosting.branchesMustDiffer')
   }
   return null
 }
@@ -187,9 +195,9 @@ export function buildCreatePullRequestInput(
 }
 
 /** 列表状态文案：draft 优先于平台原始 state。 */
-export function pullRequestStateLabel(pr: HostingPullRequest): string {
-  if (pr.draft) return '草稿'
-  if (pr.state === 'open' || pr.state === 'opened') return '开放'
+export function pullRequestStateLabel(pr: HostingPullRequest, t: Translate): string {
+  if (pr.draft) return t('hosting.stateDraft')
+  if (pr.state === 'open' || pr.state === 'opened') return t('hosting.stateOpen')
   return pr.state
 }
 
@@ -198,8 +206,8 @@ export function pullRequestBranchLabel(pr: HostingPullRequest): string {
 }
 
 /** 列表项摘要：状态 · 分支 · 作者。 */
-export function summarizePullRequest(pr: HostingPullRequest): string {
-  return `${pullRequestStateLabel(pr)} · ${pullRequestBranchLabel(pr)} · ${pr.author}`
+export function summarizePullRequest(pr: HostingPullRequest, t: Translate): string {
+  return `${pullRequestStateLabel(pr, t)} · ${pullRequestBranchLabel(pr)} · ${pr.author}`
 }
 
 /**

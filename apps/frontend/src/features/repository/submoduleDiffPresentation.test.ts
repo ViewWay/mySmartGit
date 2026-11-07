@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SubmoduleCommitEntry, SubmodulePointerDiff } from '../../repository'
+import { zh } from '../../i18n/messages/zh'
 import {
   cappedCommits,
   commitLineText,
@@ -9,6 +10,12 @@ import {
   pointerChangeTone,
   pointerHashPair,
 } from './submoduleDiffPresentation'
+
+const zhT = ((key: string, params?: Record<string, string | number>) => {
+  const template = zh[key as keyof typeof zh] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}) as (key: string, params?: Record<string, string | number>) => string
 
 const commit = (shortHash: string, title: string): SubmoduleCommitEntry => ({
   hash: `${shortHash}0000000000000000000000000000000000000`,
@@ -58,7 +65,7 @@ describe('指针状态判定', () => {
   it('未初始化与读不出提交时不谎报为未变化', () => {
     expect(pointerChangeKind(diff({ uninitialized: true, targetCommit: '' }))).toBe('uninitialized')
     expect(pointerChangeKind(diff({ previousCommit: '' }))).toBe('unknown')
-    expect(pointerChangeLabel('uninitialized')).toBe('子模块未初始化')
+    expect(pointerChangeLabel('uninitialized', zhT)).toBe('子模块未初始化')
     expect(pointerChangeTone('unchanged')).toBe('neutral')
     expect(pointerChangeTone('staged')).toBe('danger')
     expect(pointerChangeTone('unknown')).toBe('warning')
@@ -81,7 +88,7 @@ describe('差异文案', () => {
       removedCount: 2,
       dirtyFiles: 3,
       detached: true,
-    }))
+    }), zhT)
     expect(lines[0]).toContain('指针未变化') // 后端 summary 原样保留，不由前端改写
     expect(lines.some((line) => line.includes('非快进'))).toBe(true)
     expect(lines.some((line) => line.includes('丢掉 2 个提交'))).toBe(true)
@@ -90,8 +97,8 @@ describe('差异文案', () => {
   })
 
   it('快进且干净时只有一句摘要', () => {
-    expect(describePointerDiff(diff())).toHaveLength(1)
-    expect(describePointerDiff(diff({ uninitialized: true }))).toHaveLength(1)
+    expect(describePointerDiff(diff(), zhT)).toHaveLength(1)
+    expect(describePointerDiff(diff({ uninitialized: true }), zhT)).toHaveLength(1)
   })
 
   it('提交列表限量但不谎报总数', () => {

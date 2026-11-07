@@ -321,9 +321,13 @@
 
 .code-row:hover { background: var(--code-hover); }
 
-.code-row.add { background: var(--code-add); }
+.code-row.add { background: var(--diff-add-bg); }
 
-.code-row.del { background: var(--code-del); }
+.code-row.del { background: var(--diff-del-bg); }
+
+.code-row.add .line-no { background: var(--diff-add-gutter); }
+
+.code-row.del .line-no { background: var(--diff-del-gutter); }
 
 .code-row.add:hover { background: var(--code-add-hover); }
 
@@ -342,6 +346,21 @@
 .code-row.del .change-sign { color: var(--danger); }
 
 .code-row code { padding: 3px 9px; line-height: 1.5; white-space: pre; }
+
+.diff-panel { --diff-line-height: 1.5; --diff-code-padding-y: 3px; --diff-code-padding-x: 9px; }
+.diff-panel .code-row, .diff-panel .split-code-side, .diff-panel .split-action-row, .diff-panel .diff-omitted { min-height: 0; }
+.diff-panel .code-row code, .diff-panel .split-code-side code { padding: var(--diff-code-padding-y) var(--diff-code-padding-x); line-height: var(--diff-line-height); font-kerning: none; }
+.diff-panel.word-wrap .unified-diff-content, .diff-panel.word-wrap .split-diff-content { width: 100%; min-width: 0; }
+.diff-panel.word-wrap .code-row, .diff-panel.word-wrap .split-code-side { width: 100%; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-panel.word-wrap:not(.stage-actions-enabled) .code-row { grid-template-columns: var(--diff-line-number-width, 5ch) 2ch minmax(0, 1fr); }
+.diff-panel.word-wrap.stage-actions-enabled .code-row { grid-template-columns: 32px var(--diff-line-number-width, 5ch) 26px minmax(0, 1fr); }
+.diff-panel.word-wrap .split-code-side { grid-template-columns: var(--diff-line-number-width, 5ch) 22px minmax(0, 1fr); }
+.diff-panel.word-wrap.stage-actions-enabled .split-code-side { grid-template-columns: var(--diff-line-number-width, 5ch) 26px minmax(0, 1fr); }
+.diff-panel.word-wrap .code-row code, .diff-panel.word-wrap .split-code-side code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.diff-panel.word-wrap .line-no, .diff-panel.word-wrap .change-sign { white-space: nowrap; overflow-wrap: normal; }
+.diff-panel.word-wrap .diff-omitted { overflow: hidden; white-space: nowrap; }
+.diff-panel.word-wrap .unified-diff-pane, .diff-panel.word-wrap .split-diff-pane { overflow-x: hidden; }
+.diff-panel.word-wrap .unified-diff-content, .diff-panel.word-wrap .split-diff-content { overflow-anchor: none; }
 
 .diff-stage-slot { position: relative; height: 100%; min-width: 0; background: var(--code-surface); }
 
@@ -371,9 +390,24 @@
 
 .token.type { color: var(--syntax-type); }
 
-.token.operator { color: var(--code-text); }
+.token.operator { color: var(--syntax-operator); }
 
-.token.punctuation { color: #aab6bd; }
+.token.punctuation { color: var(--syntax-punctuation); }
+
+.tok-comment { color: var(--syntax-comment); font-style: italic; }
+.tok-keyword { color: var(--syntax-keyword); }
+.tok-meta { color: var(--syntax-meta); }
+.tok-string, .tok-string2, .tok-url { color: var(--syntax-string); }
+.tok-regexp { color: var(--syntax-regexp); }
+.tok-number, .tok-bool, .tok-atom, .tok-literal { color: var(--syntax-number); }
+.tok-typeName, .tok-className, .tok-namespace, .tok-macroName { color: var(--syntax-type); }
+.tok-function, .tok-variableName.tok-definition, .tok-propertyName.tok-definition { color: var(--syntax-function); }
+.tok-propertyName { color: var(--syntax-property); }
+.tok-tagName { color: var(--syntax-tag); }
+.tok-attributeName { color: var(--syntax-attribute); }
+.tok-operator { color: var(--syntax-operator); }
+.tok-punctuation { color: var(--syntax-punctuation); }
+.tok-invalid { color: var(--syntax-invalid); }
 
 .staging-page, .stash-page { padding: 10px 12px 12px; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 
@@ -494,7 +528,7 @@
 
 .reference-select-search { height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--faint); background: var(--panel-2); }
 
-.reference-select-search:focus-within { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent); }
+.reference-select-search:focus-within { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 .reference-select-search input { min-width: 0; flex: 1; height: 100%; padding: 0; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
 
@@ -1098,7 +1132,7 @@
 
 .template-editor-body textarea { width: 100%; min-height: 0; padding: 14px; resize: none; border: 1px solid var(--line); border-radius: 7px; outline: 0; color: var(--text); background: var(--bg); font: 13px/1.65 var(--font-code); tab-size: 2; }
 
-.template-editor-body textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.template-editor-body textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 .template-editor-actions { min-width: 0; padding: 14px 20px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); background: var(--panel-2); }
 
@@ -1448,7 +1482,7 @@
 /* 行内改名输入框：不套 .branch-name-input，需要自带边框与等宽字体。 */
 .branch-rename-input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel-2); font-family: var(--font-code); font-size: 11px; }
 
-.branch-rename-input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.branch-rename-input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 /* 标签操作行紧贴其标签行：去掉 .structure-actions 的整块上边距，改用行内缩进对齐标签名。 */
 .structure-actions.tag-row-actions { margin-top: 0; padding: 0 12px 9px 51px; border-bottom: 1px solid var(--line-soft); }
@@ -2037,7 +2071,7 @@
 
 .pipeline-form input, .pipeline-form textarea { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; outline: 0; color: var(--text); background: var(--panel-3); font-size: 11px; resize: vertical; }
 
-.pipeline-form input:focus, .pipeline-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.pipeline-form input:focus, .pipeline-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
 
 .pipeline-form input:disabled, .pipeline-form textarea:disabled { opacity: .6; cursor: not-allowed; }
 
@@ -2113,10 +2147,40 @@
 .update-progress > span { color: var(--muted); font-size: 10px; }
 .update-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .update-hint { margin: 0; color: var(--faint); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
-.update-dialog { display: grid; align-content: start; width: min(780px, 100%); max-height: min(84vh, 760px); overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-base); box-shadow: 0 24px 64px rgba(0, 0, 0, .38); }
-.update-dialog-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); background: var(--surface-base); }
-.update-dialog-bar strong { color: var(--text); font-size: 13px; }
 
 @media (max-width: 1100px) {
   .update-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------------------
+   W6 偏好设置
+   --------------------------------------------------------------------------- */
+.preferences-dialog { width: min(860px, calc(100vw - 32px)); height: min(620px, calc(100vh - 64px)); display: grid; grid-template-columns: 190px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 14px; color: var(--text); background: var(--panel); box-shadow: 0 28px 80px rgba(0, 0, 0, .46); animation: popIn .18s ease-out; }
+.preferences-nav { display: flex; flex-direction: column; gap: 4px; padding: 16px 12px; border-right: 1px solid var(--line-soft); background: var(--panel-2); }
+.preferences-title { display: flex; align-items: center; gap: 8px; padding: 2px 8px 12px; color: var(--text); font-size: 13px; }
+.preferences-title svg { color: var(--accent); }
+.preferences-nav button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; text-align: left; font-size: 12px; cursor: pointer; }
+.preferences-nav button:hover { color: var(--text); background: var(--panel-3); }
+.preferences-nav button.active { color: var(--accent); background: var(--accent-dim); }
+.preferences-content { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.preferences-heading { min-height: 52px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
+.preferences-heading h2 { margin: 0; font-size: 15px; }
+.preferences-body { min-height: 0; overflow: auto; padding: 18px; }
+.preferences-body .update-panel { gap: 12px; }
+.preferences-general { display: grid; gap: 2px; }
+.preferences-field, .preferences-toggle { min-height: 54px; padding: 10px 2px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line-soft); }
+.preferences-field { justify-content: space-between; }
+.preferences-field > div:first-child, .preferences-toggle > span:first-child { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.preferences-field strong, .preferences-toggle strong { color: var(--text); font-size: 12px; font-weight: 500; }
+.preferences-field small, .preferences-toggle small { color: var(--faint); font-size: 10px; line-height: 1.5; }
+.preferences-toggle { cursor: pointer; }
+.preferences-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.preferences-toggle input:checked + .toggle-track { background: var(--accent); }
+.preferences-toggle input:checked + .toggle-track > span { background: #fff; transform: translateX(14px); }
+.preferences-toggle input:focus-visible + .toggle-track { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .preferences-dialog { grid-template-columns: minmax(0, 1fr); height: min(720px, calc(100vh - 32px)); }
+  .preferences-nav { flex-direction: row; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .preferences-title { padding: 0 10px 0 4px; }
 }

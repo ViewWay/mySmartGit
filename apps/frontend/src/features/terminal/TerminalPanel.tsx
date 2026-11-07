@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -75,14 +76,15 @@ function describeError(reason: unknown): string {
 }
 
 export function TerminalPanel({ repositoryPath, onNotice }: TerminalPanelProps) {
+  const { t } = useI18n()
   const [tab, setTab] = useState<'terminal' | 'pipeline'>('terminal')
 
   if (!repositoryPath) {
     return (
       <section className="workspace-empty">
         <SquareTerminal size={34} />
-        <strong>内置终端</strong>
-        <span>请先打开本地仓库，再启动终端或运行自定义命令。</span>
+        <strong>{t('terminal.title')}</strong>
+        <span>{t('terminal.requiresRepository')}</span>
       </section>
     )
   }
@@ -91,13 +93,13 @@ export function TerminalPanel({ repositoryPath, onNotice }: TerminalPanelProps) 
     <section className="terminal-panel workspace-page">
       <div className="workspace-page-heading">
         <div>
-          <span className="eyebrow">仓库工具</span>
-          <h2>终端与命令流水线</h2>
-          <p>终端在仓库目录启动真实 PTY；自定义命令按参数数组执行，不经过 shell。</p>
+          <span className="eyebrow">{t('terminal.repoTools')}</span>
+          <h2>{t('terminal.subtitle')}</h2>
+          <p>{t('terminal.description')}</p>
         </div>
       </div>
 
-      <div className="terminal-tabs" role="tablist" aria-label="终端与命令流水线">
+      <div className="terminal-tabs" role="tablist" aria-label={t('terminal.subtitle')}>
         <button
           type="button"
           role="tab"
@@ -107,7 +109,7 @@ export function TerminalPanel({ repositoryPath, onNotice }: TerminalPanelProps) 
           className={tab === 'terminal' ? 'active' : ''}
           onClick={() => setTab('terminal')}
         >
-          <SquareTerminal size={14} />终端
+          <SquareTerminal size={14} />{t('terminal.tab')}
         </button>
         <button
           type="button"
@@ -118,7 +120,7 @@ export function TerminalPanel({ repositoryPath, onNotice }: TerminalPanelProps) 
           className={tab === 'pipeline' ? 'active' : ''}
           onClick={() => setTab('pipeline')}
         >
-          <Play size={14} />命令流水线
+          <Play size={14} />{t('terminal.pipelineTab')}
         </button>
       </div>
 
@@ -160,6 +162,7 @@ function TerminalTab({
   onNotice?: (message: string) => void
   visible: boolean
 }) {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTerm | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -204,7 +207,7 @@ function TerminalTab({
         setExitCode(output.exitCode ?? null)
         if (output.truncated && !truncatedNotifiedRef.current) {
           truncatedNotifiedRef.current = true
-          const notice = terminalTruncatedNotice(true)
+          const notice = terminalTruncatedNotice(true, t)
           if (notice) noticeRef.current?.(notice)
         }
         if (!output.alive) {
@@ -416,7 +419,7 @@ function TerminalTab({
       setError(describeError(reason))
     }
     setPhase('exited')
-    noticeRef.current?.('终端会话已关闭')
+    noticeRef.current?.(t('terminal.sessionClosed'))
     setBusy(false)
   }
 
@@ -428,7 +431,7 @@ function TerminalTab({
       const payload = terminalPasteData(text).slice(0, 64 * 1024)
       if (payload) await writeTerminal(sessionId, payload)
     } catch {
-      noticeRef.current?.('无法读取剪贴板，请使用系统快捷键粘贴')
+      noticeRef.current?.(t('terminal.clipboardFailed'))
     }
   }
 
@@ -438,12 +441,12 @@ function TerminalTab({
       ? 'failure'
       : terminalExitTone({ alive: phase === 'running', exitCode })
   const statusLabel = phase === 'connecting'
-    ? '正在启动…'
+    ? t('terminal.starting')
     : phase === 'running'
-      ? '运行中'
+      ? t('terminal.beingRun')
       : phase === 'error'
-        ? '连接失败'
-        : formatTerminalExit({ alive: false, exitCode })
+        ? t('terminal.connectFailed')
+        : formatTerminalExit({ alive: false, exitCode }, t)
 
   return (
     <div className="terminal-shell">
@@ -452,20 +455,20 @@ function TerminalTab({
           <span className={`terminal-status terminal-status-${tone}`}>{statusLabel}</span>
           {session && (
             <>
-              <code className="terminal-shell-name">{terminalShellLabel(session.shell)}</code>
+              <code className="terminal-shell-name">{terminalShellLabel(session.shell, t)}</code>
               <span className="terminal-cwd" title={session.cwd}>{session.cwd}</span>
             </>
           )}
         </div>
         <div className="terminal-actions">
-          <Button variant="secondary" size="compact" disabled={!sessionIdRef.current || busy} onClick={() => void pasteFromClipboard()} title="把剪贴板内容粘贴到终端">
-            <ClipboardPaste size={13} />粘贴
+          <Button variant="secondary" size="compact" disabled={!sessionIdRef.current || busy} onClick={() => void pasteFromClipboard()} title={t('terminal.pasteClipboard')}>
+            <ClipboardPaste size={13} />{t('terminal.paste')}
           </Button>
           <Button variant="secondary" size="compact" disabled={busy} onClick={() => void reconnect()}>
-            {busy ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}重连
+            {busy ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}{t('terminal.reconnect')}
           </Button>
           <Button variant="danger" size="compact" disabled={!sessionIdRef.current || busy} onClick={() => void killSession()}>
-            <Ban size={13} />关闭终端
+            <Ban size={13} />{t('terminal.closeTab')}
           </Button>
         </div>
       </div>
@@ -474,15 +477,15 @@ function TerminalTab({
         <div className="terminal-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
-          <Button variant="icon" title="关闭提示" onClick={() => setError('')}><X size={13} /></Button>
+          <Button variant="icon" title={t('terminal.closeNotice')} onClick={() => setError('')}><X size={13} /></Button>
         </div>
       )}
 
       <div className="terminal-screen-wrap">
-        <div ref={containerRef} className="terminal-screen" aria-label="终端输出" />
+        <div ref={containerRef} className="terminal-screen" aria-label={t('terminal.outputAria')} />
       </div>
       <p className="terminal-hint">
-        在仓库目录启动真实 PTY。关闭面板页签或离开仓库会结束会话；输出超过 256 KiB 时只保留最近的尾部内容。
+        {t('terminal.sessionNote')}
       </p>
     </div>
   )
@@ -499,6 +502,7 @@ function PipelineTab({
   repositoryPath: string
   onNotice?: (message: string) => void
 }) {
+  const { t } = useI18n()
   const [commands, setCommands] = useState<PipelineCommand[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState<PipelineDraft>(emptyPipelineDraft)
@@ -555,7 +559,7 @@ function PipelineTab({
       ))
       setDraft(emptyPipelineDraft())
       setEditingId(null)
-      noticeRef.current?.('命令流水线已保存')
+      noticeRef.current?.(t('terminal.pipelineSaved'))
     } catch (reason) {
       setFormError(describeError(reason))
     } finally {
@@ -564,7 +568,7 @@ function PipelineTab({
   }
 
   const saveDraft = async () => {
-    const invalid = validatePipelineDraft(draft)
+    const invalid = validatePipelineDraft(draft, t)
     if (invalid) {
       setFormError(invalid)
       return
@@ -591,7 +595,7 @@ function PipelineTab({
       setEditingId(null)
       setDraft(emptyPipelineDraft())
     }
-    noticeRef.current?.(`已删除命令：${command.name}`)
+    noticeRef.current?.(t('terminal.deletedCommand', { name: command.name }))
   }
 
   const runCommand = async (command: PipelineCommand) => {
@@ -605,7 +609,7 @@ function PipelineTab({
     try {
       const result = await runPipelineCommand(repositoryPath, command.id, null, runId)
       setReport(result)
-      noticeRef.current?.(commandRunSummary(result))
+      noticeRef.current?.(commandRunSummary(result, t))
     } catch (reason) {
       setRunError(describeError(reason))
     } finally {
@@ -620,7 +624,7 @@ function PipelineTab({
     if (!runId) return
     try {
       const accepted = await cancelPipelineCommand(runId)
-      noticeRef.current?.(accepted ? '已请求取消命令…' : '命令已结束，无需取消')
+      noticeRef.current?.(accepted ? t('terminal.cancelRequested') : t('terminal.alreadyFinished'))
     } catch (reason) {
       setRunError(describeError(reason))
     }
@@ -634,21 +638,21 @@ function PipelineTab({
   }
 
   const selected = commands.find((command) => command.id === selectedId) ?? null
-  const builtins = builtinPipelineCommands()
+  const builtins = builtinPipelineCommands(t)
 
   return (
     <div className="pipeline-shell">
       <div className="pipeline-grid">
         <article className="pipeline-card pipeline-list-card">
           <div className="pipeline-card-heading">
-            <h3>自定义命令</h3>
+            <h3>{t('terminal.customCommands')}</h3>
             <span className="pipeline-count">{commands.length}</span>
           </div>
-          <p className="pipeline-card-hint">{pipelineCommandsSummary(commands)}</p>
+          <p className="pipeline-card-hint">{pipelineCommandsSummary(commands, t)}</p>
           {loading ? (
-            <p className="pipeline-empty"><Loader2 size={14} className="spin" />正在读取命令配置…</p>
+            <p className="pipeline-empty"><Loader2 size={14} className="spin" />{t('terminal.loadingCommands')}</p>
           ) : commands.length === 0 ? (
-            <p className="pipeline-empty">还没有命令。可在右侧新建，或从内置示例填入编辑器。</p>
+            <p className="pipeline-empty">{t('terminal.noCommandsHint')}</p>
           ) : (
             <ul className="pipeline-list">
               {commands.map((command) => (
@@ -660,7 +664,7 @@ function PipelineTab({
                     onClick={() => setSelectedId(command.id)}
                   >
                     <strong>{command.name}</strong>
-                    <span className="pipeline-list-description">{command.description || '未填写描述'}</span>
+                    <span className="pipeline-list-description">{command.description || t('terminal.noDescription')}</span>
                     <code>{pipelineCommandPreview(command)}</code>
                     {command.cwdRelative && <span className="pipeline-cwd-badge">cwd: {command.cwdRelative}</span>}
                   </button>
@@ -670,16 +674,16 @@ function PipelineTab({
                       size="compact"
                       disabled={running || saving}
                       onClick={() => void runCommand(command)}
-                      title={`运行 ${command.name}`}
+                      title={t('terminal.runCommand', { name: command.name })}
                     >
-                      <Play size={12} />运行
+                      <Play size={12} />{t('terminal.run')}
                     </Button>
-                    <Button variant="icon" title={`编辑 ${command.name}`} disabled={saving} onClick={() => editCommand(command)}>
+                    <Button variant="icon" title={t('terminal.editCommandName', { name: command.name })} disabled={saving} onClick={() => editCommand(command)}>
                       <Save size={13} />
                     </Button>
                     <Button
                       variant="icon"
-                      title={`删除 ${command.name}`}
+                      title={t('terminal.deleteCommand', { name: command.name })}
                       disabled={saving || running}
                       onClick={() => void removeCommand(command)}
                     >
@@ -692,7 +696,7 @@ function PipelineTab({
           )}
 
           <div className="pipeline-builtins">
-            <h4>内置示例（填入编辑器后保存）</h4>
+            <h4>{t('terminal.builtinExamples')}</h4>
             <div className="pipeline-builtin-list">
               {builtins.map((item) => (
                 <button key={item.id} type="button" onClick={() => applyBuiltin(item)}>
@@ -706,40 +710,40 @@ function PipelineTab({
 
         <article className="pipeline-card pipeline-editor-card">
           <div className="pipeline-card-heading">
-            <h3>{editingId ? '编辑命令' : '新建命令'}</h3>
+            <h3>{editingId ? t('terminal.editCommand') : t('terminal.newCommand')}</h3>
             {editingId && <span className="pipeline-cwd-badge">id: {editingId}</span>}
           </div>
           <div className="pipeline-form">
-            <label htmlFor="pipeline-name">名称</label>
+            <label htmlFor="pipeline-name">{t('terminal.name')}</label>
             <input
               id="pipeline-name"
               ref={nameInputRef}
               value={draft.name}
-              placeholder="例如：查看状态"
+              placeholder={t('terminal.namePlaceholder')}
               disabled={saving}
               onChange={(event) => setDraft({ ...draft, name: event.target.value })}
             />
 
-            <label htmlFor="pipeline-description">描述（可选）</label>
+            <label htmlFor="pipeline-description">{t('terminal.descriptionLabel')}</label>
             <input
               id="pipeline-description"
               value={draft.description}
-              placeholder="例如：git status --short"
+              placeholder={t('terminal.programPlaceholder')}
               disabled={saving}
               onChange={(event) => setDraft({ ...draft, description: event.target.value })}
             />
 
-            <label htmlFor="pipeline-program">程序</label>
+            <label htmlFor="pipeline-program">{t('terminal.program')}</label>
             <input
               id="pipeline-program"
               value={draft.program}
-              placeholder="例如：git（不经过 shell）"
+              placeholder={t('terminal.cwdExample')}
               spellCheck={false}
               disabled={saving}
               onChange={(event) => setDraft({ ...draft, program: event.target.value })}
             />
 
-            <label htmlFor="pipeline-args">参数（一行一个，按字面值传递）</label>
+            <label htmlFor="pipeline-args">{t('terminal.argsLabel')}</label>
             <textarea
               id="pipeline-args"
               value={draft.argsText}
@@ -750,20 +754,20 @@ function PipelineTab({
               onChange={(event) => setDraft({ ...draft, argsText: event.target.value })}
             />
             <p className="pipeline-arg-count">
-              已解析 {parsePipelineArgs(draft.argsText).length} 个参数；空行会被忽略。
+              {t('terminal.parsedArgs')} {parsePipelineArgs(draft.argsText).length} {t('terminal.parsedArgsSuffix')}
             </p>
 
-            <label htmlFor="pipeline-cwd">工作目录（相对仓库根目录，可选）</label>
+            <label htmlFor="pipeline-cwd">{t('terminal.cwdLabel')}</label>
             <input
               id="pipeline-cwd"
               value={draft.cwdRelative}
-              placeholder="例如：packages/app"
+              placeholder={t('terminal.cwdExample')}
               spellCheck={false}
               disabled={saving}
               onChange={(event) => setDraft({ ...draft, cwdRelative: event.target.value })}
             />
-            <p className={validatePipelineCwd(draft.cwdRelative) ? 'pipeline-form-error' : 'pipeline-form-note'}>
-              {pipelineCwdSafetyNote(draft.cwdRelative)}
+            <p className={validatePipelineCwd(draft.cwdRelative, t) ? 'pipeline-form-error' : 'pipeline-form-note'}>
+              {pipelineCwdSafetyNote(draft.cwdRelative, t)}
             </p>
 
             {formError && <div className="pipeline-form-error" role="alert"><AlertTriangle size={14} />{formError}</div>}
@@ -771,7 +775,7 @@ function PipelineTab({
             <div className="pipeline-form-actions">
               <Button variant="primary" disabled={saving} onClick={() => void saveDraft()}>
                 {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
-                {editingId ? '保存修改' : '添加命令'}
+                {editingId ? t('terminal.saveChanges') : t('terminal.addCommand')}
               </Button>
               <Button
                 variant="secondary"
@@ -782,7 +786,7 @@ function PipelineTab({
                   setFormError('')
                 }}
               >
-                <Plus size={14} />清空
+                <Plus size={14} />{t('terminal.clear')}
               </Button>
             </div>
           </div>
@@ -791,24 +795,24 @@ function PipelineTab({
 
       <article className="pipeline-card pipeline-run-card">
         <div className="pipeline-card-heading">
-          <h3>运行结果</h3>
+          <h3>{t('terminal.runResult')}</h3>
           <div className="pipeline-run-actions">
             {running ? (
               <Button variant="danger" size="compact" onClick={() => void cancelRun()}>
-                <Ban size={13} />取消运行
+                <Ban size={13} />{t('terminal.cancelRun')}
               </Button>
             ) : (
               <Button variant="primary" size="compact" disabled={!selected || saving} onClick={() => selected && void runCommand(selected)}>
-                <Play size={13} />运行选中命令
+                <Play size={13} />{t('terminal.runSelected')}
               </Button>
             )}
           </div>
         </div>
-        {!selected && !running && !report && <p className="pipeline-empty">选择一条命令后运行。</p>}
+        {!selected && !running && !report && <p className="pipeline-empty">{t('terminal.selectToRun')}</p>}
         {running && (
           <p className="pipeline-running">
             <Loader2 size={14} className="spin" />
-            正在运行{selected ? `：${selected.name}` : '…'}
+            {t('terminal.beingRun')}{selected ? `: ${selected.name}` : '…'}
             {activeRunId && <code>{activeRunId}</code>}
           </p>
         )}
@@ -816,26 +820,26 @@ function PipelineTab({
         {report && (
           <div className="pipeline-report">
             <div className={`pipeline-run-badge pipeline-run-${commandRunTone(report)}`}>
-              {formatCommandRunExit(report)}
+              {formatCommandRunExit(report, t)}
             </div>
-            <span className="pipeline-run-duration">用时 {formatRunDuration(report.durationMs)}</span>
+            <span className="pipeline-run-duration">{t('terminal.duration')} {formatRunDuration(report.durationMs, t)}</span>
             <span className="pipeline-run-id">run: {report.runId}</span>
             {report.truncated && (
-              <span className="pipeline-run-truncated"><AlertTriangle size={12} />输出超过 256 KiB，已截断</span>
+              <span className="pipeline-run-truncated"><AlertTriangle size={12} />{t('terminal.outputTruncatedNote')}</span>
             )}
             <div className="pipeline-output-grid">
               <div className="pipeline-output-pane">
                 <h4>stdout</h4>
-                <pre>{report.stdout || '（stdout 为空）'}</pre>
+                <pre>{report.stdout || t('terminal.stdoutEmpty')}</pre>
               </div>
               <div className="pipeline-output-pane">
                 <h4>stderr</h4>
-                <pre>{report.stderr || '（stderr 为空）'}</pre>
+                <pre>{report.stderr || t('terminal.stderrEmpty')}</pre>
               </div>
             </div>
           </div>
         )}
-        {!report && !running && !runError && <p className="pipeline-card-hint">输出会按 UTF-8 显示；stdout / stderr 各保留 256 KiB。</p>}
+        {!report && !running && !runError && <p className="pipeline-card-hint">{t('terminal.encodingNote')}</p>}
       </article>
     </div>
   )

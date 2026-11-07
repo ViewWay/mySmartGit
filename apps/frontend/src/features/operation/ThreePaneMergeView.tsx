@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Info } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -50,15 +51,16 @@ type SidePaneProps = {
 }
 
 function SidePane({ side, title, bodyRef, segments, activeBlock, blockTotal, emptyReason, onActivateBlock, onAdoptActive }: SidePaneProps) {
+  const { t } = useI18n()
   return <div
     className={`tp-pane tp-pane-${side}`}
     role="region"
-    aria-label={`${title}（只读对照栏）`}
+    aria-label={t('operation.merge.readonlyPaneAria', { title })}
     tabIndex={0}
   >
     <div className="tp-pane-head">
       <strong>{title}</strong>
-      <Button variant="secondary" className="tp-adopt" onClick={() => onAdoptActive(side)} disabled={!blockTotal} title={blockTotal ? `把当前冲突块替换为「${title}」一侧的内容` : '没有待处理的冲突块'}>采用本侧当前块</Button>
+      <Button variant="secondary" className="tp-adopt" onClick={() => onAdoptActive(side)} disabled={!blockTotal} title={blockTotal ? t('operation.merge.adoptTitle', { title }) : t('operation.merge.noConflictBlocks')}>{t('operation.merge.useCurrentBlock')}</Button>
     </div>
     <div className="tp-pane-body" ref={bodyRef}>
       {emptyReason && <div className="tp-pane-empty"><Info size={15}/><span>{emptyReason}</span></div>}
@@ -69,7 +71,7 @@ function SidePane({ side, title, bodyRef, segments, activeBlock, blockTotal, emp
             className={`tp-side-block${segment.index === activeBlock ? ' tp-side-block-active' : ''}`}
             data-tp-block={segment.index}
             onClick={() => onActivateBlock(segment.index)}
-            aria-label={`跳转到第 ${segment.index + 1} 个冲突块（${title}侧）`}
+            aria-label={t('operation.jumpBlock', { index: segment.index + 1, side: title })}
             aria-current={segment.index === activeBlock ? 'true' : undefined}
           >{segment.text}</button>
         : <span key={segment.key} className="tp-side-plain">{segment.text}</span>)}
@@ -78,7 +80,8 @@ function SidePane({ side, title, bodyRef, segments, activeBlock, blockTotal, emp
 }
 
 export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase, onActivateBlock, onAdoptActive, resultPane }: ThreePaneMergeViewProps) {
-  const labels = paneLabels(file)
+  const { t } = useI18n()
+  const labels = paneLabels(file, t)
   const currentBodyRef = useRef<HTMLDivElement>(null)
   const incomingBodyRef = useRef<HTMLDivElement>(null)
 
@@ -100,12 +103,12 @@ export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase,
   const emptyReason = (side: 'current' | 'incoming'): string | null => {
     if (file[side] != null) return null
     return side === 'current'
-      ? '当前一侧没有该文件内容（典型的新增/删除冲突），可直接编辑中间结果后保存。'
-      : '传入一侧没有该文件内容（典型的新增/删除冲突），可直接编辑中间结果后保存。'
+      ? t('operation.merge.currentMissingHint')
+      : t('operation.merge.incomingMissingHint')
   }
 
   return <div className={`tp-merge-grid${showBase && file.base !== null ? ' tp-merge-with-base' : ''}`}>
-    {showBase && file.base !== null && <div className="tp-pane tp-pane-base" role="region" aria-label={`${labels.base}（只读）`} tabIndex={0}>
+    {showBase && file.base !== null && <div className="tp-pane tp-pane-base" role="region" aria-label={t('operation.baseReadOnly', { base: labels.base })} tabIndex={0}>
       <div className="tp-pane-head"><strong>{labels.base}</strong></div>
       <div className="tp-pane-body tp-pane-base-body">{file.base}</div>
     </div>}
@@ -120,7 +123,7 @@ export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase,
       onActivateBlock={onActivateBlock}
       onAdoptActive={onAdoptActive}
     />
-    <div className="tp-pane tp-pane-result" role="region" aria-label="合并结果（可编辑）">
+    <div className="tp-pane tp-pane-result" role="region" aria-label={t('operation.merge.editableResult')}>
       {resultPane}
     </div>
     <SidePane

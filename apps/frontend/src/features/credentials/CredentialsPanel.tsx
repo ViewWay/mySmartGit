@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Copy, HardDrive, KeyRound, Plus, RefreshCw, ShieldCheck, TerminalSquare, Trash2 } from 'lucide-react'
 import { Button } from '../../components/Button'
@@ -34,15 +35,14 @@ export type CredentialsPanelProps = {
   onChanged?: () => void
 }
 
-const HELPER_LABELS: Record<string, string> = {
-  '': '不配置 / 清除',
-  osxkeychain: 'osxkeychain（macOS 钥匙串）',
-  manager: 'manager（Git Credential Manager）',
-  'manager-core': 'manager-core（旧版 GCM）',
-  libsecret: 'libsecret（Linux 密钥环）',
-  wincred: 'wincred（Windows 凭据管理器）',
-  store: 'store（明文文件，有风险）',
-  cache: 'cache（内存缓存）',
+const HELPER_KEYS: Record<string, string> = {
+  '': 'credentials.scopeNone',
+  osxkeychain: 'credentials.helperOsxkeychain',
+  'manager-core': 'credentials.helperManagerCore',
+  libsecret: 'credentials.helperLibsecret',
+  wincred: 'credentials.helperWincred',
+  store: 'credentials.helperStore',
+  cache: 'credentials.helperCache',
 }
 
 function errorText(reason: unknown) {
@@ -50,11 +50,12 @@ function errorText(reason: unknown) {
 }
 
 function RuntimeField({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+  const { t } = useI18n()
   return (
     <div className="credentials-field">
       <span>{label}</span>
       <strong className={mono ? 'credentials-mono' : undefined} title={value ?? undefined}>
-        {value ?? '未检测到'}
+        {value ?? t('credentials.notDetected')}
       </strong>
     </div>
   )
@@ -69,6 +70,7 @@ type KeyForm = {
 }
 
 export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged }: CredentialsPanelProps) {
+  const { t } = useI18n()
   const [runtime, setRuntime] = useState<GitRuntimeInfo | null>(null)
   const [keys, setKeys] = useState<SshKeyInfo[]>([])
   const [helpers, setHelpers] = useState<string[]>([])
@@ -130,8 +132,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
   }, [repositoryPath, scope])
 
   const candidateHelper = preset === 'cache' ? buildCacheHelper(cacheSeconds) : preset
-  const helperValidation = useMemo(() => validateCredentialHelper(candidateHelper), [candidateHelper])
-  const helperRisk = useMemo(() => credentialHelperRisk(candidateHelper), [candidateHelper])
+  const helperValidation = useMemo(() => validateCredentialHelper(candidateHelper, t), [candidateHelper])
+  const helperRisk = useMemo(() => credentialHelperRisk(candidateHelper, t), [candidateHelper])
 
   const applyHelper = async () => {
     if (!helperValidation.ok) {
@@ -139,14 +141,14 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
       return
     }
     if (scope === 'local' && !repositoryPath) {
-      setError('仓库级凭据助手需要先打开一个仓库')
+      setError(t('credentials.repoScopeRequiresRepo'))
       return
     }
     if (helperRisk) {
       const proceed = await ask({
-        title: '确认凭据存储方式',
-        message: `${helperRisk}\n\n仍然应用该凭据助手吗？`,
-        confirmLabel: '仍然应用',
+        title: t('credentials.confirmStorageTitle'),
+        message: t('credentials.riskConfirm', { risk: helperRisk }),
+        confirmLabel: t('credentials.applyAnyway'),
       })
       if (!proceed) return
     }
@@ -170,8 +172,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
       onNotice?.(
         report.notice ??
           (helperValidation.value
-            ? `已把 ${scope} 凭据助手设置为 ${helperValidation.value}`
-            : `已清除 ${scope} 凭据助手`),
+            ? t('credentials.helperSet', { scope, helper: helperValidation.value })
+            : t('credentials.helperCleared', { scope })),
       )
       onChanged?.()
     } catch (reason) {
@@ -187,7 +189,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     try {
       const saved = await setCustomGitDirectory(customDir.trim() || null)
       setCustomDir(saved ?? '')
-      onNotice?.(saved ? `已使用自定义 Git 目录：${saved}` : '已清除自定义 Git 目录，回落到系统 Git')
+      onNotice?.(saved ? t('credentials.customGitUsed', { dir: saved }) : t('credentials.gitDirCleared'))
       onChanged?.()
       await refresh()
     } catch (reason) {
@@ -203,7 +205,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     try {
       await setCustomGitDirectory(null)
       setCustomDir('')
-      onNotice?.('已清除自定义 Git 目录，回落到系统 Git')
+      onNotice?.(t('credentials.gitDirCleared'))
       onChanged?.()
       await refresh()
     } catch (reason) {
@@ -215,16 +217,16 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
 
   const submitKey = async (event: FormEvent) => {
     event.preventDefault()
-    const validation = validateSshKeyForm(form)
+    const validation = validateSshKeyForm(form, t)
     if (!validation.ok) {
       setError(validation.error)
       return
     }
     if (validation.values.overwrite) {
       const proceed = await ask({
-        title: '覆盖 SSH 密钥',
-        message: `将删除并重新生成 ${validation.values.fileName}（含配对的 .pub），旧密钥无法恢复。`,
-        confirmLabel: '覆盖',
+        title: t('credentials.overwriteKeyTitle'),
+        message: t('credentials.overwriteKeyConfirm', { name: validation.values.fileName }),
+        confirmLabel: t('credentials.overwrite'),
         variant: 'danger',
       })
       if (!proceed) return
@@ -240,7 +242,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
         validation.values.overwrite,
       )
       onNotice?.(
-        `已生成 ${info.fileName}（${sshKeyTypeLabel(info.keyType)}）。密钥为空口令；如需口令保护，请在此终端执行：ssh-keygen -p -f "${info.path}"`,
+        t('credentials.keyGenerated', { name: info.fileName, type: sshKeyTypeLabel(info.keyType, t), path: info.path }),
       )
       onChanged?.()
       await refresh()
@@ -257,9 +259,9 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     try {
       const publicKey = await readSshPublicKey(key.fileName)
       await navigator.clipboard.writeText(publicKey.trim())
-      onNotice?.(`已复制 ${key.fileName} 的公钥`)
+      onNotice?.(t('credentials.pubKeyCopied', { name: key.fileName }))
     } catch (reason) {
-      setError(`复制公钥失败：${errorText(reason)}`)
+      setError(t('credentials.pubKeyCopyFailed', { error: errorText(reason) }))
     } finally {
       setBusy(null)
     }
@@ -267,9 +269,9 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
 
   const removeKey = async (key: SshKeyInfo) => {
     const proceed = await ask({
-      title: '删除 SSH 密钥',
-      message: `将删除 ${key.fileName}${key.hasPublic ? ' 及配对的 .pub 公钥' : ' 的私钥'}；此操作不可撤销。`,
-      confirmLabel: '删除',
+      title: t('credentials.deleteKeyTitle'),
+      message: t('credentials.deleteKeyConfirm', { name: key.fileName, extra: key.hasPublic ? t('credentials.deleteWithPubSuffix') : t('credentials.privateKeyOf') }),
+      confirmLabel: t('credentials.delete'),
       variant: 'danger',
     })
     if (!proceed) return
@@ -277,7 +279,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     setError(null)
     try {
       const removed = await deleteSshKey(key.fileName, key.hasPublic)
-      onNotice?.(`已删除 SSH 密钥：${removed.join('、')}`)
+      onNotice?.(t('credentials.keysDeleted', { names: removed.join('、') }))
       onChanged?.()
       await refresh()
     } catch (reason) {
@@ -288,14 +290,14 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
   }
 
   return (
-    <section className="credentials-panel" aria-label="凭据与 Git 运行时">
+    <section className="credentials-panel" aria-label={t('credentials.title')}>
       <header className="credentials-heading">
         <div>
-          <h2>凭据与 Git 运行时</h2>
-          <p>管理 SSH 密钥、credential.helper 与自定义 Git；所有敏感值都在 Rust 侧按白名单校验。</p>
+          <h2>{t('credentials.title')}</h2>
+          <p>{t('credentials.subtitleFull')}</p>
         </div>
         <Button variant="secondary" size="compact" onClick={() => void refresh()} disabled={loading || busy !== null}>
-          <RefreshCw className={loading ? 'spin' : undefined} size={13} /> 刷新
+          <RefreshCw className={loading ? 'spin' : undefined} size={13} /> {t('credentials.refresh')}
         </Button>
       </header>
 
@@ -308,18 +310,18 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
       <section className="credentials-card">
         <div className="credentials-card-title">
           <HardDrive size={14} />
-          Git 运行时
-          <small>{runtime?.bundledGitPresent ? '检测到内置 Git 目录' : '未附带内置 Git'}</small>
+          {t('credentials.gitRuntime')}
+          <small>{runtime?.bundledGitPresent ? t('credentials.bundledGitFound') : t('credentials.noBundledGit')}</small>
         </div>
         <div className="credentials-grid">
-          <RuntimeField label="Git 版本" value={runtime?.gitVersion} />
-          <RuntimeField label="Git 路径" value={runtime?.gitPath} mono />
-          <RuntimeField label="SSH 版本" value={runtime?.sshVersion} />
-          <RuntimeField label="Git LFS" value={runtime?.gitLfsVersion} />
-          <RuntimeField label="自定义 Git" value={runtime?.customGitDir ?? '未配置'} mono />
+          <RuntimeField label={t('credentials.gitVersion')} value={runtime?.gitVersion} />
+          <RuntimeField label={t('credentials.gitPath')} value={runtime?.gitPath} mono />
+          <RuntimeField label={t('credentials.sshVersion')} value={runtime?.sshVersion} />
+          <RuntimeField label={t('credentials.gitLfs')} value={runtime?.gitLfsVersion} />
+          <RuntimeField label={t('credentials.customGit')} value={runtime?.customGitDir ?? t('credentials.notConfigured')} mono />
           <RuntimeField
             label="ssh-agent"
-            value={runtime?.sshAgentRunning ? `运行中（${runtime.sshAgentKeys.length} 个密钥）` : '未运行'}
+            value={runtime?.sshAgentRunning ? t('credentials.agentRunning', { count: runtime.sshAgentKeys.length }) : t('credentials.notRunning')}
           />
         </div>
         {runtime && runtime.sshAgentKeys.length > 0 && (
@@ -334,8 +336,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             className="credentials-input"
             value={customDir}
             onChange={(event) => setCustomDir(event.target.value)}
-            placeholder="包含可执行 git 的目录，例如 /opt/git/bin"
-            aria-label="自定义 Git 目录"
+            placeholder={t('credentials.customGitPlaceholder')}
+            aria-label={t('credentials.customGitLabel')}
             spellCheck={false}
           />
           <Button
@@ -344,7 +346,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             onClick={() => void applyCustomDir()}
             disabled={busy !== null || loading}
           >
-            应用目录
+            {t('credentials.applyDir')}
           </Button>
           <Button
             variant="secondary"
@@ -352,34 +354,33 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             onClick={() => void clearCustomDir()}
             disabled={busy !== null || !runtime?.customGitDir}
           >
-            清除
+            {t('credentials.clear')}
           </Button>
         </div>
         <p className="credentials-muted">
-          只接受「目录」而不是 git 二进制路径，目录内必须存在可执行 git 且 <code>git --version</code> 能成功。
-          本应用安装包不附带 Git 二进制；若安装包旁存在 <code>Resources/git/bin</code> 会自动前置到 PATH，否则使用系统 Git。
+          {t('credentials.customGitHint')} <code>git --version</code> {t('credentials.customGitHintSuffix')} <code>Resources/git/bin</code> {t('credentials.customGitHintSuffix2')}
         </p>
       </section>
 
       <section className="credentials-card">
         <div className="credentials-card-title">
           <KeyRound size={14} />
-          SSH 密钥
-          <small>{keys.length} 对 · 上限 500</small>
+          {t('credentials.sshKeys')}
+          <small>{t('credentials.keyPairs', { count: keys.length })}</small>
         </div>
         {loading && keys.length === 0 ? (
-          <div className="credentials-empty">正在读取 ~/.ssh…</div>
+          <div className="credentials-empty">{t('credentials.readingSsh')}</div>
         ) : keys.length === 0 ? (
-          <div className="credentials-empty">尚未发现 SSH 密钥。可以在下方生成，或把已有密钥放入 ~/.ssh。</div>
+          <div className="credentials-empty">{t('credentials.noKeys')}</div>
         ) : (
           <table className="credentials-table">
             <thead>
               <tr>
-                <th>文件</th>
-                <th>类型</th>
-                <th>位数</th>
-                <th>指纹</th>
-                <th>操作</th>
+                <th>{t('credentials.file')}</th>
+                <th>{t('credentials.type')}</th>
+                <th>{t('credentials.bits')}</th>
+                <th>{t('credentials.fingerprint')}</th>
+                <th>{t('credentials.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -389,8 +390,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                     <div className="credentials-key-name">
                       <KeyRound size={12} />
                       <strong title={key.path}>{key.fileName}</strong>
-                      {key.hasPrivate && <span className="credentials-badge ok">私钥</span>}
-                      {key.hasPublic && <span className="credentials-badge">公钥</span>}
+                      {key.hasPrivate && <span className="credentials-badge ok">{t('credentials.privateKey')}</span>}
+                      {key.hasPublic && <span className="credentials-badge">{t('credentials.publicKey')}</span>}
                     </div>
                     {key.comment && (
                       <span className="credentials-muted" title={key.comment}>
@@ -398,7 +399,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                       </span>
                     )}
                   </td>
-                  <td>{sshKeyTypeLabel(key.keyType)}</td>
+                  <td>{sshKeyTypeLabel(key.keyType, t)}</td>
                   <td>{sshKeyBitsLabel(key.bits)}</td>
                   <td>
                     <span className="credentials-fingerprint" title={key.fingerprint ?? undefined}>
@@ -410,8 +411,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                       <Button
                         variant="icon"
                         size="compact"
-                        title="复制公钥"
-                        aria-label={`复制 ${key.fileName} 的公钥`}
+                        title={t('credentials.copyPublicKey')}
+                        aria-label={t('credentials.copyPubKeyFor', { name: key.fileName })}
                         onClick={() => void copyPublicKey(key)}
                         disabled={busy !== null || (!key.hasPublic && !key.hasPrivate)}
                       >
@@ -420,8 +421,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                       <Button
                         variant="icon"
                         size="compact"
-                        title="删除密钥"
-                        aria-label={`删除 ${key.fileName}`}
+                        title={t('credentials.deleteKey')}
+                        aria-label={t('credentials.deleteKeyFor', { name: key.fileName })}
                         onClick={() => void removeKey(key)}
                         disabled={busy !== null}
                       >
@@ -437,7 +438,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
 
         <form className="credentials-form" onSubmit={(event) => void submitKey(event)}>
           <label className="credentials-field">
-            <span>文件名</span>
+            <span>{t('credentials.fileName')}</span>
             <input
               className="credentials-input"
               value={form.fileName}
@@ -448,7 +449,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             />
           </label>
           <label className="credentials-field">
-            <span>类型</span>
+            <span>{t('credentials.type')}</span>
             <select
               className="credentials-input"
               value={form.keyType}
@@ -459,7 +460,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             </select>
           </label>
           <label className="credentials-field">
-            <span>RSA 位数</span>
+            <span>{t('credentials.rsaBits')}</span>
             <select
               className="credentials-input"
               value={form.bits}
@@ -472,12 +473,12 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             </select>
           </label>
           <label className="credentials-field">
-            <span>注释（可选）</span>
+            <span>{t('credentials.comment')}</span>
             <input
               className="credentials-input"
               value={form.comment}
               onChange={(event) => setForm((value) => ({ ...value, comment: event.target.value }))}
-              placeholder="例如 work@laptop"
+              placeholder={t('credentials.commentPlaceholder')}
               spellCheck={false}
             />
           </label>
@@ -487,48 +488,48 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
               checked={form.overwrite}
               onChange={(event) => setForm((value) => ({ ...value, overwrite: event.target.checked }))}
             />
-            覆盖同名文件
+            {t('credentials.overwriteSameName')}
           </label>
           <Button type="submit" variant="primary" size="compact" disabled={busy !== null}>
-            <Plus size={13} /> 生成密钥
+            <Plus size={13} /> {t('credentials.generateKey')}
           </Button>
         </form>
         <p className="credentials-notice">
-          <TerminalSquare size={12} /> 这里只生成空口令密钥，口令不会经过应用。生成后如需口令保护，请在终端执行{' '}
-          <code>ssh-keygen -p -f ~/.ssh/&lt;文件名&gt;</code>。
+          <TerminalSquare size={12} /> {t('credentials.noPassphraseNote')}{' '}
+          <code>{t('credentials.sshKeygenCmd')}</code>.
         </p>
       </section>
 
       <section className="credentials-card">
         <div className="credentials-card-title">
           <ShieldCheck size={14} />
-          凭据助手
+          {t('credentials.helperSection')}
           <small>credential.helper</small>
         </div>
         <div className="credentials-actions">
-          <div className="credentials-segment" role="group" aria-label="凭据作用域">
+          <div className="credentials-segment" role="group" aria-label={t('credentials.scope')}>
             <button type="button" className={scope === 'global' ? 'active' : ''} onClick={() => setScope('global')}>
-              全局
+              {t('credentials.scopeGlobal')}
             </button>
             <button
               type="button"
               className={scope === 'local' ? 'active' : ''}
               onClick={() => setScope('local')}
               disabled={!repositoryPath}
-              title={repositoryPath ? undefined : '需要先打开仓库'}
+              title={repositoryPath ? undefined : t('credentials.scopeRepoRequiresRepo')}
             >
-              当前仓库
+              {t('credentials.scopeRepo')}
             </button>
           </div>
           <select
             className="credentials-input"
             value={preset}
             onChange={(event) => setPreset(event.target.value)}
-            aria-label="凭据助手"
+            aria-label={t('credentials.helperLabel')}
           >
-            {Object.entries(HELPER_LABELS).map(([value, label]) => (
+            {Object.entries(HELPER_KEYS).map(([value, key]) => (
               <option key={value || 'none'} value={value}>
-                {label}
+                {key === 'credentials.scopeNone' ? t('credentials.scopeNone') : value === 'manager' ? 'manager（Git Credential Manager）' : t(key)}
               </option>
             ))}
           </select>
@@ -538,7 +539,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
               value={cacheSeconds}
               onChange={(event) => setCacheSeconds(event.target.value)}
               inputMode="numeric"
-              aria-label="缓存秒数"
+              aria-label={t('credentials.cacheSeconds')}
               placeholder="300"
             />
           )}
@@ -548,18 +549,17 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
             onClick={() => void applyHelper()}
             disabled={busy !== null || loading || !helperValidation.ok}
           >
-            应用
+            {t('credentials.apply')}
           </Button>
         </div>
         {helperRisk && <div className="credentials-notice">{helperRisk}</div>}
         {!helperValidation.ok && <div className="credentials-error">{helperValidation.error}</div>}
         <div className="credentials-field">
-          <span>当前已配置</span>
-          <strong className="credentials-mono">{helpers.length > 0 ? helpers.join('、') : '未配置'}</strong>
+          <span>{t('credentials.currentlyConfigured')}</span>
+          <strong className="credentials-mono">{helpers.length > 0 ? helpers.join('、') : t('credentials.notConfigured')}</strong>
         </div>
         <p className="credentials-muted">
-          凭据助手最终由 Git 通过 shell 执行，因此只接受固定白名单（含 <code>cache --timeout=</code>），
-          其他字符串会被拒绝；仓库级配置只写入当前仓库的 <code>.git/config</code>。
+          {t('credentials.helperShellNote')} <code>cache --timeout=</code>{t('credentials.helperShellNoteSuffix')} <code>.git/config</code>。
         </p>
       </section>
     </section>

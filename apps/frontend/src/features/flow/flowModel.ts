@@ -6,6 +6,8 @@ import type {
   GitflowStepStatus,
 } from '../../repository'
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 /**
  * Gitflow 面板的纯逻辑：名称 / 前缀校验、分组映射、完成报告展示模型。
  *
@@ -17,25 +19,25 @@ import type {
 
 export const GITFLOW_KINDS: GitflowKind[] = ['feature', 'release', 'hotfix', 'support']
 
-const KIND_LABELS: Record<GitflowKind, string> = {
-  feature: '功能分支',
-  release: '发布分支',
-  hotfix: '热修复分支',
-  support: '维护分支',
+const KIND_KEYS: Record<GitflowKind, string> = {
+  feature: 'flow.branchFeature',
+  release: 'flow.branchRelease',
+  hotfix: 'flow.branchHotfix',
+  support: 'flow.branchSupport',
 }
 
-const KIND_NOTES: Record<GitflowKind, string> = {
-  feature: '从 develop 切出，完成后 --no-ff 合并回 develop 并删除',
-  release: '从 main 切出，完成后合并到 main 与 develop，可打标签并删除',
-  hotfix: '从 main 切出，完成后合并到 main 与 develop，可打标签并删除',
-  support: '长期维护分支，不执行完成操作；需要时手动归档',
+const KIND_NOTE_KEYS: Record<GitflowKind, string> = {
+  feature: 'flow.branchFeatureHint',
+  release: 'flow.branchReleaseHint',
+  hotfix: 'flow.branchReleaseHint',
+  support: 'flow.branchSupportHint',
 }
 
-const STEP_LABELS: Record<GitflowStepStatus, string> = {
-  completed: '完成',
-  skipped: '跳过',
-  failed: '失败',
-  conflict: '冲突',
+const STEP_KEYS: Record<GitflowStepStatus, string> = {
+  completed: 'flow.finish',
+  skipped: 'flow.skip',
+  failed: 'flow.failed',
+  conflict: 'flow.conflict',
 }
 
 export type GitflowGroup = {
@@ -45,12 +47,12 @@ export type GitflowGroup = {
   branches: { name: string; full: string }[]
 }
 
-export function gitflowKindLabel(kind: GitflowKind): string {
-  return KIND_LABELS[kind]
+export function gitflowKindLabel(kind: GitflowKind, t: Translate): string {
+  return t(KIND_KEYS[kind])
 }
 
-export function gitflowKindNote(kind: GitflowKind): string {
-  return KIND_NOTES[kind]
+export function gitflowKindNote(kind: GitflowKind, t: Translate): string {
+  return t(KIND_NOTE_KEYS[kind])
 }
 
 export function gitflowPrefix(config: GitflowConfig, kind: GitflowKind): string {
@@ -87,24 +89,24 @@ function hasForbiddenReferenceCharacter(value: string): boolean {
 }
 
 /** 任意分支名（配置里的 main / develop 与拼接后的完整分支名）。 */
-export function validateGitflowBranchName(raw: string): string | null {
+export function validateGitflowBranchName(raw: string, t: Translate): string | null {
   const name = raw.trim()
-  if (!name) return '分支名不能为空'
-  if ([...name].length > 200) return '分支名过长（上限 200 字符）'
-  if (name.startsWith('-')) return '分支名不能以 - 开头，否则会被 Git 当成命令选项'
-  if (name === 'HEAD') return '分支名不能是 HEAD'
-  if (hasForbiddenReferenceCharacter(name)) return '分支名不能包含空白、..、@{、// 或 ~ ^ : ? * [ \\ 等特殊字符'
-  if (name.endsWith('.') || name.endsWith('/') || name.endsWith('.lock')) return '分支名不能以 . 或 / 结尾，也不能以 .lock 结尾'
+  if (!name) return t('flow.nameRequired')
+  if ([...name].length > 200) return t('flow.nameTooLong')
+  if (name.startsWith('-')) return t('flow.nameOptionLike')
+  if (name === 'HEAD') return t('flow.nameHead')
+  if (hasForbiddenReferenceCharacter(name)) return t('flow.nameSpecialChars')
+  if (name.endsWith('.') || name.endsWith('/') || name.endsWith('.lock')) return t('flow.nameBadSuffix')
   return null
 }
 
 /** 允许空前缀用于标签；分支前缀为空会让所有分支落进同一组，故不允许。 */
-export function validateGitflowPrefix(raw: string, allowEmpty = false): string | null {
+export function validateGitflowPrefix(raw: string, allowEmpty: boolean, t: Translate): string | null {
   const prefix = raw.trim()
-  if (!prefix) return allowEmpty ? null : '前缀不能为空'
-  if ([...prefix].length > 100) return '前缀过长（上限 100 字符）'
-  if (prefix.startsWith('-')) return '前缀不能以 - 开头，否则会被 Git 当成命令选项'
-  if (hasForbiddenReferenceCharacter(prefix)) return '前缀不能包含空白、..、@{、// 或 ~ ^ : ? * [ \\ 等特殊字符'
+  if (!prefix) return allowEmpty ? null : t('flow.prefixRequired')
+  if ([...prefix].length > 100) return t('flow.prefixTooLong')
+  if (prefix.startsWith('-')) return t('flow.prefixOptionLike')
+  if (hasForbiddenReferenceCharacter(prefix)) return t('flow.prefixSpecialChars')
   return null
 }
 
@@ -113,52 +115,53 @@ export function validateGitflowLeafName(
   config: GitflowConfig,
   kind: GitflowKind,
   raw: string,
+  t: Translate,
 ): string | null {
   const leaf = gitflowLeafName(config, kind, raw)
-  if (!leaf) return '分支名不能为空'
-  if (leaf.startsWith('-')) return '分支名不能以 - 开头，否则会被 Git 当成命令选项'
-  if (hasForbiddenReferenceCharacter(leaf)) return '分支名不能包含空白、..、@{、// 或 ~ ^ : ? * [ \\ 等特殊字符'
-  return validateGitflowBranchName(gitflowBranchName(config, kind, raw))
+  if (!leaf) return t('flow.nameRequired')
+  if (leaf.startsWith('-')) return t('flow.nameOptionLike')
+  if (hasForbiddenReferenceCharacter(leaf)) return t('flow.nameSpecialChars')
+  return validateGitflowBranchName(gitflowBranchName(config, kind, raw), t)
 }
 
-export function validateGitflowTagName(config: GitflowConfig, raw: string): string | null {
+export function validateGitflowTagName(config: GitflowConfig, raw: string, t: Translate): string | null {
   const name = raw.trim()
-  if (name.startsWith('-')) return '标签名不能以 - 开头，否则会被 Git 当成命令选项'
+  if (name.startsWith('-')) return t('flow.tagNameOptionLike')
   const tag = `${config.tagPrefix}${name}`.trim()
-  if (!tag) return '标签名不能为空'
-  return validateGitflowBranchName(tag)
+  if (!tag) return t('flow.tagNameRequired')
+  return validateGitflowBranchName(tag, t)
 }
 
 /** 返回全部错误，组件可逐条展示；空数组表示配置可保存。 */
-export function validateGitflowConfig(config: GitflowConfig): string[] {
+export function validateGitflowConfig(config: GitflowConfig, t: Translate): string[] {
   const errors: string[] = []
-  const main = validateGitflowBranchName(config.mainBranch)
-  if (main) errors.push(`主干分支：${main}`)
-  const develop = validateGitflowBranchName(config.developBranch)
-  if (develop) errors.push(`develop 分支：${develop}`)
+  const main = validateGitflowBranchName(config.mainBranch, t)
+  if (main) errors.push(t('flow.mainBranchError', { error: main }))
+  const develop = validateGitflowBranchName(config.developBranch, t)
+  if (develop) errors.push(t('flow.developBranchError', { error: develop }))
   if (!main && !develop && config.mainBranch.trim() === config.developBranch.trim()) {
-    errors.push('主干分支与 develop 分支不能相同')
+    errors.push(t('flow.mainEqualsDevelop'))
   }
   for (const [label, prefix] of [
-    ['feature 前缀', config.featurePrefix],
-    ['release 前缀', config.releasePrefix],
-    ['hotfix 前缀', config.hotfixPrefix],
-    ['support 前缀', config.supportPrefix],
+    [t('flow.prefixFeature'), config.featurePrefix],
+    [t('flow.prefixRelease'), config.releasePrefix],
+    [t('flow.prefixHotfix'), config.hotfixPrefix],
+    [t('flow.prefixSupport'), config.supportPrefix],
   ] as const) {
-    const error = validateGitflowPrefix(prefix)
+    const error = validateGitflowPrefix(prefix, false, t)
     if (error) errors.push(`${label}：${error}`)
   }
-  const tagPrefix = validateGitflowPrefix(config.tagPrefix, true)
-  if (tagPrefix) errors.push(`标签前缀：${tagPrefix}`)
+  const tagPrefix = validateGitflowPrefix(config.tagPrefix, true, t)
+  if (tagPrefix) errors.push(t('flow.tagPrefixWith', { prefix: tagPrefix }))
   return errors
 }
 
-export function gitflowGroups(branches: GitflowBranches | null, config: GitflowConfig): GitflowGroup[] {
+export function gitflowGroups(branches: GitflowBranches | null, config: GitflowConfig, t: Translate): GitflowGroup[] {
   if (!branches) return []
   return GITFLOW_KINDS.map((kind) => ({
     kind,
-    label: gitflowKindLabel(kind),
-    note: gitflowKindNote(kind),
+    label: gitflowKindLabel(kind, t),
+    note: gitflowKindNote(kind, t),
     branches: branches[kind].map((name) => ({
       name,
       full: `${gitflowPrefix(config, kind)}${name}`,
@@ -178,8 +181,8 @@ export function gitflowTagName(config: GitflowConfig, name: string): string {
   return `${config.tagPrefix}${name.trim()}`
 }
 
-export function stepStatusLabel(status: GitflowStepStatus): string {
-  return STEP_LABELS[status] ?? status
+export function stepStatusLabel(status: GitflowStepStatus, t: Translate): string {
+  return t(STEP_KEYS[status])
 }
 
 export type FinishReportTone = 'success' | 'conflict' | 'failed'
@@ -189,22 +192,22 @@ export function finishReportTone(report: GitflowFinishReport): FinishReportTone 
   return report.conflicts ? 'conflict' : 'failed'
 }
 
-export function finishReportHeadline(report: GitflowFinishReport): string {
+export function finishReportHeadline(report: GitflowFinishReport, t: Translate): string {
   switch (finishReportTone(report)) {
     case 'success':
-      return `已完成 ${report.branch}`
+      return t('flow.finishedBranch', { branch: report.branch })
     case 'conflict':
-      return `${report.branch} 存在合并冲突`
+      return t('flow.conflictedBranch', { branch: report.branch })
     default:
-      return `${report.branch} 未完成`
+      return t('flow.unfinishedBranch', { branch: report.branch })
   }
 }
 
 /** 报告展示行：每个步骤 + guidance；冲突时明确提示合并状态仍保留。 */
-export function finishReportDetailLines(report: GitflowFinishReport): string[] {
+export function finishReportDetailLines(report: GitflowFinishReport, t: Translate): string[] {
   const lines = report.steps.map((step) => {
     const suffix = step.detail ? `：${step.detail}` : ''
-    return `${stepStatusLabel(step.status)} · ${step.action}${suffix}`
+    return `${stepStatusLabel(step.status, t)} · ${step.action}${suffix}`
   })
   if (report.guidance) lines.push(report.guidance)
   return lines

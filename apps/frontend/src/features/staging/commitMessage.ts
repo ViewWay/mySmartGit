@@ -32,15 +32,13 @@ export function draftAfterAction(input: {
 // 缺陷 2：提交按钮的可用性/文案。
 // 纯 Amend（改提交信息）时 git commit --amend 允许零暂存文件，因此 amend 为真不应因
 // 无暂存文件被禁用；非 amend 时维持原有「必须有暂存文件」的条件。
-export function commitButtonState(input: {
-  stagedCount: number
-  busy: boolean
-  amend: boolean
-}): { disabled: boolean; label: string } {
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
+export function commitButtonState(input: { stagedCount: number; busy: boolean; amend: boolean }, t: Translate): { disabled: boolean; label: string } {
   const disabled = input.busy || (!input.amend && input.stagedCount === 0)
   let label: string
-  if (input.busy) label = '处理中…'
-  else if (input.amend && input.stagedCount === 0) label = '修订提交信息'
-  else label = `提交 ${input.stagedCount} 个文件`
+  if (input.busy) label = t('operation.commit.busy')
+  else if (input.amend && input.stagedCount === 0) label = t('operation.commit.amendOnly')
+  else label = t('operation.commit.files', { count: input.stagedCount })
   return { disabled, label }
 }

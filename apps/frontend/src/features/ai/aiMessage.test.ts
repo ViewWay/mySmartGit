@@ -10,6 +10,14 @@ import {
   normalizeAiOptions,
 } from './aiMessage'
 
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
+
 describe('normalize AI options', () => {
   it('falls back to the saved/default options when nothing is provided', () => {
     expect(normalizeAiOptions()).toEqual({
@@ -86,16 +94,16 @@ describe('apply generated draft', () => {
 
 describe('AI message notices and errors', () => {
   it('prefers the backend note and falls back to the truncated flag', () => {
-    expect(generatedMessageNotice({ note: '暂存区为空，已使用工作区未暂存改动生成', truncated: false }))
+    expect(generatedMessageNotice({ note: '暂存区为空，已使用工作区未暂存改动生成', truncated: false }, zhT))
       .toBe('暂存区为空，已使用工作区未暂存改动生成')
-    expect(generatedMessageNotice({ note: null, truncated: true })).toBe('生成内容已截断，请检查后再使用')
-    expect(generatedMessageNotice({ note: '', truncated: false })).toBeNull()
+    expect(generatedMessageNotice({ note: null, truncated: true }, zhT)).toBe('生成内容已截断，请检查后再使用')
+    expect(generatedMessageNotice({ note: '', truncated: false }, zhT)).toBeNull()
   })
 
   it('normalizes errors without leaking implementation details', () => {
-    expect(describeAiError(new Error('尚未配置 AI API Key'))).toBe('尚未配置 AI API Key')
-    expect(describeAiError('  boom  ')).toBe('boom')
-    expect(describeAiError(undefined)).toBe('AI 生成失败，请稍后重试')
-    expect(describeAiError({})).toBe('AI 生成失败，请稍后重试')
+    expect(describeAiError(new Error('尚未配置 AI API Key'), zhT)).toBe('尚未配置 AI API Key')
+    expect(describeAiError('  boom  ', zhT)).toBe('boom')
+    expect(describeAiError(undefined, zhT)).toBe('AI 生成失败，请稍后重试')
+    expect(describeAiError({}, zhT)).toBe('AI 生成失败，请稍后重试')
   })
 })

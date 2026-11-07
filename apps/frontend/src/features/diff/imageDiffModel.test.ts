@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ImageFileDiff, MediaBlob } from '../../repository'
 import {
+
   IMAGE_DIFF_MODES,
   MEDIA_PREVIEW_MAX_BYTES,
   ZOOM_MAX,
@@ -28,6 +29,12 @@ import {
   shouldRenderMediaView,
   zoomBy,
 } from './imageDiffModel'
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
 
 function blob(overrides: Partial<MediaBlob> = {}): MediaBlob {
   return {
@@ -147,22 +154,22 @@ describe('size formatting and metadata', () => {
   })
 
   it('describes dimensions honestly when the header could not be parsed', () => {
-    expect(formatImageDimensions(blob({ width: null, height: null }))).toBe('尺寸未知')
-    expect(formatImageDimensions(null)).toBe('无此侧')
-    expect(formatImageDimensions(blob({ width: 640, height: 480 }))).toBe('640 × 480')
+    expect(formatImageDimensions(blob({ width: null, height: null }), zhT)).toBe('尺寸未知')
+    expect(formatImageDimensions(null, zhT)).toBe('无此侧')
+    expect(formatImageDimensions(blob({ width: 640, height: 480 }), zhT)).toBe('640 × 480')
   })
 
   it('includes the degrade reason in the metadata line', () => {
-    expect(describeBlob(blob({ tooLarge: true, previewable: false, dataBase64: null }))).toContain('超过预览上限')
-    expect(describeBlob(blob({ width: null, height: null }))).toContain('尺寸未知')
-    expect(describeBlob(null)).toBe('无此侧')
+    expect(describeBlob(blob({ tooLarge: true, previewable: false, dataBase64: null }), zhT)).toContain('超过预览上限')
+    expect(describeBlob(blob({ width: null, height: null }), zhT)).toContain('尺寸未知')
+    expect(describeBlob(null, zhT)).toBe('无此侧')
   })
 
   it('summarizes added / removed / identical sides', () => {
-    expect(describeImageDiff(pair({ before: null }))).toBe('新增文件，无变更前')
-    expect(describeImageDiff(pair({ after: null }))).toBe('删除文件，无变更后')
-    expect(describeImageDiff(pair({ identical: true }))).toBe('两侧内容一致（无像素差异）')
-    expect(describeImageDiff(null)).toBe('')
+    expect(describeImageDiff(pair({ before: null }), zhT)).toBe('新增文件，无变更前')
+    expect(describeImageDiff(pair({ after: null }), zhT)).toBe('删除文件，无变更后')
+    expect(describeImageDiff(pair({ identical: true }), zhT)).toBe('两侧内容一致（无像素差异）')
+    expect(describeImageDiff(null, zhT)).toBe('')
   })
 })
 
@@ -270,7 +277,7 @@ describe('side status has a single source of truth', () => {
   })
 
   it('quotes the shared threshold in the degrade copy', () => {
-    const line = describeBlob(blob({ tooLarge: true, previewable: false, dataBase64: null, sizeBytes: 90 * 1024 * 1024 }))
+    const line = describeBlob(blob({ tooLarge: true, previewable: false, dataBase64: null, sizeBytes: 90 * 1024 * 1024 }), zhT)
     expect(line).toContain('超过预览上限')
     expect(line).toContain(formatByteSize(MEDIA_PREVIEW_MAX_BYTES))
     expect(line).toContain('4.0 MB')

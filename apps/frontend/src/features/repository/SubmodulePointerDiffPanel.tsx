@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, GitCommitHorizontal, RefreshCw } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { loadSubmodulePointerDiff, type SubmodulePointerDiff } from '../../repository'
+import { useI18n } from '../../i18n'
 import {
   cappedCommits,
   describePointerDiff,
@@ -22,6 +23,7 @@ export function SubmodulePointerDiffPanel({ repositoryPath, submodulePath, onNot
   submodulePath: string
   onNotice: (message: string) => void
 }) {
+  const { t } = useI18n()
   const [diff, setDiff] = useState<SubmodulePointerDiff | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -48,30 +50,30 @@ export function SubmodulePointerDiffPanel({ repositoryPath, submodulePath, onNot
   if (error) {
     return <article className="structure-detail-card">
       <span className="structure-icon"><AlertTriangle size={18}/></span>
-      <h3>Submodule 差异</h3>
+      <h3>{t('repository.submodule.pointerDiffTitle')}</h3>
       <p className="repository-inline-error" role="alert">{error}</p>
-      <div className="structure-actions"><Button variant="secondary" disabled={busy} onClick={() => void load()}><RefreshCw size={14}/>重试</Button></div>
+      <div className="structure-actions"><Button variant="secondary" disabled={busy} onClick={() => void load()}><RefreshCw size={14}/>{t('repository.details.retry')}</Button></div>
     </article>
   }
   if (!diff) {
-    return <article className="structure-detail-card"><span className="structure-icon"><GitCommitHorizontal size={18}/></span><h3>Submodule 差异</h3><p className="branch-dialog-hint">{busy ? '正在读取指针差异…' : '暂无差异数据。'}</p></article>
+    return <article className="structure-detail-card"><span className="structure-icon"><GitCommitHorizontal size={18}/></span><h3>{t('repository.submodule.pointerDiffTitle')}</h3><p className="branch-dialog-hint">{busy ? t('repository.submodule.loadingPointerDiff') : t('repository.submodule.noPointerDiff')}</p></article>
   }
 
   const kind = pointerChangeKind(diff)
   const hashes = pointerHashPair(diff)
-  const lines = describePointerDiff(diff)
+  const lines = describePointerDiff(diff, t)
   const commits = cappedCommits(diff.addedCommits)
 
   return <article className="structure-detail-card">
     <span className="structure-icon"><GitCommitHorizontal size={18}/></span>
-    <h3>Submodule 差异 · {pointerChangeLabel(kind)}</h3>
+    <h3>{t('repository.submodule.pointerDiffTitle')} · {pointerChangeLabel(kind, t)}</h3>
     <dl>
-      <div><dt>父仓库记录</dt><dd><code>{hashes.from}</code></dd></div>
-      <div><dt>子模块当前</dt><dd><code>{hashes.to}</code></dd></div>
-      <div><dt>改动范围</dt><dd>{diff.filesChanged} 个文件 · +{diff.additions}/-{diff.deletions}</dd></div>
-      <div><dt>新增提交</dt><dd>{diff.addedCount}{diff.removedCount > 0 ? ` · 丢掉 ${diff.removedCount} 个` : ''}</dd></div>
-      <div><dt>子模块内改动</dt><dd>{diff.dirtyFiles > 0 ? `${diff.dirtyFiles} 个文件未提交` : '工作区干净'}</dd></div>
-      <div><dt>地址</dt><dd title={diff.url}><code>{diff.url || '未登记地址'}</code></dd></div>
+      <div><dt>{t('repository.submodule.parentRecord')}</dt><dd><code>{hashes.from}</code></dd></div>
+      <div><dt>{t('repository.submodule.submoduleCurrent')}</dt><dd><code>{hashes.to}</code></dd></div>
+      <div><dt>{t('repository.submodule.changeScope')}</dt><dd>{t('repository.submodule.filesChanged', { count: diff.filesChanged, additions: diff.additions, deletions: diff.deletions })}</dd></div>
+      <div><dt>{t('repository.submodule.addedCommits')}</dt><dd>{diff.addedCount}{diff.removedCount > 0 ? t('repository.submodule.droppedSuffix', { count: diff.removedCount }) : ''}</dd></div>
+      <div><dt>{t('repository.submodule.innerChanges')}</dt><dd>{diff.dirtyFiles > 0 ? t('repository.submodule.dirtyCount', { count: diff.dirtyFiles }) : t('repository.submodule.cleanWorktree')}</dd></div>
+      <div><dt>{t('repository.submodule.urlLabel')}</dt><dd title={diff.url}><code>{diff.url || t('repository.submodule.noUrl')}</code></dd></div>
     </dl>
     <div className="branch-dialog-hint">{lines.map((line) => <p key={line}>{line}</p>)}</div>
     {commits.shown.length > 0 && <div className="structure-list">
@@ -79,7 +81,7 @@ export function SubmodulePointerDiffPanel({ repositoryPath, submodulePath, onNot
         <span><GitCommitHorizontal size={14}/></span>
         <span><strong>{commit.title}</strong><small>{commit.shortHash} · {commit.author} · {commit.commitTime}</small></span>
       </div>)}
-      {commits.hidden > 0 && <div className="tag-row"><span/><span><small>另有 {commits.hidden} 个提交未列出（后端同样有上限保护）</small></span></div>}
+      {commits.hidden > 0 && <div className="tag-row"><span/><span><small>{t('repository.submodule.hiddenCommits', { count: commits.hidden })}</small></span></div>}
     </div>}
     {diff.warnings.length > 0 && <div className="structure-list">
       {diff.warnings.map((warning) => <div className="tag-row" key={warning}>
@@ -88,8 +90,8 @@ export function SubmodulePointerDiffPanel({ repositoryPath, submodulePath, onNot
       </div>)}
     </div>}
     <div className="structure-actions">
-      <Button variant="secondary" disabled={busy} onClick={() => { void load().then((ok) => { if (ok) onNotice('已重新读取 Submodule 差异') }) }}>
-        <RefreshCw size={14} className={busy ? 'spin' : ''}/>{busy ? '读取中…' : '刷新差异'}
+      <Button variant="secondary" disabled={busy} onClick={() => { void load().then((ok) => { if (ok) onNotice(t('repository.submodule.refreshed')) }) }}>
+        <RefreshCw size={14} className={busy ? 'spin' : ''}/>{busy ? t('repository.submodule.loadingShort') : t('repository.submodule.refresh')}
       </Button>
     </div>
   </article>

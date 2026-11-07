@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CircleHelp } from 'lucide-react'
 import { Button, type ButtonVariant } from './Button'
+import { useI18n } from '../i18n'
 
 export type ConfirmDialogOptions = {
   title?: string
@@ -13,6 +14,7 @@ export type ConfirmDialogOptions = {
 type ConfirmRequest = ConfirmDialogOptions & { id: number }
 
 export function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest | null; onResolve: (result: boolean) => void }) {
+  const { t } = useI18n()
   useEffect(() => {
     if (!request) return
     const onKeyDown = (event: KeyboardEvent) => {
@@ -30,12 +32,12 @@ export function ConfirmDialog({ request, onResolve }: { request: ConfirmRequest 
     <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby={`confirm-dialog-title-${request.id}`} onPointerDown={(event) => event.stopPropagation()}>
       <div className={`confirm-dialog-icon ${destructive ? 'danger' : ''}`}>{destructive ? <AlertTriangle size={19}/> : <CircleHelp size={19}/>}</div>
       <div className="confirm-dialog-content">
-        <h2 id={`confirm-dialog-title-${request.id}`}>{request.title ?? (destructive ? '确认操作' : '请确认')}</h2>
+        <h2 id={`confirm-dialog-title-${request.id}`}>{request.title ?? (destructive ? t('common.confirmTitle') : t('common.confirmGeneric'))}</h2>
         <p>{request.message}</p>
       </div>
       <div className="confirm-dialog-actions">
-        <Button variant="secondary" onClick={() => onResolve(false)}>{request.cancelLabel ?? '取消'}</Button>
-        <Button variant={request.variant ?? 'primary'} onClick={() => onResolve(true)}>{request.confirmLabel ?? '确认'}</Button>
+        <Button variant="secondary" onClick={() => onResolve(false)}>{request.cancelLabel ?? t('common.cancel')}</Button>
+        <Button variant={request.variant ?? 'primary'} onClick={() => onResolve(true)}>{request.confirmLabel ?? t('common.confirm')}</Button>
       </div>
     </section>
   </div>

@@ -16,11 +16,13 @@ export type PaneLabels = {
  * 后端已用 currentLabel / incomingLabel 下发，这里只消费、不硬编码"本地/远端"；
  * 老数据缺字段时回退到与操作方向无关的中性措辞。
  */
-export function paneLabels(file: { currentLabel?: string; incomingLabel?: string } | null | undefined): PaneLabels {
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
+export function paneLabels(file: { currentLabel?: string; incomingLabel?: string } | null | undefined, t: Translate): PaneLabels {
   return {
-    current: file?.currentLabel?.trim() || '当前一侧（current）',
-    incoming: file?.incomingLabel?.trim() || '传入一侧（incoming）',
-    base: '共同祖先（基线）',
+    current: file?.currentLabel?.trim() || t('operation.paneCurrent'),
+    incoming: file?.incomingLabel?.trim() || t('operation.paneIncoming'),
+    base: t('operation.paneBase'),
   }
 }
 

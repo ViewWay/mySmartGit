@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RemoteOperationReport, RepositoryRemoteDetail, RepositorySnapshot, RepositoryTagDetail } from '../../repository'
 import {
-  CANCELLED_NOTICE,
   confirmationMessage,
   credentialNotice,
   fetchUrlText,
@@ -13,8 +12,17 @@ import {
   tagKindLabel,
   tagRiskText,
   upstreamCandidates,
+  cancelledNotice,
 } from './remotePanelState'
 import { executeReportedAction } from './useReportedAction'
+
+import { zh } from '../../i18n/messages/zh'
+const zhT = (key: string, params?: Record<string, string | number>) => {
+  const template = (zh as Record<string, string>)[key] ?? key
+  if (!params) return template
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => (params[name] === undefined ? match : String(params[name])))
+}
+
 
 const report = (overrides: Partial<RemoteOperationReport> = {}): RemoteOperationReport => ({
   action: 'remove-remote',
@@ -74,28 +82,28 @@ describe('远程操作预览与确认判定', () => {
       summary: '将把远程「origin」重命名为「upstream」',
       warnings: ['缓存引用会整体改名', '跟踪分支上游会一起改'],
       affected: ['main', 'dev'],
-    }))
+    }), zhT)
     expect(message).toContain('将把远程「origin」重命名为「upstream」')
     expect(message).toContain('· 缓存引用会整体改名')
     expect(message).toContain('main、dev')
   })
 
   it('受影响对象过多时只展示前 12 项并标注「等」', () => {
-    const message = confirmationMessage(report({ affected: Array.from({ length: 20 }, (_, index) => `tag-${index}`) }))
+    const message = confirmationMessage(report({ affected: Array.from({ length: 20 }, (_, index) => `tag-${index}`) }), zhT)
     expect(message).toContain('tag-11')
     expect(message).not.toContain('tag-19')
     expect(message).toContain('等')
   })
 
   it('push 地址为空时如实说明沿用 fetch，而不是伪造一条地址', () => {
-    expect(pushUrlText(remote({ pushUrls: [] }))).toBe('沿用 fetch：https://[redacted]@example.com/team/repo.git')
-    expect(pushUrlText(remote({ pushUrls: ['ssh://[redacted]@push.example.com/t.git'] }))).toBe('ssh://[redacted]@push.example.com/t.git')
-    expect(fetchUrlText(remote({ fetchUrls: [] }))).toBe('未配置 fetch 地址')
+    expect(pushUrlText(remote({ pushUrls: [] }), zhT)).toBe('沿用 fetch：https://[redacted]@example.com/team/repo.git')
+    expect(pushUrlText(remote({ pushUrls: ['ssh://[redacted]@push.example.com/t.git'] }), zhT)).toBe('ssh://[redacted]@push.example.com/t.git')
+    expect(fetchUrlText(remote({ fetchUrls: [] }), zhT)).toBe('未配置 fetch 地址')
   })
 
   it('凭据被脱敏时给出解释，普通地址不打扰用户', () => {
-    expect(credentialNotice(remote())).toContain('[redacted]')
-    expect(credentialNotice(remote({ credentialsRedacted: false }))).toBeNull()
+    expect(credentialNotice(remote(), zhT)).toContain('[redacted]')
+    expect(credentialNotice(remote({ credentialsRedacted: false }), zhT)).toBeNull()
   })
 })
 
@@ -116,15 +124,15 @@ describe('上游跟踪候选与解析', () => {
 
 describe('标签明细展示', () => {
   it('标注注释与轻量标签', () => {
-    expect(tagKindLabel('annotated')).toBe('注释标签')
-    expect(tagKindLabel('lightweight')).toBe('轻量标签')
+    expect(tagKindLabel('annotated', zhT)).toBe('注释标签')
+    expect(tagKindLabel('lightweight', zhT)).toBe('轻量标签')
   })
 
   it('风险提示按 签名 > 孤立提交 > 轻量 的优先级给出', () => {
-    expect(tagRiskText(tag({ signed: true, onBranch: false, kind: 'annotated' }))).toContain('签名')
-    expect(tagRiskText(tag({ signed: false, onBranch: false }))).toContain('GC')
-    expect(tagRiskText(tag({ kind: 'lightweight' }))).toContain('轻量')
-    expect(tagRiskText(tag())).toBeNull()
+    expect(tagRiskText(tag({ signed: true, onBranch: false, kind: 'annotated' }), zhT)).toContain('签名')
+    expect(tagRiskText(tag({ signed: false, onBranch: false }), zhT)).toContain('GC')
+    expect(tagRiskText(tag({ kind: 'lightweight' }), zhT)).toContain('轻量')
+    expect(tagRiskText(tag(), zhT)).toBeNull()
   })
 
   it('按名称或说明过滤，空查询返回全部', () => {
@@ -154,7 +162,7 @@ describe('破坏性操作的二次确认执行器', () => {
     expect(action).toHaveBeenCalledWith(false)
     expect(result.cancelled).toBe(true)
     expect(result.report).toBeNull()
-    expect(result.notices).toEqual([CANCELLED_NOTICE])
+    expect(result.notices).toEqual([cancelledNotice(zhT)])
     expect(applySnapshot).not.toHaveBeenCalled()
   })
 

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { zh } from './i18n/messages/zh'
 
 const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 const tokens = readFileSync(new URL('./styles/tokens.css', import.meta.url), 'utf8')
@@ -23,6 +24,46 @@ describe('semantic style architecture', () => {
     expect(tokens).toContain('--text-on-accent:')
     expect(tokens).toContain('--danger-solid:')
     expect(tokens).toContain('--danger-hover:')
+  })
+
+  it('defines the W6 semantic surface, border, text, and diff scales', () => {
+    for (const token of [
+      '--surface-app:', '--surface-sidebar:', '--surface-content:', '--surface-elevated:', '--surface-active:',
+      '--border-subtle:', '--border:', '--border-strong:',
+      '--text-primary:', '--text-secondary:', '--text-tertiary:', '--text-inverse:',
+      '--diff-add-bg:', '--diff-del-bg:', '--diff-add-gutter:', '--diff-del-gutter:', '--diff-hunk-bg:',
+    ]) {
+      expect(tokens).toContain(token)
+    }
+  })
+
+  it('keeps legacy aliases mapped to the W6 semantic tokens', () => {
+    expect(tokens).toContain('--bg: var(--surface-app);')
+    expect(tokens).toContain('--panel: var(--surface-content);')
+    expect(tokens).toContain('--panel-2: var(--surface-elevated);')
+    expect(tokens).toContain('--line: var(--border);')
+    expect(tokens).toContain('--text: var(--text-primary);')
+    expect(tokens).toContain('--muted: var(--text-secondary);')
+  })
+
+  it('exposes the extended syntax palette and W6 typography primitives', () => {
+    for (const token of [
+      '--syntax-function:', '--syntax-property:', '--syntax-tag:', '--syntax-attribute:',
+      '--syntax-operator:', '--syntax-punctuation:', '--syntax-meta:', '--syntax-regexp:',
+      '--syntax-inserted:', '--syntax-deleted:', '--syntax-invalid:',
+      '--font-ui:', '--radius-sm:', '--radius-md:', '--radius-lg:', '--shadow-1:', '--shadow-2:',
+    ]) {
+      expect(tokens).toContain(token)
+    }
+  })
+
+  it('applies the W6 control metrics, focus ring, and elevation', () => {
+    expect(components).toContain('.button-secondary, .button-primary, .button-danger { height: 28px;')
+    expect(components).toContain('.button-compact { height: 24px;')
+    expect(components).toContain('box-shadow: 0 0 0 2px var(--accent-dim);')
+    expect(components).toContain('border-radius: var(--radius-lg);')
+    expect(components).toContain('box-shadow: var(--shadow-2);')
+    expect(layout).toContain('grid-template-rows: 54px 39px 1fr 26px;')
   })
 
   it('keeps shared button behavior in the owning component layer', () => {
@@ -74,19 +115,24 @@ describe('semantic style architecture', () => {
     expect(features).toContain('flex-direction: column; align-items: center; overflow: hidden;')
     expect(features).toContain('.diff-block-actions > button { position: static; width: 24px; height: 20px;')
     expect(diffPanel).toContain('className={`split-code-side')
-    expect(diffPanel).toContain('style={{ height: virtualRowHeight }}')
+    // Rows are sized from the measured wrap heights, including split action rows.
+    expect(diffPanel).toContain('style={{ height: heights[index] }}')
+    expect(diffPanel).toContain("split-action-row\" style={{ height: heights[index] }}")
     expect(components).toContain('.line-action-add:hover, .line-action-add:focus-visible')
     expect(components).toContain('.line-action-del:hover, .line-action-del:focus-visible')
   })
 
   it('allows committer and branch filters to select multiple values', () => {
-    expect(app).toContain('提交人（可多选）')
-    expect(app).toContain('按分支筛选（可多选）')
+    expect(zh['history.filter.committerMulti']).toBe('筛选提交人（可多选）')
+    expect(zh['history.filter.byBranch']).toBe('按分支筛选（可多选）')
+    expect(zh['history.filter.committer']).toBe('筛选提交人')
+    expect(app).toContain("t('history.filter.committerMulti')")
+    expect(app).toContain("t('history.filter.byBranch')")
     expect(app).toContain('committerName(commit)')
     expect(app).toContain('checked={branchFilter.includes(branch)}')
     expect(app).toContain('committerColumnVisible ? `${widths.author}px` : \'\'')
     expect(app).toMatch(/message-label[^\n]*\{committerFilterButton\}/)
-    expect(app).toMatch(/const committerFilterButton = .*aria-label="筛选提交人"/)
+    expect(app).toMatch(/const committerFilterButton = .*aria-label=\{t\('history\.filter\.committer'\)\}/)
   })
 
   it('places the diff close control at the far end of the toolbar', () => {

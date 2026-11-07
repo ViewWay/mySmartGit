@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { getLanguage, setLanguage, translate } from './index'
+import { en } from './messages/en'
+import { zh } from './messages/zh'
+import { formatRelative, getLanguage, setLanguage, translate, tp } from './index'
 
 describe('i18n', () => {
   beforeEach(() => {
@@ -33,5 +35,35 @@ describe('i18n', () => {
   it('normalizes unsupported languages to Chinese', () => {
     setLanguage('fr' as never)
     expect(getLanguage()).toBe('zh')
+  })
+})
+
+describe('i18n dictionaries', () => {
+  it('keeps English complete against the Chinese key source', () => {
+    expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
+  })
+
+  it('has no empty values', () => {
+    for (const dictionary of [zh, en]) {
+      for (const [key, value] of Object.entries(dictionary)) {
+        expect(value.trim(), key).not.toBe('')
+      }
+    }
+  })
+
+  it('selects English plural categories', () => {
+    expect(tp('en', 'history.commitCount', 1)).toBe('1 commit')
+    expect(tp('en', 'history.commitCount', 3)).toBe('3 commits')
+    expect(tp('zh', 'history.commitCount', 3)).toBe('3 个提交')
+  })
+
+  it('formats relative time per locale', () => {
+    const now = Date.parse('2026-11-06T12:00:00Z')
+    expect(formatRelative('en', '2026-11-06T11:58:00Z', now)).toBe('2 minutes ago')
+    expect(formatRelative('zh', '2026-11-06T11:58:00Z', now)).toBe('2分钟前')
+  })
+
+  it('keeps dynamic error keys translatable', () => {
+    expect(translate('en', 'errors.unknown')).not.toBe('errors.unknown')
   })
 })

@@ -1,5 +1,7 @@
 import type { LfsFile, LfsFilesPage, LfsOperationReport, LfsStatus } from '../../repository'
 
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 /**
  * Git LFS 面板的纯逻辑：模式校验、状态分类、大小与完成文案。
  *
@@ -14,27 +16,27 @@ export const LFS_MAX_LIMIT = 2_000
 export const LFS_ACTIONS = ['fetch', 'pull', 'prune'] as const
 export type LfsAction = (typeof LFS_ACTIONS)[number]
 
-const ACTION_LABELS: Record<LfsAction, string> = {
-  fetch: '抓取到缓存',
-  pull: '拉取并检出',
-  prune: '清理缓存',
+const ACTION_KEYS: Record<LfsAction, string> = {
+  fetch: 'lfs.fetchCache',
+  pull: 'lfs.pullCheckout',
+  prune: 'lfs.pruneCache',
+}
+
+export function lfsActionLabel(action: LfsAction, t: Translate): string {
+  return t(ACTION_KEYS[action])
 }
 
 export type LfsStatusTone = 'ready' | 'attention' | 'unavailable'
 
-export function lfsActionLabel(action: LfsAction): string {
-  return ACTION_LABELS[action]
-}
-
 /** 返回 null 表示通过；否则是给用户看的错误文案。 */
-export function validateLfsPattern(raw: string): string | null {
+export function validateLfsPattern(raw: string, t: Translate): string | null {
   const pattern = raw.trim()
-  if (!pattern) return '跟踪模式不能为空'
-  if ([...pattern].length > 500) return '跟踪模式过长（上限 500 字符）'
-  if (pattern.startsWith('-')) return '跟踪模式不能以 - 开头，否则会被 git-lfs 当成命令选项'
-  if (pattern.startsWith('#')) return '跟踪模式不能以 # 开头（会被 .gitattributes 当成注释）'
+  if (!pattern) return t('lfs.patternRequired')
+  if ([...pattern].length > 500) return t('lfs.patternTooLong')
+  if (pattern.startsWith('-')) return t('lfs.patternOptionLike')
+  if (pattern.startsWith('#')) return t('lfs.patternCommentLike')
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(pattern)) return '跟踪模式不能包含换行、NUL 或其他控制字符'
+  if (/[\u0000-\u001f\u007f]/.test(pattern)) return t('lfs.patternControlChars')
   return null
 }
 
@@ -45,22 +47,22 @@ export function lfsStatusTone(status: LfsStatus | null): LfsStatusTone {
   return 'ready'
 }
 
-export function lfsStatusLabel(status: LfsStatus | null): string {
+export function lfsStatusLabel(status: LfsStatus | null, t: Translate): string {
   switch (lfsStatusTone(status)) {
     case 'unavailable':
-      return '未安装 git-lfs'
+      return t('lfs.notInstalled')
     case 'attention':
-      return '本仓库未启用 LFS'
+      return t('lfs.notEnabled')
     default:
-      return 'LFS 已就绪'
+      return t('lfs.ready')
   }
 }
 
-export function lfsStatusDescription(status: LfsStatus | null): string {
-  if (!status) return '正在读取 LFS 状态…'
+export function lfsStatusDescription(status: LfsStatus | null, t: Translate): string {
+  if (!status) return t('lfs.loading')
   if (status.notice) return status.notice
   const version = status.version ? `git-lfs ${status.version}` : 'git-lfs'
-  return `${version}；已声明 ${status.patterns.length} 个模式，跟踪 ${status.trackedFileCount} 个文件`
+  return t('lfs.statusSummary', { version, patterns: status.patterns.length, tracked: status.trackedFileCount })
 }
 
 /** 人类可读大小；未知大小（0）显示占位符而不是伪造 0 B。 */
@@ -81,17 +83,17 @@ export function shortLfsOid(oid: string): string {
   return oid.slice(0, 10)
 }
 
-export function lfsDownloadLabel(file: LfsFile): '已下载' | '未下载' {
-  return file.downloaded ? '已下载' : '未下载'
+export function lfsDownloadLabel(file: LfsFile, t: Translate): string {
+  return file.downloaded ? t('lfs.downloaded') : t('lfs.notDownloaded')
 }
 
-export function lfsFilesSummary(page: LfsFilesPage | null): string {
-  if (!page) return '尚未读取 LFS 文件'
+export function lfsFilesSummary(page: LfsFilesPage | null, t: Translate): string {
+  if (!page) return t('lfs.notRead')
   const count = page.files.length
-  if (!count) return '当前引用没有 LFS 文件'
+  if (!count) return t('lfs.noFiles')
   return page.truncated
-    ? `显示前 ${count} 个 LFS 文件；结果已截断，请缩小范围或查看命令行完整列表`
-    : `共 ${count} 个 LFS 文件`
+    ? t('lfs.filesTruncated', { count })
+    : t('lfs.filesSummary', { count })
 }
 
 /** prune 会删本地缓存；pull 会改写工作区。两者都要二次确认，fetch 不需要。 */
@@ -99,7 +101,7 @@ export function lfsActionRequiresConfirmation(action: LfsAction): boolean {
   return action === 'pull' || action === 'prune'
 }
 
-export function lfsActionConfirmation(action: LfsAction, repositoryPath: string): {
+export function lfsActionConfirmation(action: LfsAction, repositoryPath: string, t: Translate): {
   title: string
   message: string
   confirmLabel: string
@@ -107,20 +109,20 @@ export function lfsActionConfirmation(action: LfsAction, repositoryPath: string)
 } {
   if (action === 'prune') {
     return {
-      title: '确认清理 LFS 缓存',
-      message: `将删除 ${repositoryPath} 中不再被引用的 LFS 本地缓存对象。需要时可以从远端重新下载，但会消耗网络与时间。`,
-      confirmLabel: '确认清理',
+      title: t('lfs.pruneConfirmTitle'),
+      message: t('lfs.pruneBody', { path: repositoryPath }),
+      confirmLabel: t('lfs.pruneConfirm'),
       variant: 'danger',
     }
   }
   return {
-    title: '确认拉取 LFS 对象',
-    message: `将抓取并检出 ${repositoryPath} 当前引用需要的 LFS 对象，可能覆盖工作区中的 LFS 文件。`,
-    confirmLabel: '确认拉取',
+    title: t('lfs.pullConfirmTitle'),
+    message: t('lfs.pullBody', { path: repositoryPath }),
+    confirmLabel: t('lfs.pullConfirm'),
     variant: 'primary',
   }
 }
 
-export function lfsOperationNotice(report: LfsOperationReport): string {
+export function lfsOperationNotice(report: LfsOperationReport, t: Translate): string {
   return report.output ? `${report.summary}：${report.output}` : report.summary
 }
