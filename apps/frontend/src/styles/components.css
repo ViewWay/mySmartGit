@@ -94,6 +94,27 @@
 
 .nav-section { padding: 10px; border-bottom: 1px solid var(--line-soft); }
 
+/* ── 方案 B 侧栏分组：可折叠组头（贮藏/标签）──────────────── */
+.nav-group { border-bottom: 1px solid var(--line-soft); }
+
+.nav-group-head { width: 100%; height: 28px; padding: 0 8px; display: flex; align-items: center; gap: 5px; border: 0; color: var(--faint); background: transparent; font-size: 11px; font-weight: 700; letter-spacing: .06em; cursor: pointer; }
+
+.nav-group-head:hover { color: var(--muted); }
+
+.nav-group-chev { transition: transform .15s ease; }
+
+.nav-group:not(.open) .nav-group-chev { transform: rotate(-90deg); }
+
+.nav-group:not(.open) .nav-group-body { display: none; }
+
+.nav-group-body { padding: 2px 0 6px; }
+
+.nav-row-compact { height: 26px; padding-left: 14px; }
+
+.nav-row-compact svg { width: 13px; height: 13px; }
+
+.nav-group-empty { padding: 4px 14px 6px; color: var(--faint); font-size: 11px; }
+
 .nav-row, .tree-row { width: 100%; height: 30px; padding: 0 8px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 13px; cursor: pointer; }
 
 .nav-row:hover, .tree-row:hover { color: var(--text); background: var(--panel-3); }
@@ -109,14 +130,6 @@
 .nav-badge { min-width: 18px; height: 17px; padding: 0 5px; display: grid; place-items: center; border-radius: 5px; color: var(--accent); background: var(--accent-dim); }
 
 .nav-badge.muted { color: var(--muted); background: var(--surface-sunken); }
-
-/* 布局收敛：低频工具分区（远程/标签、LFS/Gitflow/凭据、托管/终端）合并呈现——
-   相邻分区不再各画一条分隔线，行高与字号降一档，与上方核心导航拉开层级。 */
-.nav-section.structure-tags-section { padding: 6px 9px; }
-
-.nav-section.structure-tags-section + .nav-section.structure-tags-section { border-bottom: 0; }
-
-.nav-section.structure-tags-section .nav-row { height: 28px; font-size: 12px; }
 
 .section-title { height: 29px; padding: 0 6px; display: flex; align-items: center; justify-content: space-between; color: var(--faint); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 

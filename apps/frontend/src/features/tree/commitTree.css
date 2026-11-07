@@ -11,6 +11,16 @@
   color: var(--text-primary);
 }
 
+/* docked：嵌入详情面板（方案 B 右栏「文件树」tab）——压缩列宽与留白，隐藏概要条 */
+.commit-tree-browser.docked {
+  grid-template-columns: minmax(120px, 44%) minmax(0, 1fr);
+  gap: 4px;
+}
+
+.commit-tree-browser.docked .commit-tree-pane { border-right: none; }
+
+.commit-tree-browser.docked .commit-tree-toolbar { padding: 4px 6px; }
+
 .commit-tree-pane {
   display: flex;
   flex-direction: column;

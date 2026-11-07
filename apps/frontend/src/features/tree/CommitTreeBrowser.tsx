@@ -41,6 +41,8 @@ export type CommitTreeBrowserProps = {
   /** 右键复制路径/文件名（App 层统一走 copyText 给通知反馈）。 */
   onCopyPath?: (path: string) => void
   onCopyName?: (name: string) => void
+  /** docked：嵌入详情面板的紧凑布局（隐藏概要条、压缩留白）。 */
+  layout?: 'workspace' | 'docked'
 }
 
 /**
@@ -48,7 +50,7 @@ export type CommitTreeBrowserProps = {
  * 大目录两道闸：后端 partial 时改懒加载（单层列表 + 条目上限），前端固定行高窗口化渲染。
  * 「怎么画」全在 CommitTreeView.tsx（纯展示，可脱离后端单测），这里只管「取什么数据」。
  */
-export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally, initialPath, onOpenHistory, onCopyPath, onCopyName }: CommitTreeBrowserProps) {
+export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally, initialPath, onOpenHistory, onCopyPath, onCopyName, layout = 'workspace' }: CommitTreeBrowserProps) {
   const { t } = useI18n()
   const [index, setIndex] = useState<CommitTreeIndex | null>(null)
   const [loading, setLoading] = useState(false)
@@ -227,7 +229,7 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
     ? buildTreeContextActions(contextMenu.row, { canOpenExternally: Boolean(onOpenExternally), canViewHistory: Boolean(onOpenHistory) })
     : []
 
-  return <div className="commit-tree-browser">
+  return <div className={`commit-tree-browser ${layout === 'docked' ? 'docked' : ''}`}>
     <div className="commit-tree-pane">
       <div className="commit-tree-toolbar">
         <Search size={13}/>
@@ -235,12 +237,12 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
         {query && <Button variant="icon" size="compact" onClick={() => setQuery('')} title={t('repository.tree.clearFilter')} aria-label={t('repository.tree.clearFilter')}><X size={13}/></Button>}
         <Button variant="icon" size="compact" onClick={() => loadTree('reload')} title={t('repository.tree.reload')} aria-label={t('repository.tree.reload')}><RefreshCw size={13}/></Button>
       </div>
-      <CommitTreeSummary
+      {layout === 'workspace' && <CommitTreeSummary
         loading={loading}
         loaded={Boolean(index)}
         nodeCount={index?.nodeCount ?? 0}
         partial={Boolean(index?.partial)}
-        visibleRows={rows.length}/>
+        visibleRows={rows.length}/>}
       <CommitTreeRowList
         rows={rows}
         selected={selected}

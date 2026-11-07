@@ -46,11 +46,11 @@
 
 .sidebar-footer { padding: 10px; display: grid; gap: 8px; border-top: 1px solid var(--line-soft); }
 
-.workspace { min-width: 0; height: 100%; flex: 1; display: grid; grid-template-rows: 54px 39px 1fr 26px; }
+.workspace { min-width: 0; height: 100%; flex: 1; display: grid; grid-template-rows: 52px 1fr 26px; }
 
 .workspace.empty-repository { grid-template-rows: minmax(0, 1fr); }
 
-.topbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(280px, 460px) minmax(330px, 1fr); align-items: center; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--border-strong); background: var(--surface-chrome); }
+.topbar { display: grid; grid-template-columns: minmax(0, auto) minmax(240px, 460px) minmax(0, 1fr); align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid var(--border-strong); background: var(--surface-chrome); }
 
 .branch-context { min-width: 0; display: flex; align-items: center; gap: 7px; overflow: hidden; font-size: 11px; white-space: nowrap; }
 
@@ -69,26 +69,61 @@
 .root-repository-chip { color: var(--text-secondary); background: transparent; }
 
 
-.content-tabs { padding: 0 14px; display: flex; align-items: flex-end; gap: 4px; border-bottom: 1px solid var(--border-strong); background: var(--surface-chrome); container-type: inline-size; }
+/* ── 活动栏（方案 B）：46px 图标竖条，视图切换 ───────────────── */
+.activity-rail { width: 46px; flex: 0 0 46px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0; background: var(--surface-chrome); border-right: 1px solid var(--border-strong); z-index: 3; }
 
-.content-tabs { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.rail-btn { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 8px; color: var(--muted); background: transparent; cursor: pointer; position: relative; }
 
-.content-tabs::-webkit-scrollbar { display: none; }
+.rail-btn:hover { color: var(--text); background: var(--panel-3); }
 
-.content-tabs > button { height: 38px; padding: 0 10px; display: flex; flex: 0 0 auto; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 10px; white-space: nowrap; cursor: pointer; }
+.rail-btn.active { color: var(--accent); background: var(--accent-dim); }
 
-.content-tabs > button:hover { color: var(--text); }
+.rail-btn.active::before { content: ""; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--accent); }
 
-.content-tabs > button.active { color: var(--text); border-bottom-color: var(--accent); }
+.rail-spacer { flex: 1; }
 
-.content-tabs > button.active svg { color: var(--accent); }
+.rail-badge { position: absolute; top: 1px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-dim); color: var(--accent); font-size: 9px; font-weight: 500; line-height: 1; }
 
-.content-tabs .filter-button { width: auto; height: 27px; margin-bottom: 4px; border: 1px solid var(--line); }
+.rail-btn .tab-badge { position: absolute; top: 1px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; display: grid; place-items: center; border-radius: 8px; background: var(--badge-warn, var(--graph-line, #e8a33d)); color: #fff; font-size: 9px; line-height: 1; }
 
-.content-tabs .history-undo-button { width: auto; height: 27px; min-height: 27px; margin-bottom: 4px; padding: 0 9px; }
+/* ── 顶栏动作工具栏（方案 B）──────────────────────────────── */
+.toolbar-actions { display: flex; align-items: stretch; gap: 2px; min-width: 0; }
 
-/* 动作区（撤销/过滤）与导航 tab 之间拉开呼吸感，避免两种性质的按钮挤作一团 */
-.content-tabs > .tab-spacer + button { margin-left: 10px; }
+.toolbar-act { min-width: 52px; height: 38px; padding: 0 9px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 12px; cursor: pointer; position: relative; white-space: nowrap; }
+
+.toolbar-act:hover:not(:disabled) { color: var(--text); background: var(--panel-3); }
+
+.toolbar-act:disabled { opacity: .45; cursor: default; }
+
+.toolbar-act svg { flex: none; }
+
+.toolbar-sep { width: 1px; margin: 10px 5px; background: var(--line); }
+
+.toolbar-act .sync-count { position: absolute; top: 3px; right: 4px; margin: 0; }
+
+/* ── history 动作行（原标签栏右侧动作迁入）────────────────── */
+.history-actionbar { height: 34px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--border-strong); background: var(--surface-chrome); }
+
+.history-actionbar-spacer { flex: 1; }
+
+.history-actionbar .filter-button { width: auto; height: 24px; min-height: 24px; border: 1px solid var(--line); }
+
+.history-actionbar .history-undo-button { width: auto; height: 24px; min-height: 24px; padding: 0 9px; }
+
+/* ── 详情区 差异文件/文件树 tabs ─────────────────────────── */
+.details-body { min-height: 0; display: flex; flex-direction: column; }
+
+.details-tabs { flex: none; display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border-strong); background: var(--surface-chrome); }
+
+.details-tabs button { height: 30px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--muted); background: transparent; font-size: 12px; cursor: pointer; }
+
+.details-tabs button:hover:not(:disabled) { color: var(--text); }
+
+.details-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.details-tabs button:disabled { opacity: .45; cursor: default; }
+
+.details-body > .changed-files-panel, .details-body > .commit-tree-browser { flex: 1; min-height: 0; }
 
 .workspace-grid { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 1px 360px; transition: grid-template-columns .22s ease; }
 
@@ -168,7 +203,7 @@
 
 .status-command-log:hover { color: var(--accent); background: var(--accent-dim); }
 
-.global-search input, .content-tabs > button, .fetch-button, .button-primary, .filter-button { font-size: 12px; }
+.global-search input, .toolbar-act, .fetch-button, .button-primary, .filter-button, .details-tabs button { font-size: 12px; }
 
 .workspace-page-heading p, .workspace-empty span, .workspace-hint span { font-size: 12px; }
 
@@ -212,27 +247,27 @@
   .hash-grid > div:nth-child(2) { border-right: 0; }
   .hash-grid > div:nth-child(-n+2) { border-bottom: 1px solid var(--line-soft); }
   .diff-body { grid-template-columns: 170px 1fr; }
-  .top-actions .sync-action { width: 32px; padding: 0; }
-  .top-actions .sync-action span { display: none; }
+  .toolbar-act { min-width: 34px; padding: 0; }
+  .toolbar-act span { display: none; }
 }
 
 @container (max-width: 720px) {
-  .content-tabs > button { width: 34px; padding: 0; justify-content: center; }
-  .content-tabs .tab-label { display: none; }
-  .content-tabs .filter-button { width: 30px; }
-  .content-tabs .filter-button span, .content-tabs .filter-button svg:last-child { display: none; }
-  .content-tabs .history-undo-button { width: 30px; padding: 0; }
-  .content-tabs .history-undo-button span { display: none; }
+  .history-actionbar .filter-button { width: 30px; }
+  .history-actionbar .filter-button span, .history-actionbar .filter-button svg:last-child { display: none; }
+  .history-actionbar .history-undo-button { width: 30px; padding: 0; }
+  .history-actionbar .history-undo-button span { display: none; }
+  .history-actionbar .history-edit-button span { display: none; }
 }
 
 @media (max-width: 900px) {
   .stash-manager { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) minmax(180px, .7fr); }
   .stash-manager .stash-control-pane { min-height: 0; }
   .stash-graph-handoff { min-height: 180px; padding: 24px; }
-  .topbar { grid-template-columns: 1fr auto; }
+  .topbar { grid-template-columns: minmax(0, auto) minmax(0, 1fr); }
   .global-search { grid-row: 2; grid-column: 1 / -1; display: none; }
   .workspace-grid { grid-template-columns: minmax(0, 1fr) 300px; }
-  .top-actions .fetch-button span, .top-actions .fetch-button > svg:last-child { display: none; }
+  .toolbar-act span { display: none; }
+  .toolbar-act { min-width: 34px; padding: 0; }
   .commit-details { padding: 8px; }
   .diff-body { grid-template-columns: 1fr; }
   .file-list { display: none; }

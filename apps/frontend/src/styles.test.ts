@@ -63,7 +63,7 @@ describe('semantic style architecture', () => {
     expect(components).toContain('box-shadow: 0 0 0 2px var(--accent-dim);')
     expect(components).toContain('border-radius: var(--radius-lg);')
     expect(components).toContain('box-shadow: var(--shadow-2);')
-    expect(layout).toContain('grid-template-rows: 54px 39px 1fr 26px;')
+    expect(layout).toContain('grid-template-rows: 52px 1fr 26px;')
   })
 
   it('keeps shared button behavior in the owning component layer', () => {
