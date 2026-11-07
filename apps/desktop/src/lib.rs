@@ -1,4 +1,5 @@
 mod commands;
+mod error;
 mod git;
 mod git_ai;
 mod git_credentials;
