@@ -140,7 +140,7 @@ export function DeepSearchPanel({ runner, onSelectCommit }: DeepSearchPanelProps
           const position = matchPosition(page.total, page.offset, index)
           return <li key={item.hash}>
             <button className="search-item" onClick={() => onSelectCommit(item.hash)}>
-              <span className="search-item-index">{position ? `第 ${position.current}/${position.total} 个` : ''}</span>
+              <span className="search-item-index">{position ? t('search.matchPositionEntry', { current: position.current, total: position.total }) : ''}</span>
               <code>{item.shortHash}</code>
               <span className="search-item-title">{item.title}</span>
               <span className="search-item-meta">{item.author}·{item.date}</span>

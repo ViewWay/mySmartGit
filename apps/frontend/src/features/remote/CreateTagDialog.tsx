@@ -43,7 +43,7 @@ export function CreateTagDialog({ existingTags, defaultCommit, busy, onClose, on
       <form onSubmit={(event) => { event.preventDefault(); if (valid) void onSubmit({ tag: name, commit: commit.trim(), message: message.trim(), signed, signingKey: key || undefined, force }) }}>
         <label>{t('repository.tag.name')}</label>
         <div className="branch-name-input"><input autoFocus value={tag} onChange={(event) => setTag(event.target.value)} placeholder="v1.2.0"/></div>
-        {taken && <div className="branch-dialog-hint">{`标签 ${name} 已存在${force ? t('repository.tag.overwriteExists') : t('repository.tag.overwriteRequired')}`}</div>}
+        {taken && <div className="branch-dialog-hint">{t('tag.existsWithMode', { name, mode: force ? t('repository.tag.overwriteExists') : t('repository.tag.overwriteRequired') })}</div>}
         <label>{t('repository.tag.target')}</label>
         <div className="branch-name-input"><input value={commit} onChange={(event) => setCommit(event.target.value)} placeholder={t('repository.tag.targetPlaceholder')}/></div>
         <label>{t('repository.tag.type')}</label>

@@ -47,7 +47,7 @@ export async function executeReportedAction({
   const preview = await action(false)
   if (needsConfirmation(preview)) {
     const accepted = await confirm({
-      title: `确认${title}`,
+      title: zhT('report.confirmTitle', { title }),
       message: confirmationMessage(preview, zhT),
       confirmLabel: zhT('repository.report.confirm'),
       variant: 'danger',
@@ -60,7 +60,7 @@ export async function executeReportedAction({
   }
   if (isSilentNoop(preview)) {
     // 后端既没执行也没要求确认：属于异常状态，必须显式暴露而不是谎报成功。
-    notices.push(`${title}未执行：${preview.summary}`)
+    notices.push(zhT('report.notExecuted', { title, summary: preview.summary }))
     applyReport(preview)
     return { report: preview, cancelled: false, notices }
   }

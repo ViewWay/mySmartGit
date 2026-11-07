@@ -152,7 +152,7 @@ export function validateGitflowConfig(config: GitflowConfig, t: Translate): stri
     if (error) errors.push(`${label}：${error}`)
   }
   const tagPrefix = validateGitflowPrefix(config.tagPrefix, true, t)
-  if (tagPrefix) errors.push(`标签前缀：${tagPrefix}`)
+  if (tagPrefix) errors.push(t('flow.tagPrefixWith', { prefix: tagPrefix }))
   return errors
 }
 
@@ -192,14 +192,14 @@ export function finishReportTone(report: GitflowFinishReport): FinishReportTone 
   return report.conflicts ? 'conflict' : 'failed'
 }
 
-export function finishReportHeadline(report: GitflowFinishReport): string {
+export function finishReportHeadline(report: GitflowFinishReport, t: Translate): string {
   switch (finishReportTone(report)) {
     case 'success':
-      return `已完成 ${report.branch}`
+      return t('flow.finishedBranch', { branch: report.branch })
     case 'conflict':
-      return `${report.branch} 存在合并冲突`
+      return t('flow.conflictedBranch', { branch: report.branch })
     default:
-      return `${report.branch} 未完成`
+      return t('flow.unfinishedBranch', { branch: report.branch })
   }
 }
 

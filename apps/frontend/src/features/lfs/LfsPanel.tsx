@@ -115,7 +115,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
       const next = await trackLfsPattern(repositoryPath, pattern.trim())
       setStatus(next)
       setPattern('')
-      notify(`已添加 LFS 跟踪模式：${pattern.trim()}`)
+      notify(t('lfs.patternAdded', { pattern: pattern.trim() }))
       onChanged?.()
       await reload()
     } catch (reason) {
@@ -130,7 +130,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
     setError('')
     try {
       setStatus(await untrackLfsPattern(repositoryPath, value))
-      notify(`已移除 LFS 跟踪模式：${value}`)
+      notify(t('lfs.patternRemoved', { pattern: value }))
       onChanged?.()
       await reload()
     } catch (reason) {
@@ -218,7 +218,7 @@ export function LfsPanel({ repositoryPath, onNotice, confirm, onChanged }: LfsPa
           : <ul className="lfs-pattern-list">
             {status?.patterns.map((value) => <li key={value}>
               <code>{value}</code>
-              <Button variant="icon" title={`移除 ${value}`} disabled={disabled} onClick={() => void removePattern(value)}><Trash2 size={13}/></Button>
+              <Button variant="icon" title={t('lfs.removePattern', { pattern: value })} disabled={disabled} onClick={() => void removePattern(value)}><Trash2 size={13}/></Button>
             </li>)}
           </ul>}
       </article>

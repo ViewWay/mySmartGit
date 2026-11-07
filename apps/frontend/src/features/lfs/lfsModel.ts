@@ -92,8 +92,8 @@ export function lfsFilesSummary(page: LfsFilesPage | null, t: Translate): string
   const count = page.files.length
   if (!count) return t('lfs.noFiles')
   return page.truncated
-    ? `显示前 ${count} 个 LFS 文件；结果已截断，请缩小范围或查看命令行完整列表`
-    : `共 ${count} 个 LFS 文件`
+    ? t('lfs.filesTruncated', { count })
+    : t('lfs.filesSummary', { count })
 }
 
 /** prune 会删本地缓存；pull 会改写工作区。两者都要二次确认，fetch 不需要。 */

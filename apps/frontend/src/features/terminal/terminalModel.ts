@@ -88,13 +88,13 @@ export function terminalShellLabel(shell: string, t: Translate) {
   return segments[segments.length - 1] || trimmed
 }
 
-export function formatRunDuration(durationMs: number): string {
+export function formatRunDuration(durationMs: number, t: Translate): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return '—'
   if (durationMs < 1000) return `${Math.round(durationMs)} ms`
-  if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(1)} 秒`
+  if (durationMs < 60_000) return t('terminal.durationSeconds', { seconds: (durationMs / 1000).toFixed(1) })
   const minutes = Math.floor(durationMs / 60_000)
   const seconds = Math.round((durationMs % 60_000) / 1000)
-  return `${minutes} 分 ${seconds} 秒`
+  return t('terminal.durationMinutesSeconds', { minutes, seconds })
 }
 
 export type CommandRunTone = 'success' | 'danger' | 'warning' | 'neutral'
@@ -104,7 +104,7 @@ export function formatCommandRunExit(report: CommandRunReport, t: Translate) {
   if (report.timedOut) return t('terminal.timedOut')
   if (report.exitCode === 0) return t('terminal.successZero')
   if (report.exitCode === null || report.exitCode === undefined) return t('terminal.finishedNoCode')
-  return `失败（代码 ${report.exitCode}）`
+  return t('terminal.failedWithCode', { code: report.exitCode })
 }
 
 export function commandRunTone(report: CommandRunReport): CommandRunTone {
@@ -116,7 +116,7 @@ export function commandRunTone(report: CommandRunReport): CommandRunTone {
 }
 
 export function commandRunSummary(report: CommandRunReport, t: Translate) {
-  const parts = [formatCommandRunExit(report, t), `用时 ${formatRunDuration(report.durationMs)}`]
+  const parts = [formatCommandRunExit(report, t), t('terminal.durationPrefix', { duration: formatRunDuration(report.durationMs, t) })]
   if (report.truncated) parts.push(t('terminal.outputTruncated'))
   return parts.join(' · ')
 }
@@ -181,23 +181,23 @@ export function validatePipelineDraft(draft: PipelineDraft, t: Translate): strin
   const program = draft.program.trim()
   if (!name) return t('terminal.nameRequired')
   if (charCount(name) > PIPELINE_MAX_NAME_CHARS) {
-    return `命令名称过长（上限 ${PIPELINE_MAX_NAME_CHARS} 字符）`
+    return t('terminal.nameTooLong', { count: PIPELINE_MAX_NAME_CHARS })
   }
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(name)) return t('terminal.nameControlChars')
   if (charCount(draft.description.trim()) > PIPELINE_MAX_DESCRIPTION_CHARS) {
-    return `命令描述过长（上限 ${PIPELINE_MAX_DESCRIPTION_CHARS} 字符）`
+    return t('terminal.descriptionTooLong', { count: PIPELINE_MAX_DESCRIPTION_CHARS })
   }
   if (!program) return t('terminal.programRequired')
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(program)) return t('terminal.programControlChars')
   const args = parsePipelineArgs(draft.argsText)
   if (args.length > PIPELINE_MAX_ARGS) {
-    return `参数过多（上限 ${PIPELINE_MAX_ARGS} 个，一行一个）`
+    return t('terminal.tooManyArgs', { count: PIPELINE_MAX_ARGS })
   }
   for (const argument of args) {
     if (charCount(argument) > PIPELINE_MAX_ARG_CHARS) {
-      return `单个参数过长（上限 ${PIPELINE_MAX_ARG_CHARS} 字符）`
+      return t('terminal.argTooLong', { count: PIPELINE_MAX_ARG_CHARS })
     }
     if (argument.includes('\0')) return t('terminal.argsNoNul')
   }
@@ -246,7 +246,7 @@ export function pipelineCommandPreview(command: PipelineCommand): string {
 
 export function pipelineCommandsSummary(commands: PipelineCommand[], t: Translate): string {
   if (!commands.length) return t('terminal.noCommands')
-  return `共 ${commands.length} 条命令；运行时不经过 shell，参数按字面值传递。`
+  return t('terminal.commandsSummary', { count: commands.length })
 }
 
 /** 内置示例只用于「填入编辑器」，不会自动保存或执行。 */

@@ -203,7 +203,7 @@ export function ImageDiffViewer({ path, pair, loading = false, error = null, onR
         <button type="button" onClick={() => setZoom((value) => zoomBy(value, 1))} title={t('image.zoomIn')} aria-label={t('image.zoomIn')}><Plus size={14}/></button>
       </div>
       <Button size="compact" variant={fitToWindow ? 'primary' : 'secondary'} active={fitToWindow} onClick={() => setFitToWindow((value) => !value)} title={t('image.fitWindow')}><Maximize size={13}/><span>{t('image.fitWindow')}</span></Button>
-      <Button size="compact" variant={checkerboard ? 'primary' : 'secondary'} active={checkerboard} onClick={() => setCheckerboard((value) => !value)} title={t('image.checkerboard')}>透明底</Button>
+      <Button size="compact" variant={checkerboard ? 'primary' : 'secondary'} active={checkerboard} onClick={() => setCheckerboard((value) => !value)} title={t('image.checkerboard')}>{t('image.transparent')}</Button>
       {!single && typeof pair === 'object' && pair !== null && <span className="image-diff-meta-hint">{describeImageDiff(pair, t)}</span>}
       <span className="image-diff-spacer"/>
       {onExitToText && <Button size="compact" onClick={onExitToText} title={t('image.switchToText')}><RotateCcw size={13}/><span>{t('image.textDiff')}</span></Button>}

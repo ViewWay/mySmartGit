@@ -74,7 +74,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
   const page = runner.textPage
   const banner = page ? resultBanner(page, t) : null
   const repositoryPath = repository?.path ?? null
-  const blocker = applyBlocker(preview)
+  const blocker = applyBlocker(preview, t)
 
   const patch = (changes: Partial<TextSearchForm>) => setForm((current) => ({ ...current, ...changes }))
   const patchReplace = (changes: Partial<ReplaceForm>) => {
@@ -107,7 +107,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
 
   const runPreview = async () => {
     if (!repositoryPath) return
-    const error = validateReplaceForm(replaceForm, null)
+    const error = validateReplaceForm(replaceForm, null, t)
     setInvalid(error)
     if (error) return
     setReplacing(true)
@@ -130,7 +130,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
     if (!repositoryPath || !preview || !canApply(preview)) return
     const accepted = await confirm({
       title: t('search.confirmBulkReplace'),
-      message: replacementConfirmation(preview).join('\n'),
+      message: replacementConfirmation(preview, t).join('\n'),
       confirmLabel: t('search.writeReplace'),
       variant: 'danger',
     })
@@ -143,7 +143,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
       // 一次预览只允许执行一次：后端会取走计划，重复调用直接失败。
       const report = await applyTextReplace(repositoryPath, preview.previewId, true)
       setPreview(null)
-      onNotice(reportNotice(report))
+      onNotice(reportNotice(report, t))
       const next = await listTextReplaceBackups(repositoryPath)
       setBackups(next)
       // 替换只改工作区，重新拉快照让「暂存与提交」看到新状态。
@@ -167,7 +167,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
     setReplacing(true)
     try {
       const report = await undoTextReplace(repositoryPath, replaceId)
-      onNotice(undoNotice(report))
+      onNotice(undoNotice(report, t))
       setBackups(await listTextReplaceBackups(repositoryPath))
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
@@ -189,7 +189,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
 
   const saveEditor = async () => {
     if (!repositoryPath || !editor) return
-    const guard = canSaveFile(editor.file)
+    const guard = canSaveFile(editor.file, t)
     if (!guard.ok) {
       onNotice(guard.reason ?? t('search.notSavable'))
       return
@@ -266,7 +266,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
           return <li key={`${item.filePath}:${item.lineNumber}:${index}`}>
             <div className="search-line">
               <button className="search-line-head" onClick={() => void openEditor(item)}>
-                <span className="search-item-index">{position ? `第 ${position.current}/${position.total}` : ''}</span>
+                <span className="search-item-index">{position ? t('search.matchPosition', { current: position.current, total: position.total }) : ''}</span>
                 <code>{item.filePath}:{item.lineNumber}</code>
                 {item.binary && <em className="search-binary-tag">{t('search.binaryHit')}</em>}
                 <FilePen size={12}/>
@@ -311,7 +311,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
       </details>
 
       {preview && <div className="search-preview">
-        <p className="search-banner"><ShieldAlert size={13}/>{preview.notice ?? `命中 ${preview.fileCount} 个文件、${preview.totalOccurrences} 处`}</p>
+        <p className="search-banner"><ShieldAlert size={13}/>{preview.notice ?? t('search.hitSummary', { fileCount: preview.fileCount, occurrences: preview.totalOccurrences })}</p>
         <ul>
           {preview.files.slice(0, 20).map((file) => <li key={file.filePath}>
             <code>{file.filePath}</code>
@@ -328,7 +328,7 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
         <h4>{t('search.undoableReplace')}</h4>
         <ul>
           {backups.map((backup) => <li key={backup.replaceId}>
-            <span>{backupLabel(backup)}</span>
+            <span>{backupLabel(backup, t)}</span>
             <Button size="compact" variant="secondary" disabled={replacing} onClick={() => void runUndo(backup.replaceId)}><RotateCcw size={12}/>{t('search.undo')}</Button>
           </li>)}
         </ul>
@@ -340,10 +340,10 @@ export function TextSearchPanel({ runner, repository, onSnapshot, onNotice }: Te
         <code>{editor.file.filePath}</code>
         <span>{editor.file.lineCount} {t('search.linesUnit')} {editor.file.sizeBytes} {t('search.bytes')}{editor.file.revision ? t('search.revisionSnapshot', { revision: editor.file.revision }) : ''}</span>
         <Button size="compact" variant="secondary" onClick={() => setEditor(null)}>{t('common.close')}</Button>
-        <Button size="compact" variant="primary" disabled={!canSaveFile(editor.file).ok} onClick={() => void saveEditor()}>{t('search.save')}</Button>
+        <Button size="compact" variant="primary" disabled={!canSaveFile(editor.file, t).ok} onClick={() => void saveEditor()}>{t('search.save')}</Button>
       </header>
       {editor.file.notice && <p className="search-banner"><ShieldAlert size={13}/>{editor.file.notice}</p>}
-      {!canSaveFile(editor.file).ok && <p className="search-error">{canSaveFile(editor.file).reason}</p>}
+      {!canSaveFile(editor.file, t).ok && <p className="search-error">{canSaveFile(editor.file, t).reason}</p>}
       <textarea rows={16} value={editor.draft} disabled={editor.file.binary} onChange={(event) => setEditor({ ...editor, draft: event.target.value })}/>
     </div>}
     {confirmDialog}

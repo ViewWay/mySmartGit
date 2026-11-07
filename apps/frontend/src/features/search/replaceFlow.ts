@@ -1,3 +1,5 @@
+type Translate = (key: string, params?: Record<string, string | number>) => string
+
 import type { ReplacePreview, ReplaceReport, TextReplaceQuery } from '../../repository'
 import { parseList } from './searchModel'
 
@@ -50,13 +52,13 @@ export function buildReplaceQuery(form: ReplaceForm): TextReplaceQuery {
 }
 
 /** 替换前置校验：命中数为 0 不发起，正则回填引用先挡一道。 */
-export function validateReplaceForm(form: ReplaceForm, preview: ReplacePreview | null): string | null {
-  if (!form.pattern.trim()) return '请输入要查找的内容'
-  if (preview && preview.totalOccurrences === 0) return '没有可替换的命中'
+export function validateReplaceForm(form: ReplaceForm, preview: ReplacePreview | null, t: Translate) {
+  if (!form.pattern.trim()) return t('search.replaceFindRequired')
+  if (preview && preview.totalOccurrences === 0) return t('search.noReplaceableHits')
   if (form.regex && /([$\\]\d)/.test(form.replacement)) {
-    return '正则替换不支持捕获组引用（如 $1、\\1）：请改用固定字符串，或逐文件在编辑器里修改'
+    return t('search.regexBackrefUnsupported')
   }
-  if (/[\r\n]/.test(form.replacement)) return '替换文本不支持换行：请改用内置编辑器逐行修改'
+  if (/[\r\n]/.test(form.replacement)) return t('search.replaceNoNewlines')
   return null
 }
 
@@ -70,44 +72,44 @@ export function canApply(preview: ReplacePreview | null): boolean {
 }
 
 /** apply 被挡住时要说清原因，而不是把按钮静默禁用。 */
-export function applyBlocker(preview: ReplacePreview | null): string | null {
-  if (!preview) return '请先预览命中范围'
-  if (preview.truncated) return preview.notice ?? '预览范围被上限截断，请缩小路径范围后再替换'
-  if (preview.totalOccurrences <= 0) return '没有可替换的命中'
-  if (!preview.files.some((file) => !file.skipped)) return '所有命中文件都被跳过，没有可写盘的目标'
+export function applyBlocker(preview: ReplacePreview | null, t: Translate) {
+  if (!preview) return t('search.previewFirst')
+  if (preview.truncated) return preview.notice ?? t('search.previewTruncatedReplace')
+  if (preview.totalOccurrences <= 0) return t('search.noReplaceableHits')
+  if (!preview.files.some((file) => !file.skipped)) return t('search.allSkipped')
   return null
 }
 
 /** 确认框正文：文件数、处数、字节量、抽样文件与跳过项，一次读全。 */
-export function replacementConfirmation(preview: ReplacePreview): string[] {
+export function replacementConfirmation(preview: ReplacePreview, t: Translate) {
   const lines = [
-    `将替换 ${preview.fileCount} 个文件、共 ${preview.totalOccurrences} 处（预计影响约 ${formatBytes(preview.estimatedBytes)}）。`,
-    `查找：${preview.pattern}`,
-    `替换为：${preview.replacement || '(空字符串，即删除命中内容)'}`,
+    t('replace.confirmSummary', { fileCount: preview.fileCount, occurrences: preview.totalOccurrences, bytes: formatBytes(preview.estimatedBytes) }),
+    t('replace.findPrefix', { pattern: preview.pattern }),
+    t('replace.replaceWithPrefix', { replacement: preview.replacement || t('search.emptyRemoval') }),
   ]
   const writable = preview.files.filter((file) => !file.skipped)
-  const sample = writable.slice(0, 8).map((file) => `· ${file.filePath}（${file.occurrences} 处）`)
-  if (sample.length) lines.push(`受影响文件：\n${sample.join('\n')}${writable.length > sample.length ? `\n… 等共 ${writable.length} 个` : ''}`)
+  const sample = writable.slice(0, 8).map((file) => t('replace.fileOccurrences', { path: file.filePath, count: file.occurrences }))
+  if (sample.length) lines.push(t('replace.affectedFiles', { sample: sample.join('\n') }) + (writable.length > sample.length ? t('replace.moreFilesSuffix', { count: writable.length }) : ''))
   const skipped = preview.files.filter((file) => file.skipped)
-  if (skipped.length) lines.push(`${skipped.length} 个文件会被跳过（二进制/超限/位置校验失败），不会被写入。`)
-  lines.push('执行前会整体备份到仓库的 Git 目录内，可随时撤销。')
+  if (skipped.length) lines.push(t('replace.skippedNote', { count: skipped.length }))
+  lines.push(t('search.backupNote'))
   return lines
 }
 
 /** 执行后的播报：必须把备份位置带出来，用户才有逃生通道。 */
-export function reportNotice(report: ReplaceReport): string {
-  const parts = [`已替换 ${report.filesChanged.length} 个文件、${report.occurrences} 处`]
-  if (report.backupAvailable && report.backupPath) parts.push(`备份：${report.backupPath}`)
-  if (report.skipped.length) parts.push(`${report.skipped.length} 个文件被跳过`)
+export function reportNotice(report: ReplaceReport, t: Translate) {
+  const parts = [t('replace.done', { fileCount: report.filesChanged.length, occurrences: report.occurrences })]
+  if (report.backupAvailable && report.backupPath) parts.push(t('replace.backupPath', { path: report.backupPath }))
+  if (report.skipped.length) parts.push(t('replace.skippedCount', { count: report.skipped.length }))
   if (report.warnings.length) parts.push(report.warnings[0])
   return parts.join('；')
 }
 
 /** 撤销后的播报。 */
-export function undoNotice(report: ReplaceReport): string {
-  const parts = [`已恢复 ${report.restoredFiles.length} 个文件`]
-  if (report.skipped.length) parts.push(`${report.skipped.length} 个文件因外部改动被拒绝覆盖`)
-  if (report.backupAvailable && report.backupPath) parts.push(`备份仍保留：${report.backupPath}`)
+export function undoNotice(report: ReplaceReport, t: Translate) {
+  const parts = [t('replace.restored', { count: report.restoredFiles.length })]
+  if (report.skipped.length) parts.push(t('replace.overwriteRefused', { count: report.skipped.length }))
+  if (report.backupAvailable && report.backupPath) parts.push(t('replace.backupKept', { path: report.backupPath }))
   return parts.join('；')
 }
 
@@ -120,9 +122,9 @@ export function backupLabel(backup: {
   replacement: string
   createdAtMs: number
   byteSize: number
-}): string {
+}, t: Translate) {
   const when = new Date(Number(backup.createdAtMs)).toLocaleString()
-  return `${when}｜${backup.pattern} → ${backup.replacement || '(删除)'}｜${backup.fileCount} 个文件 / ${backup.occurrences} 处｜${formatBytes(backup.byteSize)}`
+  return t('replace.backupLine', { when, pattern: backup.pattern, replacement: backup.replacement || t('search.removal'), fileCount: backup.fileCount, occurrences: backup.occurrences, bytes: formatBytes(backup.byteSize) })
 }
 
 export function formatBytes(value: number): string {
@@ -140,10 +142,10 @@ export function canSaveFile(file: {
   truncated: boolean
   checksum: string
   revision?: string | null
-}): { ok: boolean; reason: string | null } {
-  if (file.binary) return { ok: false, reason: '二进制文件不可保存' }
-  if (file.truncated) return { ok: false, reason: '内容被截断，保存会丢失后半部分' }
-  if (file.revision) return { ok: false, reason: '正在查看历史版本，请在工作区文件上编辑' }
-  if (!file.checksum) return { ok: false, reason: '缺少内容校验基线' }
+}, t: Translate): { ok: boolean; reason: string | null } {
+  if (file.binary) return { ok: false, reason: t('search.binaryNotSavable') }
+  if (file.truncated) return { ok: false, reason: t('search.truncatedSaveLoses') }
+  if (file.revision) return { ok: false, reason: t('search.viewingHistoryVersion') }
+  if (!file.checksum) return { ok: false, reason: t('search.missingBaseline') }
   return { ok: true, reason: null }
 }

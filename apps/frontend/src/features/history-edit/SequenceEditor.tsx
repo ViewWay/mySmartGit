@@ -134,7 +134,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
                 <select
                   value={row.action}
                   disabled={busy}
-                  aria-label={`提交 ${row.entry.shortHash} 的动作`}
+                  aria-label={t('historyEdit.actionAria', { hash: row.entry.shortHash })}
                   onChange={(event) => setRows((prev) => setRowAction(prev, index, event.target.value as HistoryEditRow['action']))}
                 >
                   {HISTORY_EDIT_ACTIONS.map((action) => <option key={action} value={action}>{historyEditActionLabel(action, t)}</option>)}
@@ -147,7 +147,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
                   rows={3}
                   disabled={busy}
                   placeholder={row.action === 'reword' ? t('historyEdit.newMessagePlaceholder') : t('historyEdit.squashMessagePlaceholder')}
-                  aria-label={`提交 ${row.entry.shortHash} 的消息`}
+                  aria-label={t('historyEdit.messageAria', { hash: row.entry.shortHash })}
                   onChange={(event) => setRows((prev) => setRowMessage(prev, index, event.target.value))}
                 />
               )}
@@ -169,14 +169,14 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
         {rows.length > 0 && (
           <details className="history-edit-todo">
             <summary>{t('historyEdit.showTodo')}</summary>
-            <pre>{renderTodoPreview(rows).join('\n')}</pre>
+            <pre>{renderTodoPreview(rows, t).join('\n')}</pre>
           </details>
         )}
 
         {impact && (
           <div className={`history-edit-impact ${impact.dangerous ? 'dangerous' : ''}`}>
             <h3>{t('historyEdit.impactTitle')}</h3>
-            <p>{t('historyEdit.expectedRewrite')} {impact.rewrittenUpper} {t('historyEdit.commitsUnit')}{impact.upstream ? `；上游 ${impact.upstream}${impact.published ? t('historyEdit.publishedNote') : ''}` : ''}</p>
+            <p>{t('historyEdit.expectedRewrite')} {impact.rewrittenUpper} {t('historyEdit.commitsUnit')}{impact.upstream ? `${t('historyEdit.upstreamNote', { upstream: impact.upstream })}${impact.published ? t('historyEdit.publishedNote') : ''}` : ''}</p>
             {impact.branchesLeftBehind.length > 0 && <p>{t('historyEdit.strandedBranches')}{impact.branchesLeftBehind.join('、')}</p>}
             {impact.tagsOnRewritten.length > 0 && <p>{t('historyEdit.pinnedTags')}{impact.tagsOnRewritten.join('、')}</p>}
             {impact.warnings.map((warning) => <p key={warning} className="history-edit-warning">{warning}</p>)}
@@ -191,7 +191,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
 
         {report && (
           <div className={`history-edit-report ${report.status}`}>
-            <p>{report.status === 'completed' ? `完成：分支 ${report.branch} 已重写为 ${report.resultCount} 个提交。` : t('historyEdit.pausedNotice')}</p>
+            <p>{report.status === 'completed' ? t('historyEdit.doneSummary', { branch: report.branch, count: report.resultCount }) : t('historyEdit.pausedNotice')}</p>
             {report.recovery && <pre>{report.recovery}</pre>}
             {report.notice && <p className="history-edit-notice">{report.notice}</p>}
           </div>

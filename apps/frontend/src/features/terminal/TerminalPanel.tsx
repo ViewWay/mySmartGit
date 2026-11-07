@@ -595,7 +595,7 @@ function PipelineTab({
       setEditingId(null)
       setDraft(emptyPipelineDraft())
     }
-    noticeRef.current?.(`已删除命令：${command.name}`)
+    noticeRef.current?.(t('terminal.deletedCommand', { name: command.name }))
   }
 
   const runCommand = async (command: PipelineCommand) => {
@@ -674,16 +674,16 @@ function PipelineTab({
                       size="compact"
                       disabled={running || saving}
                       onClick={() => void runCommand(command)}
-                      title={`运行 ${command.name}`}
+                      title={t('terminal.runCommand', { name: command.name })}
                     >
                       <Play size={12} />{t('terminal.run')}
                     </Button>
-                    <Button variant="icon" title={`编辑 ${command.name}`} disabled={saving} onClick={() => editCommand(command)}>
+                    <Button variant="icon" title={t('terminal.editCommandName', { name: command.name })} disabled={saving} onClick={() => editCommand(command)}>
                       <Save size={13} />
                     </Button>
                     <Button
                       variant="icon"
-                      title={`删除 ${command.name}`}
+                      title={t('terminal.deleteCommand', { name: command.name })}
                       disabled={saving || running}
                       onClick={() => void removeCommand(command)}
                     >
@@ -822,7 +822,7 @@ function PipelineTab({
             <div className={`pipeline-run-badge pipeline-run-${commandRunTone(report)}`}>
               {formatCommandRunExit(report, t)}
             </div>
-            <span className="pipeline-run-duration">{t('terminal.duration')} {formatRunDuration(report.durationMs)}</span>
+            <span className="pipeline-run-duration">{t('terminal.duration')} {formatRunDuration(report.durationMs, t)}</span>
             <span className="pipeline-run-id">run: {report.runId}</span>
             {report.truncated && (
               <span className="pipeline-run-truncated"><AlertTriangle size={12} />{t('terminal.outputTruncatedNote')}</span>

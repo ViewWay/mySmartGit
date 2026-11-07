@@ -81,7 +81,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
         ? createRepositorySignedTag(repository.path, payload.tag, payload.commit, payload.message, payload.signingKey ?? null, payload.force, confirmFlag)
         : createRepositoryAnnotatedTag(repository.path, payload.tag, payload.commit, payload.message, payload.force, confirmFlag)),
       t('repository.tag.create'),
-      `已创建标签：${payload.tag}`,
+      t('tag.created', { tag: payload.tag }),
     )
     applyReport(report)
     setBusy(null)
@@ -99,8 +99,8 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
     // 因此用户确认等价于同意强推：第二轮同时带上 force 与 confirm。
     const report = await run(
       (confirmFlag) => pushRepositoryTags(repository.path, remote, [tag], confirmFlag, confirmFlag),
-      `推送标签到 ${remote}`,
-      `已推送 ${tag} 到 ${remote}`,
+      t('tag.pushToRemote', { remote }),
+      t('tag.pushed', { tag, remote }),
     )
     applyReport(report)
     setBusy(null)
@@ -111,7 +111,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
     applyReport(await run(
       (confirmFlag) => deleteRepositoryTag(repository.path, tag, confirmFlag),
       t('repository.tag.deleteLocalTitle'),
-      `已删除本地标签：${tag}`,
+      t('tag.localDeleted', { tag }),
     ))
     setBusy(null)
   }
@@ -125,8 +125,8 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
     setBusy(`delete-remote:${tag}`)
     applyReport(await run(
       (confirmFlag) => deleteRepositoryRemoteTag(repository.path, remote, tag, confirmFlag),
-      `删除远端标签（${remote}）`,
-      `已从 ${remote} 删除标签：${tag}`,
+      t('tag.deleteRemoteTitle', { remote }),
+      t('tag.deletedFromRemote', { remote, tag }),
     ))
     setBusy(null)
   }
@@ -135,7 +135,7 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
 
   return <section className="structure-panel workspace-page">
     <div className="workspace-page-heading">
-      <div><span className="eyebrow">{t('repository.tree.title')}</span><h2>{t('nav.tags')}</h2><p>{`共 ${tags.length} 个标签。注释标签记录打标签人与说明，签名标签可用 GPG 校验。`}</p></div>
+      <div><span className="eyebrow">{t('repository.tree.title')}</span><h2>{t('nav.tags')}</h2><p>{t('tag.listSummary', { count: tags.length })}</p></div>
       <div className="structure-actions">
         <Button variant="secondary" disabled={loading || busy !== null} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'spin' : ''}/>{loading ? t('repository.tag.refreshing') : t('repository.tag.refresh')}</Button>
         <Button variant="primary" className="structure-heading-action" onClick={() => setCreateOpen(true)}><Plus size={14}/>{t('repository.tag.create')}</Button>
@@ -146,11 +146,11 @@ export function TagManagementPanel({ repository, query, onOpenTag, onSnapshot, o
         const risk = tagRiskText(tag, t)
         const remote = targets[tag.name] ?? defaultRemote
         return <div key={tag.name}>
-          <button className="tag-row" onClick={() => onOpenTag(tag.name)} title={`定位到标签 ${tag.name} 指向的提交`}>
+          <button className="tag-row" onClick={() => onOpenTag(tag.name)} title={t('tag.locatedCommit', { name: tag.name })}>
             <span className="structure-icon"><Tag size={15}/></span>
             <span>
               <strong>{tag.name}</strong>
-              <small>{`${tagKindLabel(tag.kind, t)}${tag.signed ? t('repository.tag.signed') : ''} · 指向 ${tag.target || '—'} · ${tag.date || t('repository.tag.noDate')}${tag.tagger ? ` · ${tag.tagger}` : ''}`}</small>
+              <small>{t('tag.listLine', { kind: tagKindLabel(tag.kind, t), signed: tag.signed ? t('repository.tag.signed') : '', target: tag.target || '—', date: tag.date || t('repository.tag.noDate'), tagger: tag.tagger ? ` · ${tag.tagger}` : '' })}</small>
               <code>{tag.subject || t('repository.tag.noMessage')}</code>
             </span>
             {tag.onBranch ? <i>{t('repository.tag.onBranch')}</i> : <i className="warn">{t('repository.tag.notOnBranch')}</i>}

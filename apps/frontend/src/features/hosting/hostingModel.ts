@@ -84,8 +84,8 @@ export function hostingSettingsSummary(settings: HostingSettings | null, t: Tran
   const label = hostingProviderLabel(settings.provider)
   const host = settings.host?.trim() || hostingDefaultHost(settings.provider)
   return settings.tokenConfigured
-    ? `${label}（${host}）已保存访问令牌`
-    : `${label}（${host}）尚未保存访问令牌`
+    ? t('hosting.summaryWithToken', { label, host })
+    : t('hosting.summaryWithoutToken', { label, host })
 }
 
 function isControl(value: string): boolean {
@@ -140,19 +140,19 @@ function splitHostPort(value: string): [string, string | null] {
   return [value.slice(0, index), value.slice(index + 1)]
 }
 
-function validateBranchName(branch: string, label: string): string | null {
+function validateBranchName(branch: string, label: string, t: Translate): string | null {
   const value = branch.trim()
-  if (!value) return `${label}不能为空`
-  if ([...value].length > 255) return `${label}过长`
-  if (isControlOrSpace(value)) return `${label}不能包含空白或控制字符`
-  if (value.startsWith('-') || value.startsWith('/') || value.endsWith('/')) return `${label}格式无效`
-  if (value.endsWith('.') || value.endsWith('.lock')) return `${label}格式无效`
+  if (!value) return t('hosting.fieldRequired', { label })
+  if ([...value].length > 255) return t('hosting.fieldTooLong', { label })
+  if (isControlOrSpace(value)) return t('hosting.fieldControlChars', { label })
+  if (value.startsWith('-') || value.startsWith('/') || value.endsWith('/')) return t('hosting.fieldInvalid', { label })
+  if (value.endsWith('.') || value.endsWith('.lock')) return t('hosting.fieldInvalid', { label })
   if (
     value.includes('..') ||
     value.includes('//') ||
     [...value].some((character) => '\\~^:?*['.includes(character))
   ) {
-    return `${label}包含 Git 不允许的字符`
+    return t('hosting.fieldForbiddenChars', { label })
   }
   return null
 }
@@ -170,9 +170,9 @@ export function validateCreatePullRequestForm(
   if (isControl(title)) return t('hosting.titleIllegalChars', { noun })
   if ([...form.body].length > 64 * 1024) return t('hosting.bodyTooLong', { noun })
   if (form.body.includes('\0')) return t('hosting.bodyContainsNul', { noun })
-  const source = validateBranchName(form.sourceBranch, t('hosting.sourceBranch'))
+  const source = validateBranchName(form.sourceBranch, t('hosting.sourceBranch'), t)
   if (source) return source
-  const target = validateBranchName(form.targetBranch, t('hosting.targetBranch'))
+  const target = validateBranchName(form.targetBranch, t('hosting.targetBranch'), t)
   if (target) return target
   if (form.sourceBranch.trim() === form.targetBranch.trim()) {
     return t('hosting.branchesMustDiffer')

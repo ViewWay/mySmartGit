@@ -140,7 +140,7 @@ describe('history edit todo preview', () => {
     rows = setRowAction(rows, 0, 'drop')
     rows = setRowAction(rows, 1, 'fixup')
     rows = setRowAction(rows, 2, 'edit')
-    const lines = renderTodoPreview(rows)
+    const lines = renderTodoPreview(rows, zhT)
     expect(lines[0]).toMatch(/^# drop /)
     expect(lines[1]).toBe(`pick ${entries[1].hash} # 改动 B`)
     expect(lines[2]).toContain('折叠进上一条并保留目标消息')

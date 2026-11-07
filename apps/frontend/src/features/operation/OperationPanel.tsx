@@ -130,7 +130,7 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
       const snapshot = await action()
       onSnapshot(snapshot)
       setReloadToken((value) => value + 1)
-      onNotice(snapshot.operation ? `${snapshot.operation.label}：${snapshot.operation.conflicts.length ? `还有 ${snapshot.operation.conflicts.length} 个冲突` : t('operation.canContinue')}` : success)
+      onNotice(snapshot.operation ? t('operation.statusConflicts', { label: snapshot.operation.label, count: snapshot.operation.conflicts.length }) : success)
       return snapshot
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
@@ -145,8 +145,8 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
   // rebase 语义下两侧含义会翻转，侧栏与提示一律消费后端下发的 currentLabel/incomingLabel。
   const mergeLabels = paneLabels(file, t)
   const blockActionLabels: Record<ResolutionStrategy, string> = {
-    current: `采用「${mergeLabels.current}」一侧`,
-    incoming: `采用「${mergeLabels.incoming}」一侧`,
+    current: t('operation.adoptSideCurrent', { label: mergeLabels.current }),
+    incoming: t('operation.adoptSideIncoming', { label: mergeLabels.incoming }),
     both: t('operation.side.both'),
   }
 
@@ -156,7 +156,7 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
     if (!dirty) return true
     return await confirm({
       title: t('operation.unsavedEdits'),
-      message: `${action}会覆盖编辑器里尚未保存的改动。建议先点“${blocks.length ? t('operation.saveResult') : t('operation.markResolved')}”把草稿写回文件。确定要继续吗？`,
+      message: t('operation.overwriteDraftConfirm', { action, save: blocks.length ? t('operation.saveResult') : t('operation.markResolved') }),
       confirmLabel: t('operation.continueAnyway'),
       variant: 'danger',
     })
@@ -173,12 +173,12 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
       if (strategy !== 'result') unsavedDrafts.current.delete(target)
       const snapshot = await runOperation(
         () => resolveConflictFile(repository.path, target, strategy, strategy === 'result' ? draft : undefined),
-        partialSave ? `已保存草稿：${target}` : `已解决并落暂存：${target}`,
+        partialSave ? t('operation.draftSaved', { target }) : t('operation.resolvedStaged', { target }),
       )
       if (!snapshot) return
       const stillConflicted = snapshot.operation?.conflicts.includes(target) ?? false
       if (stillConflicted) {
-        onNotice(partialSave ? `${target}：仍有冲突标记，处理完再点“标记已解决”` : `${target}：仍未解决，请检查冲突块`)
+        onNotice(partialSave ? t('operation.stillConflicted', { target }) : t('operation.stillUnresolved', { target }))
         return
       }
       onReturnToChanges()
@@ -216,8 +216,8 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
     setLastResolution({ block: blockIndex, strategy, from: focusOffset, to: resolvedTo })
     setResolvedRanges([...mappedRanges, { from: focusOffset, to: resolvedTo }])
     onNotice(nextBlocks.length
-      ? `已应用第 ${blockIndex + 1} 个冲突块：${t(resolutionKeys[strategy])}（还有 ${nextBlocks.length} 处，保存后才落暂存）`
-      : `已应用第 ${blockIndex + 1} 个冲突块：${t(resolutionKeys[strategy])}（点“标记已解决”写盘并落暂存）`)
+      ? t('operation.blockAppliedPendingCount', { index: blockIndex + 1, label: t(resolutionKeys[strategy]), count: nextBlocks.length })
+      : t('operation.blockApplied', { index: blockIndex + 1, label: t(resolutionKeys[strategy]) }))
   }
 
   // 撤销/重做以草稿历史栈为唯一事实源；范围高亮不随文本回滚，回退时直接清空更诚实。
@@ -252,7 +252,7 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
     commitDraft(outcome.text.replace(/\r\n/g, '\n'), 'batch')
     setResolvedRanges([])
     setActiveBlock(0)
-    onNotice(`已对剩余 ${outcome.resolved} 个冲突块统一${t(resolutionKeys[strategy])}（可撤销；点“标记已解决”才会写盘并落暂存）`)
+    onNotice(t('operation.bulkApplied', { count: outcome.resolved, label: t(resolutionKeys[strategy]) }))
   }
 
   // 恢复冲突状态：放弃本文件所有手工结果、回到磁盘上的原始冲突标记；同样可撤销。
@@ -308,13 +308,13 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
   // 中间可编辑结果栏：单栏模式直接渲染，三栏模式作为 resultPane 注入 ThreePaneMergeView。
   const resultPane = file && !file.binary ? <div className={`conflict-result${viewMode === 'three' ? ' tp-result-inner' : ''}`}>
     <div className="conflict-result-heading">
-      <div><strong>{t('operation.mergeResult')}</strong><span>{lastResolution ? `刚刚已应用第 ${lastResolution.block + 1} 个冲突块：${t(resolutionKeys[lastResolution.strategy])}${blocks.length ? `，还剩 ${blocks.length} 处` : t('operation.pendingSaveSuffix')}` : blocks.length ? t('operation.blocksProgress', { current: Math.min(activeBlock + 1, blocks.length), total: blocks.length }) : dirty ? t('operation.draftCleanHint') : t('operation.noConflictMarkers')}</span></div>
+      <div><strong>{t('operation.mergeResult')}</strong><span>{lastResolution ? `${t('operation.blockAppliedLast', { index: lastResolution.block + 1, label: t(resolutionKeys[lastResolution.strategy]) })}${blocks.length ? t('operation.blocksLeftCount', { count: blocks.length }) : t('operation.pendingSaveSuffix')}` : blocks.length ? t('operation.blocksProgress', { current: Math.min(activeBlock + 1, blocks.length), total: blocks.length }) : dirty ? t('operation.draftCleanHint') : t('operation.noConflictMarkers')}</span></div>
       <div className="conflict-navigation"><button onClick={() => jumpBlock(-1)} disabled={!blocks.length} title={t('operation.prevConflict')}><ChevronLeft size={14}/></button><span>{blocks.length ? `${activeBlock + 1} / ${blocks.length}` : '0 / 0'}</span><button onClick={() => jumpBlock(1)} disabled={!blocks.length} title={t('operation.nextConflict')}><ChevronRight size={14}/></button></div>
       <div className="conflict-navigation" role="group" aria-label={t('operation.undoRedo')}><button onClick={() => applyHistoryStep('undo')} disabled={!canUndo} title={t('operation.undoShortcut')} aria-label={t('operation.undoMerge')}><Undo2 size={14}/></button><button onClick={() => applyHistoryStep('redo')} disabled={!canRedo} title={t('operation.redoShortcut')} aria-label={t('operation.redoMerge')}><Redo2 size={14}/></button></div>
       {blocks.length > 0 && <div className="conflict-active-actions"><Button variant="secondary" onClick={() => resolveBlock(activeBlock, 'current')} disabled={loading} title={blockActionLabels.current}>{t('operation.side.current')}</Button><Button variant="secondary" onClick={() => resolveBlock(activeBlock, 'incoming')} disabled={loading} title={blockActionLabels.incoming}>{t('operation.side.incoming')}</Button><Button variant="secondary" onClick={() => resolveBlock(activeBlock, 'both')} disabled={loading}>{t('operation.side.both')}</Button><Button variant="secondary" onClick={() => { const target = blocks[activeBlock]; if (target) requestAnimationFrame(() => editorRef.current?.focusBlock(target.offset, target.endOffset)) }} disabled={loading} title={t('operation.manualCombineHint')}>{t('operation.manualCombine')}</Button></div>}
     </div>
     <div className="tp-batch-bar" role="group" aria-label={t('operation.bulkBlocks')}>
-      {blocks.length > 1 && <><Button variant="secondary" onClick={() => resolveRemaining('current')} disabled={loading} title={`把剩余所有冲突块统一替换为「${mergeLabels.current}」一侧`}>{t('operation.side.currentBulk')}</Button><Button variant="secondary" onClick={() => resolveRemaining('incoming')} disabled={loading} title={`把剩余所有冲突块统一替换为「${mergeLabels.incoming}」一侧`}>{t('operation.side.incomingBulk')}</Button><Button variant="secondary" onClick={() => resolveRemaining('both')} disabled={loading}>{t('operation.side.bothBulk')}</Button></>}
+      {blocks.length > 1 && <><Button variant="secondary" onClick={() => resolveRemaining('current')} disabled={loading} title={t('operation.bulkAdoptCurrent', { label: mergeLabels.current })}>{t('operation.side.currentBulk')}</Button><Button variant="secondary" onClick={() => resolveRemaining('incoming')} disabled={loading} title={t('operation.bulkAdoptIncoming', { label: mergeLabels.incoming })}>{t('operation.side.incomingBulk')}</Button><Button variant="secondary" onClick={() => resolveRemaining('both')} disabled={loading}>{t('operation.side.bothBulk')}</Button></>}
       <Button variant="secondary" onClick={restoreConflictState} disabled={loading || draft === originalText} title={t('operation.discardManualHint')}><RotateCcw size={13}/>{t('operation.restoreConflictState')}</Button>
     </div>
     <ConflictCodeEditor ref={editorRef} value={draft} filePath={file.path} blocks={blocks} activeBlock={activeBlock} resolvedRanges={resolvedRanges} disabled={loading} onChange={(value) => { commitDraft(value, 'edit'); if (value !== draft) setLastResolution(null) }} onResolveBlock={resolveBlock} onSave={() => resolveFile('result')} saveLabel={blocks.length ? t('operation.saveResult') : t('operation.markResolved')} labels={conflictActionLabels}/>
@@ -325,7 +325,7 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
       <div className="operation-heading-title">
         <span className={`operation-kind operation-kind-${operation.kind}`}>{kind === 'rebase' ? <GitPullRequest size={15}/> : kind === 'merge' ? <GitMerge size={15}/> : kind === 'revert' ? <RotateCcw size={15}/> : <CircleAlert size={15}/>}</span>
         <strong>{operation.label}</strong>
-        <span className="operation-status-meta">{kind === 'rebase' ? `${completedSteps} / ${operation.steps.length || totalSteps} 个提交` : kind === 'revert' && totalSteps > 1 ? `还原第 ${currentStep} / ${totalSteps} 步 · ${conflicts.length} 个冲突文件` : `${conflicts.length} 个冲突文件`}</span>
+        <span className="operation-status-meta">{kind === 'rebase' ? t('operation.rebaseProgress', { done: completedSteps, total: operation.steps.length || totalSteps }) : kind === 'revert' && totalSteps > 1 ? t('operation.revertProgress', { current: currentStep, total: totalSteps, count: conflicts.length }) : t('operation.conflictFilesCount', { count: conflicts.length })}</span>
       </div>
       <div className="operation-actions">
         <Button variant="secondary" onClick={() => void runOperation(() => continueRepositoryOperation(repository.path), t('operation.continued'))} disabled={loading || conflicts.length > 0 || kind === 'conflict'}>{loading ? <RefreshCw className="spin" size={14}/> : <ChevronRight size={14}/>} {loading ? t('operation.continuing') : continueActionLabel(kind, t)}</Button>
@@ -335,7 +335,7 @@ export function OperationPanel({ repository, onSnapshot, onNotice, initialPath, 
       </div>
     </div>
 
-    {showsStepRoute(kind) && operation.steps.length > 0 && <details className="rebase-route"><summary><GitBranch size={13}/>{stepRouteLabel(kind, t)} <span>{currentStep && totalSteps ? `第 ${currentStep} / ${totalSteps} 步` : t('operation.statusPreparing')}</span></summary><div className="rebase-steps">{operation.steps.map((step) => <div className={`rebase-step ${step.status}`} key={step.hash}><span className="rebase-step-line"/><span className="rebase-step-dot"/><div><strong>{step.title}</strong><small>{step.shortHash} · {step.author}</small></div><span className="rebase-step-status">{step.status === 'applied' ? t('operation.statusDone') : step.status === 'current' ? t('operation.currentConflict') : t('operation.pending')}</span></div>)}</div></details>}
+    {showsStepRoute(kind) && operation.steps.length > 0 && <details className="rebase-route"><summary><GitBranch size={13}/>{stepRouteLabel(kind, t)} <span>{currentStep && totalSteps ? t('operation.stepProgress', { current: currentStep, total: totalSteps }) : t('operation.statusPreparing')}</span></summary><div className="rebase-steps">{operation.steps.map((step) => <div className={`rebase-step ${step.status}`} key={step.hash}><span className="rebase-step-line"/><span className="rebase-step-dot"/><div><strong>{step.title}</strong><small>{step.shortHash} · {step.author}</small></div><span className="rebase-step-status">{step.status === 'applied' ? t('operation.statusDone') : step.status === 'current' ? t('operation.currentConflict') : t('operation.pending')}</span></div>)}</div></details>}
 
     <div className={`conflict-workspace${viewMode === 'three' ? ' tp-workspace-wide' : ''}`}>
       <div className="conflict-editor inline-resolution">

@@ -64,15 +64,15 @@ export function validateRows(rows: HistoryEditRow[], t: Translate): string[] {
   if (rows.length === 0) return [t('historyEdit.empty')]
   let hasPrevKept = false
   rows.forEach((row, index) => {
-    const at = `第 ${index + 1} 行（${row.entry.shortHash} ${row.entry.title}）`
+    const at = t('historyEdit.rowAt', { index: index + 1, hash: row.entry.shortHash, title: row.entry.title })
     if ((row.action === 'squash' || row.action === 'fixup') && !hasPrevKept) {
-      errors.push(`${at}：${row.action === 'squash' ? 'squash' : 'fixup'} 之前必须有保留的提交（第一条有效提交不能折叠，前一条被 drop 也不行）。`)
+      errors.push(t('historyEdit.errFixupSquashNeedsPrev', { at, action: row.action === 'squash' ? 'squash' : 'fixup' }))
     }
     if (row.action === 'reword' && row.message.trim() === '') {
-      errors.push(`${at}：reword 需要新的提交消息，不能为空。`)
+      errors.push(t('historyEdit.errRewordNeedsMessage', { at }))
     }
     if (row.action === 'squash' && !row.message.trim() && !hasPrevKept) {
-      errors.push(`${at}：squash 需要合并消息或前一条保留提交。`)
+      errors.push(t('historyEdit.errSquashNeedsMessage', { at }))
     }
     if (row.action !== 'drop') hasPrevKept = true
   })
@@ -135,30 +135,30 @@ export function buildActionPayload(rows: HistoryEditRow[]): HistoryEditActionInp
 
 /** todo 预览行：向用户解释每一步将写入 git-rebase-todo 的内容。
  * 与后端 materialize_todo 的编译规则一致（fixup/squash 编译为 pick + 折叠 exec）。 */
-export function renderTodoPreview(rows: HistoryEditRow[]): string[] {
+export function renderTodoPreview(rows: HistoryEditRow[], t: Translate): string[] {
   const lines: string[] = []
   for (const row of rows) {
     switch (row.action) {
       case 'drop':
-        lines.push(`# drop ${row.entry.shortHash} ${row.entry.title}（将从历史中移除）`)
+        lines.push(`# drop ${row.entry.shortHash} ${row.entry.title}${t('historyEdit.dropComment')}`)
         break
       case 'pick':
         lines.push(`pick ${row.entry.hash} # ${row.entry.title}`)
         break
       case 'edit':
-        lines.push(`edit ${row.entry.hash} # ${row.entry.title}（变基在此暂停）`)
+        lines.push(`edit ${row.entry.hash} # ${row.entry.title}${t('historyEdit.editPauseNote')}`)
         break
       case 'reword':
         lines.push(`pick ${row.entry.hash} # ${row.entry.title}`)
-        lines.push(`exec git commit --amend（改写为新消息）`)
+        lines.push(t('historyEdit.execReword'))
         break
       case 'fixup':
         lines.push(`pick ${row.entry.hash} # ${row.entry.title}`)
-        lines.push(`exec 折叠进上一条并保留目标消息`)
+        lines.push(t('historyEdit.execFixup'))
         break
       case 'squash':
         lines.push(`pick ${row.entry.hash} # ${row.entry.title}`)
-        lines.push(row.message.trim() ? `exec 折叠进上一条并使用合并消息` : `exec 折叠进上一条（自动拼接消息）`)
+        lines.push(row.message.trim() ? t('historyEdit.execSquashMsg') : t('historyEdit.execSquash'))
         break
     }
   }

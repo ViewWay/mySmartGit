@@ -95,7 +95,7 @@ export function RemotePanel({ repository, onSnapshot, onNotice }: {
     const url = newUrl.trim()
     if (!name || !url) { onNotice(t('repository.remote.nameAndUrlRequired')); return }
     // 添加远程不是破坏性动作，后端一次调用即执行，不需要 confirm 轮次。
-    void guard('add', () => addRepositoryRemote(repository.path, name, url, fetchNow), t('repository.remote.addTitle'), `已添加远程：${name}`)
+    void guard('add', () => addRepositoryRemote(repository.path, name, url, fetchNow), t('repository.remote.addTitle'), t('remote.added', { name }))
       .then(() => { setAdding(false); setNewName(''); setNewUrl('') })
   }
 
@@ -115,13 +115,13 @@ export function RemotePanel({ repository, onSnapshot, onNotice }: {
     const value = (renaming?.target ?? '').trim()
     if (!value) { onNotice(t('repository.remote.newBranchNameRequired')); return }
     if (value === branch) { onNotice(t('repository.remote.sameBranchName')); return }
-    void guard(`branch-rename:${branch}`, (confirmFlag) => renameRepositoryBranch(repository.path, branch, value, confirmFlag), t('repository.remote.renameLocalBranchTitle'), `已把 ${branch} 重命名为 ${value}`)
+    void guard(`branch-rename:${branch}`, (confirmFlag) => renameRepositoryBranch(repository.path, branch, value, confirmFlag), t('repository.remote.renameLocalBranchTitle'), t('remote.branchRenamed', { branch, value }))
       .then(() => setRenaming(null))
   }
 
   return <section className="structure-panel workspace-page remote-panel-workspace">
     <div className="workspace-page-heading">
-      <div><span className="eyebrow">{t('repository.remote.andTags')}</span><h2>{t('repository.remote.title')}</h2><p>{`当前分支 ${repository.branch || t('repository.remote.detachedHead')}；地址中的凭据在展示前已脱敏。`}</p></div>
+      <div><span className="eyebrow">{t('repository.remote.andTags')}</span><h2>{t('repository.remote.title')}</h2><p>{t('remote.credentialsNote', { branch: repository.branch || t('repository.remote.detachedHead') })}</p></div>
       <div className="structure-actions">
         <Button variant="secondary" disabled={loading || busy !== null} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'spin' : ''}/>{loading ? t('repository.tree.reading') : t('repository.remote.refresh')}</Button>
         <Button variant="primary" className="structure-heading-action" onClick={() => setAdding((value) => !value)}><Plus size={14}/>{t('repository.remote.addTitle')}</Button>
@@ -163,7 +163,7 @@ export function RemotePanel({ repository, onSnapshot, onNotice }: {
         </dl>
         <div className="structure-actions">
           {(['rename', 'fetch', 'push'] as EditMode[]).map((mode) => <Button key={mode} variant="secondary" disabled={busy !== null} onClick={() => { setEditing({ remote: remote.name, mode }); setDraft(mode === 'rename' ? remote.name : mode === 'fetch' ? (remote.fetchUrls[0] ?? '') : (remote.pushUrls[0] ?? '')) }}><Pencil size={13}/>{t(modeKeys[mode])}</Button>)}
-          <Button variant="danger" disabled={busy !== null} onClick={() => void guard(`remove:${remote.name}`, (confirmFlag) => removeRepositoryRemote(repository.path, remote.name, confirmFlag), t('repository.remote.deleteTitle'), `已删除远程：${remote.name}`)}><Trash2 size={13}/>{busy === `remove:${remote.name}` ? t('repository.remote.deleting') : t('repository.remote.deleteTitle')}</Button>
+          <Button variant="danger" disabled={busy !== null} onClick={() => void guard(`remove:${remote.name}`, (confirmFlag) => removeRepositoryRemote(repository.path, remote.name, confirmFlag), t('repository.remote.deleteTitle'), t('remote.deleted', { name: remote.name }))}><Trash2 size={13}/>{busy === `remove:${remote.name}` ? t('repository.remote.deleting') : t('repository.remote.deleteTitle')}</Button>
         </div>
         {editMode && <div className="structure-actions remote-edit-row">
           <div className="branch-name-input"><input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={editMode === 'rename' ? t('repository.remote.newName') : t('repository.remote.newUrl')}/></div>
@@ -189,14 +189,14 @@ export function RemotePanel({ repository, onSnapshot, onNotice }: {
               <span className="structure-icon"><GitBranch size={15}/></span>
               <span>
                 <strong>{branch}</strong>
-                <small>{upstream ? `跟踪 ${upstream} · 领先 ${repository.branchTracking[branch]?.ahead ?? 0} · 落后 ${repository.branchTracking[branch]?.behind ?? 0}` : t('repository.remote.noUpstream')}</small>
+                <small>{upstream ? t('remote.upstreamSummary', { upstream, ahead: repository.branchTracking[branch]?.ahead ?? 0, behind: repository.branchTracking[branch]?.behind ?? 0 }) : t('repository.remote.noUpstream')}</small>
                 {renaming?.branch === branch && <input className="branch-rename-input" autoFocus value={renaming.target} onChange={(event) => setRenaming({ branch, target: event.target.value })} placeholder={t('repository.remote.newBranchName')}/>}
               </span>
               {candidates.length > 0
-                ? <CompactSelect className="upstream-select" value={choice} options={[{ value: '', label: t('repository.remote.untracked') }, ...candidates.map((item) => ({ value: item, label: item }))]} onChange={(value) => setUpstreamChoice((current) => ({ ...current, [branch]: value }))} ariaLabel={`选择 ${branch} 的上游分支`}/>
+                ? <CompactSelect className="upstream-select" value={choice} options={[{ value: '', label: t('repository.remote.untracked') }, ...candidates.map((item) => ({ value: item, label: item }))]} onChange={(value) => setUpstreamChoice((current) => ({ ...current, [branch]: value }))} ariaLabel={t('remote.pickUpstream', { branch })}/>
                 : <span className="tag-row-risk">{t('repository.remote.noRemoteBranchOptions')}</span>}
               <span className="branch-upstream-actions">
-                <Button variant="secondary" size="compact" disabled={busy !== null} onClick={() => void guard(`upstream:${branch}`, (confirmFlag) => setRepositoryBranchUpstream(repository.path, branch, choice.trim() || null), t('repository.remote.setUpstream'), `已更新 ${branch} 的上游跟踪`)}>{choice.trim() ? t('repository.remote.setUnterminatedUpstream') : t('repository.remote.clearUpstream')}</Button>
+                <Button variant="secondary" size="compact" disabled={busy !== null} onClick={() => void guard(`upstream:${branch}`, (confirmFlag) => setRepositoryBranchUpstream(repository.path, branch, choice.trim() || null), t('repository.remote.setUpstream'), t('remote.upstreamUpdated', { branch }))}>{choice.trim() ? t('repository.remote.setUnterminatedUpstream') : t('repository.remote.clearUpstream')}</Button>
                 {renaming?.branch === branch
                   ? <Button variant="primary" size="compact" disabled={busy !== null} onClick={() => submitBranchRename(branch)}>{t('repository.remote.rename')}</Button>
                   : <Button variant="secondary" size="compact" disabled={busy !== null} onClick={() => setRenaming({ branch, target: branch })}>{t('repository.remote.renameShort')}</Button>}

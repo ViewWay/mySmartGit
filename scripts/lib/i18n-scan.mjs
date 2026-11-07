@@ -24,6 +24,10 @@ export function scanSource(source, fileName) {
     if (!allowed && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isJsxText(node))) {
       if (CJK.test(node.getText(file))) count += 1
     }
+    if (!allowed && ts.isTemplateExpression(node)) {
+      const parts = [node.head, ...node.templateSpans.map((span) => span.literal)]
+      if (parts.some((part) => CJK.test(part.getText(file)))) count += 1
+    }
     node.forEachChild(visit)
   }
   visit(file)

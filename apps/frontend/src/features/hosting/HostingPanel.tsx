@@ -181,14 +181,14 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
 
   const copyUrl = async (url: string) => {
     if (!navigator.clipboard) {
-      notify(`当前环境不支持自动复制，请手动复制：${url}`)
+      notify(t('hosting.copyUnsupported', { url }))
       return
     }
     try {
       await navigator.clipboard.writeText(url)
       notify(t('hosting.linkCopied'))
     } catch {
-      notify(`复制失败，请手动复制：${url}`)
+      notify(t('hosting.copyFailed', { url }))
     }
   }
 
@@ -282,7 +282,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
         repositoryPath,
         buildCreatePullRequestInput(form, effectiveProvider),
       )
-      notify(`已创建 ${effectiveProvider === 'gitlab' ? 'MR' : 'PR'} #${created.number}`)
+      notify(t('hosting.createdPullRequest', { noun: effectiveProvider === 'gitlab' ? 'MR' : 'PR', number: created.number }))
       setForm((previous) => ({
         ...previous,
         title: '',
@@ -567,7 +567,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               <Button
                 variant="icon"
                 title={t('hosting.copyLink')}
-                aria-label={`复制 PR/MR #${pr.number} 链接`}
+                aria-label={t('hosting.copyLinkAria', { number: pr.number })}
                 onClick={() => void copyUrl(pr.webUrl)}
               >
                 <Copy size={13} />
@@ -575,7 +575,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               <Button
                 variant="icon"
                 title={t('hosting.viewDetail')}
-                aria-label={`查看 PR/MR #${pr.number} 详情`}
+                aria-label={t('hosting.viewDetailAria', { number: pr.number })}
                 onClick={() => void openDetail(pr.number)}
               >
                 <ChevronRight size={14} />
@@ -602,7 +602,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               value={form.title}
               maxLength={256}
               disabled={disabled || !tokenReady}
-              placeholder={`${noun} 标题`}
+              placeholder={t('hosting.titleLabelNoun', { noun })}
               onChange={(event) => setForm({ ...form, title: event.target.value })}
             />
           </label>
@@ -654,7 +654,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               disabled={disabled || !tokenReady || !repository}
             >
               <Check size={14} />
-              {busy === 'create' ? t('hosting.creating') : `创建 ${noun}`}
+              {busy === 'create' ? t('hosting.creating') : t('hosting.createNoun', { noun })}
             </Button>
             {!repository && <span className="hosting-hint">{t('hosting.originRequired')}</span>}
           </div>

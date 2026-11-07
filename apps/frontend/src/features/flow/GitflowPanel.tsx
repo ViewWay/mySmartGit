@@ -138,7 +138,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
     if (base) {
       const baseError = validateGitflowBranchName(base, t)
       if (baseError) {
-        setError(`基础分支：${baseError}`)
+        setError(t('flow.baseBranchError', { error: baseError }))
         return
       }
     }
@@ -146,7 +146,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
     setError('')
     try {
       const report = await startGitflowBranch(repositoryPath, startDialog.kind, startDialog.name, base || null)
-      notify(`已创建并切换到 ${report.branch}（基于 ${report.base}）`)
+      notify(t('flow.createdAndSwitched', { branch: report.branch, base: report.base }))
       setStartDialog(null)
       await reload()
       onChanged?.()
@@ -164,14 +164,14 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
     if (tagEnabled) {
       const tagError = validateGitflowTagName(config, finishDialog.name, t)
       if (tagError) {
-        setError(`标签：${tagError}`)
+        setError(t('flow.tagError', { error: tagError }))
         return
       }
     }
     const target = gitflowTagName(config, finishDialog.name)
     const accepted = await ask({
-      title: `完成 ${gitflowKindLabel(kind, t)} ${finishDialog.name}`,
-      message: `将把 ${finishDialog.name} 以 --no-ff 合并到${kind === 'feature' ? ' develop' : t('flow.finishMainDevelopNote')}${tagEnabled ? `，并创建标签 ${target}` : ''}，最后删除本地分支。不会推送远端。${kind === 'release' || kind === 'hotfix' ? t('flow.finishConflictNote') : ''}`,
+      title: t('flow.finishDialogTitle', { kind: gitflowKindLabel(kind, t), name: finishDialog.name }),
+      message: `${t('flow.finishBody', { name: finishDialog.name, target: kind === 'feature' ? ' develop' : t('flow.finishMainDevelopNote'), tagNote: tagEnabled ? t('flow.finishTagSuffix', { target }) : '' })}${kind === 'release' || kind === 'hotfix' ? t('flow.finishConflictNote') : ''}`,
       confirmLabel: t('flow.startMerge'),
       variant: 'primary',
     })
@@ -188,7 +188,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
       })
       setReport(nextReport)
       const tone = finishReportTone(nextReport)
-      notify(finishReportHeadline(nextReport))
+      notify(finishReportHeadline(nextReport, t))
       if (tone === 'success') {
         setFinishDialog(null)
         setTag(false)
@@ -230,7 +230,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
       <div>
         <span className="eyebrow">{t('flow.branchWorkflow')}</span>
         <h2>Gitflow</h2>
-        <p>{`主干 ${config?.mainBranch ?? '—'} · develop ${config?.developBranch ?? '—'}；所有操作只在本地执行，不会 push。`}</p>
+        <p>{t('flow.summaryLine', { main: config?.mainBranch ?? '—', develop: config?.developBranch ?? '—' })}</p>
       </div>
       <div className="structure-actions">
         <Button variant="secondary" disabled={disabled} onClick={() => void reload()}><RefreshCw size={14} className={loading ? 'spin' : ''}/>{loading ? t('hosting.loadingList') : t('flow.refresh')}</Button>
@@ -315,8 +315,8 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
 
     {report && <article className={`structure-detail-card flow-report flow-report-${reportTone}`}>
       <div className="flow-report-heading">
-        <h3>{reportTone === 'success' ? <CheckCircle2 size={15}/> : <AlertTriangle size={15}/>}{finishReportHeadline(report)}</h3>
-        {counts && <span className="flow-report-counts">{`完成 ${counts.completed} · 跳过 ${counts.skipped} · 冲突 ${counts.conflict} · 失败 ${counts.failed}`}</span>}
+        <h3>{reportTone === 'success' ? <CheckCircle2 size={15}/> : <AlertTriangle size={15}/>}{finishReportHeadline(report, t)}</h3>
+        {counts && <span className="flow-report-counts">{t('flow.finishCounts', counts)}</span>}
         <Button variant="icon" title={t('flow.closeReport')} onClick={() => setReport(null)}><X size={15}/></Button>
       </div>
       <ul className="flow-report-steps">
@@ -340,7 +340,7 @@ export function GitflowPanel({ repositoryPath, onNotice, confirm, onChanged }: G
           <div className={startInvalid ? 'branch-name-input invalid' : 'branch-name-input'}>
             <input autoFocus value={startDialog.name} spellCheck={false} placeholder={t('flow.shortNamePlaceholder')} onChange={(event) => setStartDialog({ ...startDialog, name: event.target.value })}/>
           </div>
-          <p className="branch-dialog-hint">{startInvalid ?? `将创建 ${gitflowPrefix(config, startDialog.kind)}${gitflowLeafName(config, startDialog.kind, startDialog.name) || '…'}`}</p>
+          <p className="branch-dialog-hint">{startInvalid ?? t('flow.willCreate', { full: `${gitflowPrefix(config, startDialog.kind)}${gitflowLeafName(config, startDialog.kind, startDialog.name) || '…'}` })}</p>
           <label>{t('flow.baseBranchLabel')}</label>
           <div className={startDialog.base && validateGitflowBranchName(startDialog.base, t) ? 'branch-name-input invalid' : 'branch-name-input'}>
             <input value={startDialog.base} spellCheck={false} placeholder={gitflowDefaultBase(config, startDialog.kind)} onChange={(event) => setStartDialog({ ...startDialog, base: event.target.value })}/>

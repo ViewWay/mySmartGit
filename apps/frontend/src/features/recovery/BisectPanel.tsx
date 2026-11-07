@@ -73,7 +73,7 @@ export function BisectPanel({ repository, busy, onBusyChange, onSnapshot, onNoti
     if (!repository || !status) return
     const progress = status.tested.length
     const message = progress
-      ? `退出将丢弃当前 Bisect 进度（已记录 ${progress} 步结论）。仓库会回到${status.originalBranch ? `分支 ${status.originalBranch}` : t('bisect.startState')}；排查记录不会自动保存。`
+      ? t('bisect.exitConfirm', { progress, branch: status.originalBranch ? t('bisect.backToBranch', { branch: status.originalBranch }) : t('bisect.startState') })
       : t('bisect.exitHint')
     if (!await confirm({ title: t('bisect.exit'), message, confirmLabel: t('bisect.exit'), variant: progress ? 'danger' : 'primary' })) return
     onBusyChange(true)

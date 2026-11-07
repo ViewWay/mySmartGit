@@ -24,7 +24,7 @@ export function StashPage({ repository, onSelectStash, onSnapshot, onNotice }: {
       const snapshot = await operation()
       onSnapshot(snapshot)
       onNotice(snapshot.operation
-        ? `${snapshot.operation.label}：请处理 ${snapshot.operation.conflicts.length} 个冲突文件`
+        ? t('stash.operationConflicts', { label: snapshot.operation.label, count: snapshot.operation.conflicts.length })
         : notice)
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
@@ -36,8 +36,8 @@ export function StashPage({ repository, onSelectStash, onSnapshot, onNotice }: {
     onSelectStash(reference)
   }
   const dropStash = async (reference: string) => {
-    if (!await confirm({ title: t('stash.dropTitle'), message: `确定删除 ${reference}？`, confirmLabel: t('stash.drop'), variant: 'danger' })) return
-    await run(`drop-${reference}`, () => dropRepositoryStash(repository!.path, reference), `已删除 ${reference}`)
+    if (!await confirm({ title: t('stash.dropTitle'), message: t('stash.dropConfirmMessage', { reference }), confirmLabel: t('stash.drop'), variant: 'danger' })) return
+    await run(`drop-${reference}`, () => dropRepositoryStash(repository!.path, reference), t('stash.dropDone', { reference }))
   }
 
   return <section className="workspace-page stash-page">
@@ -47,7 +47,7 @@ export function StashPage({ repository, onSelectStash, onSnapshot, onNotice }: {
         <div className="stash-list-heading"><strong>{t('stash.listTitle')}</strong><span>{repository?.stashes.length ?? 0}</span></div>
         <div className="stash-list">{repository?.stashes.map((stash) => <article key={stash.reference}>
           <button className="stash-select" onClick={() => selectStash(stash.reference)} title={t('stash.viewInGraph')}><span className="stash-icon"><Archive size={15}/></span><span><strong>{stash.message}</strong><small>{stash.reference} · {stash.author} · {formatLocalDateTime(stash.time)}</small></span></button>
-          <div className="stash-actions"><Button variant="icon" disabled={busy !== null} title={t('stash.applyKeep')} onClick={() => void run(`apply-${stash.reference}`, () => applyRepositoryStash(repository.path, stash.reference, false), `已应用 ${stash.reference}`)}><Check size={13}/></Button><Button variant="icon" disabled={busy !== null} title={t('stash.popDrop')} onClick={() => void run(`pop-${stash.reference}`, () => applyRepositoryStash(repository.path, stash.reference, true), `已弹出 ${stash.reference}`)}><CornerDownLeft size={13}/></Button><Button variant="danger" disabled={busy !== null} title={t('stash.drop')} onClick={() => void dropStash(stash.reference)}><Trash2 size={13}/></Button></div>
+          <div className="stash-actions"><Button variant="icon" disabled={busy !== null} title={t('stash.applyKeep')} onClick={() => void run(`apply-${stash.reference}`, () => applyRepositoryStash(repository.path, stash.reference, false), t('stash.applyDone', { reference: stash.reference }))}><Check size={13}/></Button><Button variant="icon" disabled={busy !== null} title={t('stash.popDrop')} onClick={() => void run(`pop-${stash.reference}`, () => applyRepositoryStash(repository.path, stash.reference, true), t('stash.popDone', { reference: stash.reference }))}><CornerDownLeft size={13}/></Button><Button variant="danger" disabled={busy !== null} title={t('stash.drop')} onClick={() => void dropStash(stash.reference)}><Trash2 size={13}/></Button></div>
         </article>)}
           {repository && repository.stashes.length === 0 && <div className="workspace-hint"><Archive size={26}/><strong>{t('stash.empty')}</strong><span>{t('stash.emptyHint')}</span></div>}
           {!repository && <div className="workspace-hint"><Archive size={26}/><strong>{t('stash.requiresRepositoryShort')}</strong></div>}

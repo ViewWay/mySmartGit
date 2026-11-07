@@ -131,10 +131,10 @@ describe('Gitflow 分组与操作限制', () => {
 describe('Gitflow 完成报告展示模型', () => {
   it('成功 / 冲突 / 失败三态标题', () => {
     expect(finishReportTone(report())).toBe('success')
-    expect(finishReportHeadline(report())).toBe('已完成 release/1.0.0')
-    expect(finishReportHeadline(report({ completed: false, conflicts: true }))).toContain('冲突')
+    expect(finishReportHeadline(report(), zhT)).toBe('已完成 release/1.0.0')
+    expect(finishReportHeadline(report({ completed: false, conflicts: true }), zhT)).toContain('冲突')
     expect(finishReportTone(report({ completed: false, conflicts: false }))).toBe('failed')
-    expect(finishReportHeadline(report({ completed: false, conflicts: false }))).toContain('未完成')
+    expect(finishReportHeadline(report({ completed: false, conflicts: false }), zhT)).toContain('未完成')
   })
 
   it('步骤行带状态标签、细节与 guidance', () => {

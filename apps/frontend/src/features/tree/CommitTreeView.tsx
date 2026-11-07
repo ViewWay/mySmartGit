@@ -98,7 +98,7 @@ export function CommitTreeRowList({ rows, selected, error, loading, hasIndex, qu
         onClick={() => onActivate(row)}
       >
         {row.hasChildren
-          ? <button type="button" className="tree-expander" aria-label={row.expanded ? `收起 ${row.name}` : `展开 ${row.name}`} onClick={(event) => { event.stopPropagation(); onActivate(row) }}>
+          ? <button type="button" className="tree-expander" aria-label={row.expanded ? t('repository.tree.collapseName', { name: row.name }) : t('repository.tree.expandName', { name: row.name })} onClick={(event) => { event.stopPropagation(); onActivate(row) }}>
             {row.expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
           </button>
           : <span className="tree-expander" aria-hidden="true"/>}

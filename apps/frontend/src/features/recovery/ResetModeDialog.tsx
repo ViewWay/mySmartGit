@@ -36,8 +36,8 @@ export function ResetModeDialog({ open, repository, initialCommit = '', initialM
       const snapshot = await resetRepositoryWithMode(repository.path, trimmed, mode, mode === 'hard')
       onSnapshot(snapshot)
       onNotice(mode === 'hard'
-        ? `已 hard Reset 到 ${trimmed}；本地修改已丢弃，可在 Reflog 面板找回历史提交`
-        : `已 ${mode} Reset 到 ${trimmed}，${mode === 'soft' ? t('reset.softKeep') : t('reset.mixedKeep')}`)
+        ? t('reset.hardDone', { target: trimmed })
+        : t('reset.modeDone', { mode, target: trimmed, keep: mode === 'soft' ? t('reset.softKeep') : t('reset.mixedKeep') }))
       onClose()
     } catch (error) {
       onNotice(error instanceof Error ? error.message : String(error))
@@ -63,7 +63,7 @@ export function ResetModeDialog({ open, repository, initialCommit = '', initialM
       </div>
       <div className="rebase-dialog-actions">
         <Button variant="secondary" onClick={onClose} disabled={busy}>{t('reset.cancel')}</Button>
-        <Button variant={mode === 'hard' ? 'danger' : 'primary'} disabled={blocked} onClick={() => void run()}><RotateCcw size={14}/>{busy ? t('reset.resetting') : `执行 ${mode} Reset`}</Button>
+        <Button variant={mode === 'hard' ? 'danger' : 'primary'} disabled={blocked} onClick={() => void run()}><RotateCcw size={14}/>{busy ? t('reset.resetting') : t('reset.executing', { mode })}</Button>
       </div>
     </section>
   </div>

@@ -93,14 +93,14 @@ export function ReflogPanel({ repository, busy, onBusyChange, onSnapshot, onNoti
 
   const handleCheckout = async (entry: ReflogEntry) => {
     if (!await confirm({ title: t('reflog.checkoutTitle'), message: `${describeReflogRestore(entry, 'checkout', t)}`, confirmLabel: t('reflog.checkout') })) return
-    await run(() => checkoutReflogEntry(repository!.path, entry.commitHash), `已检出 ${entry.shortHash}（分离 HEAD）`)
+    await run(() => checkoutReflogEntry(repository!.path, entry.commitHash), t('reflog.checkedOut', { hash: entry.shortHash }))
   }
 
   const handleCreateBranch = async (entry: ReflogEntry) => {
     const name = branchName.trim()
     if (!name) return onNotice(t('reflog.branchRequired'))
     if (!await confirm({ title: t('reflog.createBranchTitle'), message: `${describeReflogRestore(entry, 'branch', t)}\n\n${t('reflog.newBranch', { name })}`, confirmLabel: t('reflog.createBranch') })) return
-    await run(() => createBranchFromReflogEntry(repository!.path, entry.commitHash, name), `已创建分支 ${name}`)
+    await run(() => createBranchFromReflogEntry(repository!.path, entry.commitHash, name), t('reflog.branchCreated', { name }))
     setBranchName('')
   }
 
@@ -117,7 +117,7 @@ export function ReflogPanel({ repository, busy, onBusyChange, onSnapshot, onNoti
       <label><SearchCode size={13}/><span>{t('reflog.viewScope')}</span></label>
       <select value={scope} onChange={(event) => setScope(event.target.value)} disabled={loading}>{scopes.map((value) => <option key={value} value={value}>{value === 'HEAD' ? t('reflog.headScope') : value}</option>)}</select>
       <Button variant="icon" title={t('reflog.refresh')} onClick={() => void refresh(scope)} disabled={loading}><History size={13}/></Button>
-      <small>{repository ? `${entries.length} 条记录 · 直接按引用读取，不受提交图谱默认上限影响` : t('reflog.noRepository')}</small>
+      <small>{repository ? t('reflog.entryCount', { count: entries.length }) : t('reflog.noRepository')}</small>
     </div>
     {error && <div className="rebase-dialog-error"><AlertInline message={error}/></div>}
     <div className="reflog-workspace">

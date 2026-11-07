@@ -147,7 +147,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     if (helperRisk) {
       const proceed = await ask({
         title: t('credentials.confirmStorageTitle'),
-        message: `${helperRisk}\n\n仍然应用该凭据助手吗？`,
+        message: t('credentials.riskConfirm', { risk: helperRisk }),
         confirmLabel: t('credentials.applyAnyway'),
       })
       if (!proceed) return
@@ -172,8 +172,8 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
       onNotice?.(
         report.notice ??
           (helperValidation.value
-            ? `已把 ${scope} 凭据助手设置为 ${helperValidation.value}`
-            : `已清除 ${scope} 凭据助手`),
+            ? t('credentials.helperSet', { scope, helper: helperValidation.value })
+            : t('credentials.helperCleared', { scope })),
       )
       onChanged?.()
     } catch (reason) {
@@ -189,7 +189,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     try {
       const saved = await setCustomGitDirectory(customDir.trim() || null)
       setCustomDir(saved ?? '')
-      onNotice?.(saved ? `已使用自定义 Git 目录：${saved}` : t('credentials.gitDirCleared'))
+      onNotice?.(saved ? t('credentials.customGitUsed', { dir: saved }) : t('credentials.gitDirCleared'))
       onChanged?.()
       await refresh()
     } catch (reason) {
@@ -225,7 +225,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     if (validation.values.overwrite) {
       const proceed = await ask({
         title: t('credentials.overwriteKeyTitle'),
-        message: `将删除并重新生成 ${validation.values.fileName}（含配对的 .pub），旧密钥无法恢复。`,
+        message: t('credentials.overwriteKeyConfirm', { name: validation.values.fileName }),
         confirmLabel: t('credentials.overwrite'),
         variant: 'danger',
       })
@@ -242,7 +242,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
         validation.values.overwrite,
       )
       onNotice?.(
-        `已生成 ${info.fileName}（${sshKeyTypeLabel(info.keyType, t)}）。密钥为空口令；如需口令保护，请在此终端执行：ssh-keygen -p -f "${info.path}"`,
+        t('credentials.keyGenerated', { name: info.fileName, type: sshKeyTypeLabel(info.keyType, t), path: info.path }),
       )
       onChanged?.()
       await refresh()
@@ -259,9 +259,9 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     try {
       const publicKey = await readSshPublicKey(key.fileName)
       await navigator.clipboard.writeText(publicKey.trim())
-      onNotice?.(`已复制 ${key.fileName} 的公钥`)
+      onNotice?.(t('credentials.pubKeyCopied', { name: key.fileName }))
     } catch (reason) {
-      setError(`复制公钥失败：${errorText(reason)}`)
+      setError(t('credentials.pubKeyCopyFailed', { error: errorText(reason) }))
     } finally {
       setBusy(null)
     }
@@ -270,7 +270,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
   const removeKey = async (key: SshKeyInfo) => {
     const proceed = await ask({
       title: t('credentials.deleteKeyTitle'),
-      message: `将删除 ${key.fileName}${key.hasPublic ? t('credentials.deleteWithPubSuffix') : t('credentials.privateKeyOf')}；此操作不可撤销。`,
+      message: t('credentials.deleteKeyConfirm', { name: key.fileName, extra: key.hasPublic ? t('credentials.deleteWithPubSuffix') : t('credentials.privateKeyOf') }),
       confirmLabel: t('credentials.delete'),
       variant: 'danger',
     })
@@ -279,7 +279,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
     setError(null)
     try {
       const removed = await deleteSshKey(key.fileName, key.hasPublic)
-      onNotice?.(`已删除 SSH 密钥：${removed.join('、')}`)
+      onNotice?.(t('credentials.keysDeleted', { names: removed.join('、') }))
       onChanged?.()
       await refresh()
     } catch (reason) {
@@ -321,7 +321,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
           <RuntimeField label={t('credentials.customGit')} value={runtime?.customGitDir ?? t('credentials.notConfigured')} mono />
           <RuntimeField
             label="ssh-agent"
-            value={runtime?.sshAgentRunning ? `运行中（${runtime.sshAgentKeys.length} 个密钥）` : t('credentials.notRunning')}
+            value={runtime?.sshAgentRunning ? t('credentials.agentRunning', { count: runtime.sshAgentKeys.length }) : t('credentials.notRunning')}
           />
         </div>
         {runtime && runtime.sshAgentKeys.length > 0 && (
@@ -412,7 +412,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                         variant="icon"
                         size="compact"
                         title={t('credentials.copyPublicKey')}
-                        aria-label={`复制 ${key.fileName} 的公钥`}
+                        aria-label={t('credentials.copyPubKeyFor', { name: key.fileName })}
                         onClick={() => void copyPublicKey(key)}
                         disabled={busy !== null || (!key.hasPublic && !key.hasPrivate)}
                       >
@@ -422,7 +422,7 @@ export function CredentialsPanel({ repositoryPath, confirm, onNotice, onChanged 
                         variant="icon"
                         size="compact"
                         title={t('credentials.deleteKey')}
-                        aria-label={`删除 ${key.fileName}`}
+                        aria-label={t('credentials.deleteKeyFor', { name: key.fileName })}
                         onClick={() => void removeKey(key)}
                         disabled={busy !== null}
                       >

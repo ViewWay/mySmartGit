@@ -176,7 +176,7 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
         loading={loading}
         hasIndex={Boolean(index)}
         query={query}
-        label={`提交 ${reference} 的文件树`}
+        label={t('repository.tree.titleOf', { reference })}
         onActivate={handleActivate}/>
     </div>
     <CommitTreePreview

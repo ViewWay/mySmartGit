@@ -71,7 +71,7 @@ function SidePane({ side, title, bodyRef, segments, activeBlock, blockTotal, emp
             className={`tp-side-block${segment.index === activeBlock ? ' tp-side-block-active' : ''}`}
             data-tp-block={segment.index}
             onClick={() => onActivateBlock(segment.index)}
-            aria-label={`跳转到第 ${segment.index + 1} 个冲突块（${title}侧）`}
+            aria-label={t('operation.jumpBlock', { index: segment.index + 1, side: title })}
             aria-current={segment.index === activeBlock ? 'true' : undefined}
           >{segment.text}</button>
         : <span key={segment.key} className="tp-side-plain">{segment.text}</span>)}
@@ -108,7 +108,7 @@ export function ThreePaneMergeView({ file, draft, blocks, activeBlock, showBase,
   }
 
   return <div className={`tp-merge-grid${showBase && file.base !== null ? ' tp-merge-with-base' : ''}`}>
-    {showBase && file.base !== null && <div className="tp-pane tp-pane-base" role="region" aria-label={`${labels.base}（只读）`} tabIndex={0}>
+    {showBase && file.base !== null && <div className="tp-pane tp-pane-base" role="region" aria-label={t('operation.baseReadOnly', { base: labels.base })} tabIndex={0}>
       <div className="tp-pane-head"><strong>{labels.base}</strong></div>
       <div className="tp-pane-body tp-pane-base-body">{file.base}</div>
     </div>}
