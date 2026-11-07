@@ -57,6 +57,23 @@ pnpm rust:check
 cargo test --manifest-path apps/desktop/Cargo.toml
 ```
 
+## 界面语言与偏好设置
+
+- 界面默认中文，可在偏好设置（⌘,）或侧栏底部按钮切换到英文；语言选择持久化到本地。
+- 偏好设置面板（⌘,）提供语言、主题、Diff 布局、自动换行、显示空白差异与 Diff 字号设置。
+- 全部界面文案（含原生菜单、通知、确认框、错误摘要）均由 `apps/frontend/src/i18n/messages` 的 zh/en 字典提供；`pnpm check:i18n` 保证界面不再出现未迁移的硬编码中文。
+- 后端错误统一走结构化 `CommandError`（code + params + detail）：前端显示本地化摘要，git 原始 stderr 折叠在"技术详情"中，不参与翻译。
+
+## 代码高亮
+
+- Diff、文件树与冲突编辑器共用 CodeMirror/Lezer 高亮，通过 `@codemirror/language-data` 动态加载，覆盖 60+ 编程语言（JS/TS、Rust、Python、Go、Java、C/C++、Shell、SQL、YAML、Markdown 等）。
+- 语言按文件名/扩展名匹配，未识别的文件按纯文本渲染；高亮结果按内容 LRU 缓存。
+
+## 原生菜单（macOS）
+
+菜单结构与 Sourcetree 同构：Branchline（关于/检查更新/偏好设置）、文件、编辑、格式化（自动换行、Diff 布局、字号）、查看、仓库、动作、窗口、帮助。
+原生菜单由 `useNativeMenu` 单桥驱动；状态（是否有仓库、忙闲、Diff 布局、主题、语言）通过 `sync_menu_state` 同步。Windows/Linux 无应用菜单，"偏好设置/关于/退出"放入文件与帮助菜单。
+
 ## 当前能力
 
 - 打开真实 Git 仓库和 Worktree
