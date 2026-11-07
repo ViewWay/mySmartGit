@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef } from 'react'
 import { foldGutter, foldKeymap, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { defaultKeymap } from '@codemirror/commands'
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search'
-import { Compartment, EditorState } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
+import { EditorView, gutter, GutterMarker, keymap, lineNumbers } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import { matchLanguage } from '../../syntax/languages'
@@ -34,11 +34,67 @@ const previewTheme = EditorView.theme({
 /**
  * 只读 CodeMirror 预览：行号、语法折叠、缩进参考线、Ctrl+F 查找。
  * 文本与语言都走 Compartment 热替换，换文件不用重建视图。
+ * B2：可选挂审查评论 gutter——有线程的行号旁显示圆点，点击行号/圆点打开评论区。
  */
-export function TreeCodePreview({ text, filePath }: { text: string; filePath: string }) {
+
+// 审查线程行号集合：由 props 驱动，经 StateEffect 热替换。
+const setThreadLines = StateEffect.define<Set<number>>()
+const threadLinesField = StateField.define<Set<number>>({
+  create: () => new Set<number>(),
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setThreadLines)) return effect.value
+    }
+    return value
+  },
+})
+
+class ReviewDotMarker extends GutterMarker {
+  override toDOM(): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'cm-review-dot'
+    element.setAttribute('aria-hidden', 'true')
+    return element
+  }
+}
+
+const reviewDotMarker = new ReviewDotMarker()
+
+/** 审查 gutter：有线程的行画圆点；点击行号区交给 onLineNumberClick（带 1 起行号）。 */
+function reviewGutter(onLineNumberClick: (line: number) => void) {
+  return gutter({
+    class: 'cm-review-gutter',
+    lineMarker: (view, block) =>
+      view.state.field(threadLinesField, false)?.has(view.state.doc.lineAt(block.from).number)
+        ? reviewDotMarker
+        : null,
+    // 固定槽宽：圆点出现/消失时行号不抖动。
+    initialSpacer: () => reviewDotMarker,
+    domEventHandlers: {
+      mousedown: (view, block) => {
+        onLineNumberClick(view.state.doc.lineAt(block.from).number)
+        return true
+      },
+    },
+  })
+}
+
+export type TreeCodePreviewProps = {
+  text: string
+  filePath: string
+  /** 有审查线程的行号集合（1 起）；不传则不渲染审查 gutter。 */
+  threadLines?: Set<number>
+  /** 点击行号/圆点回调；不传则行号区无点击行为。 */
+  onLineNumberClick?: (line: number) => void
+}
+
+export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick }: TreeCodePreviewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const languageCompartment = useRef(new Compartment())
+  // 回调经 ref 转发：挂载 effect 只跑一次，仍能用到最新回调。
+  const lineClickRef = useRef(onLineNumberClick)
+  lineClickRef.current = onLineNumberClick
   const [initialText, initialPath] = useMemo(() => [text, filePath], [])
   const languageDescription = useMemo(() => matchLanguage(initialPath), [initialPath])
 
@@ -50,6 +106,8 @@ export function TreeCodePreview({ text, filePath }: { text: string; filePath: st
         doc: initialText,
         extensions: [
           lineNumbers(),
+          // 审查 gutter 挂在行号左侧；无回调时也要占位（initialSpacer 固定宽度）。
+          reviewGutter((line) => lineClickRef.current?.(line)),
           foldGutter(),
           indentationMarkers({ hideFirstIndent: true }),
           keymap.of([...foldKeymap, ...searchKeymap, ...defaultKeymap]),
@@ -82,6 +140,11 @@ export function TreeCodePreview({ text, filePath }: { text: string; filePath: st
       effects: EditorView.scrollIntoView(0, { y: 'start' }),
     })
   }, [text])
+
+  // 线程行号集合变化时热替换 gutter 数据。
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setThreadLines.of(threadLines ?? new Set()) })
+  }, [threadLines])
 
   useEffect(() => {
     let cancelled = false

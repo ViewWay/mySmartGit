@@ -1,0 +1,20 @@
+// review 域词典（zh 为源，en 经 satisfies 强制对齐键集）。
+export const review = {
+  'review.panelTitle': '审查评论',
+  'review.panelTitleAtLine': '第 {{line}} 行 · 审查评论',
+  'review.close': '收起',
+  'review.anonymous': '匿名',
+  'review.lineBadge': '第 {{line}} 行',
+  'review.remotePublished': '已发布',
+  'review.remoteHint': '该线程已发布到远端，编辑请到托管平台；删除仅移除本地记录',
+  'review.replyPlaceholder': '回复…',
+  'review.reply': '发送回复',
+  'review.markResolved': '标记已解决',
+  'review.markUnresolved': '取消已解决',
+  'review.delete': '删除线程',
+  'review.deleteRemoteHint': '该线程已发布到远端：删除仅移除本地记录',
+  'review.confirmDelete': '确认删除？',
+  'review.composePlaceholder': '对第 {{line}} 行写下第一条评论…',
+  'review.create': '添加评论',
+  'review.emptyHint': '点击行号打开此处的评论区',
+} as const

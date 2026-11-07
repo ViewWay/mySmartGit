@@ -8,6 +8,8 @@ import { ImageDiffViewer } from '../diff/ImageDiffViewer'
 import { computeTreeWindow, isPreviewableRow, navigateTreeRows, type CommitTreeRow, type TreeNavigationKey } from './commitTreeModel'
 import { fileIconClass } from './fileIcon'
 import { TreeCodePreview } from './TreeCodePreview'
+import { ReviewThreadPanel } from '../review/ReviewThreadPanel'
+import type { ReviewThread } from '@branchline/git-models'
 import type { ImageFileDiff } from '../../repository'
 
 /** 固定行高，与 commitTree.css 的 .commit-tree-row 保持一致；窗口化依赖它。 */
@@ -160,6 +162,23 @@ export function CommitTreeRowList({ rows, selected, error, loading, hasIndex, qu
   </div>
 }
 
+/** B2 审查评论接线包：调用方（CommitTreeBrowser）组装后整包传入。 */
+export type TreeReviewWiring = {
+  /** 当前预览文件中有线程的行号集合。 */
+  lines: Set<number>
+  activeLine: number | null
+  /** 活动行上的线程（已按文件/ref 过滤排序）。 */
+  threads: ReviewThread[]
+  busy: boolean
+  error: string | null
+  onLineClick: (line: number) => void
+  onCreate: (body: string) => void
+  onReply: (threadId: string, body: string) => void
+  onResolve: (threadId: string, resolved: boolean) => void
+  onDelete: (threadId: string) => void
+  onClose: () => void
+}
+
 export type CommitTreePreviewProps = {
   selected: string | null
   /** 选中行的 kind，用于把目录/子模组挡在预览请求之前。 */
@@ -168,13 +187,15 @@ export type CommitTreePreviewProps = {
   loading?: boolean
   error?: string | null
   onOpenExternally?: (filePath: string) => void
+  /** 审查评论接线（B2）；不传则预览与原来完全一致。 */
+  review?: TreeReviewWiring
 }
 
 /**
  * 右侧预览：文本截断展示、图片/SVG 交给 ImageDiffViewer（variant="single"），
  * 二进制、超大、目录、子模组各有一句人话，而不是甩一个后端错误。
  */
-export function CommitTreePreview({ selected, kind, preview, loading, error, onOpenExternally }: CommitTreePreviewProps) {
+export function CommitTreePreview({ selected, kind, preview, loading, error, onOpenExternally, review }: CommitTreePreviewProps) {
   const { t } = useI18n()
   const imagePair: ImageFileDiff | null = preview?.media
     ? { path: preview.path, fromReference: '', toReference: preview.reference, before: null, after: preview.media, identical: false, error: null }
@@ -201,7 +222,21 @@ export function CommitTreePreview({ selected, kind, preview, loading, error, onO
       {note && <div className="commit-tree-preview-note">{note}</div>}
       {selected && loading && <div className="commit-tree-preview-note">{t('repository.tree.loadingContent')}</div>}
       {selected && !loading && error && <div className="commit-tree-error">{error}</div>}
-      {selected && !loading && !note && preview?.kind === 'text' && <TreeCodePreview text={preview.text ?? ''} filePath={preview.path}/>}
+      {selected && !loading && !note && preview?.kind === 'text' && <TreeCodePreview
+        text={preview.text ?? ''}
+        filePath={preview.path}
+        threadLines={review?.lines}
+        onLineNumberClick={review?.onLineClick}/>}
+      {selected && !loading && !note && review && review.activeLine != null && <ReviewThreadPanel
+        threads={review.threads}
+        composeLine={review.activeLine}
+        busy={review.busy}
+        error={review.error}
+        onCreate={review.onCreate}
+        onReply={review.onReply}
+        onResolve={review.onResolve}
+        onDelete={review.onDelete}
+        onClose={review.onClose}/>}
       {selected && !loading && !note && preview && !preview.media && (preview.kind === 'binary' || preview.kind === 'too_large') && (
         <div className="commit-tree-preview-note">
           {preview.kind === 'too_large'

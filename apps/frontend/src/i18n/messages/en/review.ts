@@ -1,0 +1,20 @@
+// review 域英文词典：键集由 satisfies 与 zh 强制对齐。
+export const review = {
+  'review.panelTitle': 'Review comments',
+  'review.panelTitleAtLine': 'Line {{line}} · Review comments',
+  'review.close': 'Close',
+  'review.anonymous': 'Anonymous',
+  'review.lineBadge': 'Line {{line}}',
+  'review.remotePublished': 'Published',
+  'review.remoteHint': 'This thread is published to the remote; edit it on the hosting platform. Deleting only removes the local record',
+  'review.replyPlaceholder': 'Reply…',
+  'review.reply': 'Send reply',
+  'review.markResolved': 'Mark resolved',
+  'review.markUnresolved': 'Mark unresolved',
+  'review.delete': 'Delete thread',
+  'review.deleteRemoteHint': 'Published to the remote: deleting only removes the local record',
+  'review.confirmDelete': 'Confirm delete?',
+  'review.composePlaceholder': 'Write the first comment on line {{line}}…',
+  'review.create': 'Add comment',
+  'review.emptyHint': 'Click a line number to open the comment panel below the preview',
+} satisfies Record<keyof typeof import('../zh/review').review, string>

@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, ExternalLink, FileCode2, Folder, History, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { ContextMenu } from '../../components/ContextMenu'
-import { loadCommitTree, loadCommitTreeChildren, loadRevisionFilePreview, cancelMediaPreview, type RevisionFilePreview } from '../../repository'
+import { loadCommitTree, loadCommitTreeChildren, loadRevisionFilePreview, cancelMediaPreview, loadGitUserConfig, type RevisionFilePreview } from '../../repository'
 import { isBooleanRecord, usePersistentState } from '../../persistentState'
 import { createMediaRequestId, isStaleRequest } from '../diff/imageDiffModel'
+import { useReviewThreads } from '../review/useReviewThreads'
+import { threadLineSet, threadsForFile } from '../review/reviewModel'
 import { CommitTreePreview, CommitTreeRowList, CommitTreeSummary, TREE_ROW_HEIGHT } from './CommitTreeView'
 import {
   ancestorPaths,
@@ -60,6 +62,45 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
   const [previewError, setPreviewError] = useState<string | null>(null)
   const previewRequestId = useRef<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ row: CommitTreeRow; x: number; y: number } | null>(null)
+
+  // B2 审查评论：按仓库加载线程；作者名取 git config user.name（取不到则留空）。
+  const review = useReviewThreads({ repositoryPath })
+  const [reviewLine, setReviewLine] = useState<number | null>(null)
+  const authorRef = useRef('')
+  useEffect(() => {
+    let cancelled = false
+    loadGitUserConfig()
+      .then((config) => { if (!cancelled) authorRef.current = config.userName })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
+  // 换文件或换 ref 时收起评论区，避免把上一行的面板留在屏幕上。
+  useEffect(() => { setReviewLine(null) }, [selected, reference])
+
+  const previewThreadLines = useMemo(
+    () => (selected && preview?.kind === 'text' ? threadLineSet(threadsForFile(review.threads, reference, selected)) : new Set<number>()),
+    [preview?.kind, reference, review.threads, selected],
+  )
+  const activeThreads = useMemo(
+    () => (reviewLine == null || !selected ? [] : threadsForFile(review.threads, reference, selected).filter((thread) => thread.line === reviewLine)),
+    [reference, review.threads, reviewLine, selected],
+  )
+  const reviewWiring = useMemo(() => ({
+    lines: previewThreadLines,
+    activeLine: reviewLine,
+    threads: activeThreads,
+    busy: review.status === 'loading',
+    error: review.error,
+    onLineClick: (line: number) => setReviewLine((current) => (current === line ? null : line)),
+    onCreate: (body: string) => {
+      if (reviewLine == null || !selected) return
+      review.actions.addThread({ filePath: selected, line: reviewLine, body, author: authorRef.current })
+    },
+    onReply: (threadId: string, body: string) => review.actions.reply(threadId, body, authorRef.current),
+    onResolve: (threadId: string, resolved: boolean) => review.actions.setResolved(threadId, resolved),
+    onDelete: (threadId: string) => review.actions.remove(threadId),
+    onClose: () => setReviewLine(null),
+  }), [activeThreads, previewThreadLines, review, reviewLine, selected])
 
   const loadTree = useCallback((mode: 'initial' | 'reload') => {
     let cancelled = false
@@ -232,7 +273,8 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
       preview={preview}
       loading={previewLoading}
       error={previewError}
-      onOpenExternally={onOpenExternally}/>
+      onOpenExternally={onOpenExternally}
+      review={reviewWiring}/>
   </div>
 }
 

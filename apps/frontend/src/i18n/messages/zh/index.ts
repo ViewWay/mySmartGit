@@ -7,6 +7,7 @@ import { nav } from './nav'
 import { operation } from './operation'
 import { preferences } from './preferences'
 import { repository } from './repository'
+import { review } from './review'
 import { settings } from './settings'
 import { stage } from './stage'
 import { tools } from './tools'
@@ -20,6 +21,7 @@ export const zh = {
   ...stage,
   ...operation,
   ...repository,
+  ...review,
   ...tools,
   ...settings,
   ...preferences,
