@@ -112,10 +112,10 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
         <header className="history-edit-heading">
           <span className="history-edit-icon"><History size={18} /></span>
           <div>
-            <h2 id="history-edit-title">交互式编辑历史</h2>
-            <p>分支 <strong>{sequence?.branch ?? '…'}</strong> · 基点 {baseRef}（{sequence ? `${sequence.entries.length} 个提交` : '载入中'}）</p>
+            <h2 id="history-edit-title">{t('historyEdit.title')}</h2>
+            <p>{t('historyEdit.branchLabel')} <strong>{sequence?.branch ?? '…'}</strong> {t('historyEdit.baseLabel')} {baseRef}（{sequence ? t('historyEdit.commitCount', { count: sequence.entries.length }) : t('historyEdit.loading')}）</p>
           </div>
-          <Button variant="icon" onClick={onClose} disabled={busy} title="关闭"><X size={17} /></Button>
+          <Button variant="icon" onClick={onClose} disabled={busy} title={t('common.close')}><X size={17} /></Button>
         </header>
 
         {loadError && <p className="history-edit-error">{loadError}</p>}
@@ -126,8 +126,8 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
             <li key={row.entry.hash} className={row.action === 'drop' ? 'dropped' : ''}>
               <div className="history-edit-row-main">
                 <span className="history-edit-row-tools">
-                  <Button variant="icon" title="上移" aria-label="上移" disabled={busy || index === 0} onClick={() => setRows((prev) => moveRow(prev, index, -1))}><ArrowUp size={14} /></Button>
-                  <Button variant="icon" title="下移" aria-label="下移" disabled={busy || index === rows.length - 1} onClick={() => setRows((prev) => moveRow(prev, index, 1))}><ArrowDown size={14} /></Button>
+                  <Button variant="icon" title={t('historyEdit.moveUp')} aria-label={t('historyEdit.moveUp')} disabled={busy || index === 0} onClick={() => setRows((prev) => moveRow(prev, index, -1))}><ArrowUp size={14} /></Button>
+                  <Button variant="icon" title={t('historyEdit.moveDown')} aria-label={t('historyEdit.moveDown')} disabled={busy || index === rows.length - 1} onClick={() => setRows((prev) => moveRow(prev, index, 1))}><ArrowDown size={14} /></Button>
                 </span>
                 <code className="history-edit-row-hash">{row.entry.shortHash}</code>
                 <span className="history-edit-row-title" title={row.entry.title}>{row.entry.title}</span>
@@ -146,7 +146,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
                   value={row.message}
                   rows={3}
                   disabled={busy}
-                  placeholder={row.action === 'reword' ? '新的提交消息（必填）' : 'squash 合并后的消息（留空则自动拼接上一条）'}
+                  placeholder={row.action === 'reword' ? t('historyEdit.newMessagePlaceholder') : t('historyEdit.squashMessagePlaceholder')}
                   aria-label={`提交 ${row.entry.shortHash} 的消息`}
                   onChange={(event) => setRows((prev) => setRowMessage(prev, index, event.target.value))}
                 />
@@ -161,29 +161,29 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
 
         {summary && (
           <p className="history-edit-summary">
-            共 {summary.total} 条：保留 {summary.resultCount} · 折叠 {summary.folded} · 丢弃 {summary.dropped} · 改写消息 {summary.reworded} · 停点 {summary.edited}
-            {summary.changed ? ' · 将重写历史' : ' · 尚无改动'}
+            {t('historyEdit.summaryPrefix')} {summary.total} {t('historyEdit.summaryUnit')} {summary.resultCount} {t('historyEdit.summaryFixup')} {summary.folded} {t('historyEdit.summaryDrop')} {summary.dropped} {t('historyEdit.summaryReword')} {summary.reworded} {t('historyEdit.summaryEdit')} {summary.edited}
+            {summary.changed ? t('historyEdit.willRewrite') : t('historyEdit.noChanges')}
           </p>
         )}
 
         {rows.length > 0 && (
           <details className="history-edit-todo">
-            <summary>查看将写入的 rebase 序列</summary>
+            <summary>{t('historyEdit.showTodo')}</summary>
             <pre>{renderTodoPreview(rows).join('\n')}</pre>
           </details>
         )}
 
         {impact && (
           <div className={`history-edit-impact ${impact.dangerous ? 'dangerous' : ''}`}>
-            <h3>影响预览</h3>
-            <p>预期重写 {impact.rewrittenUpper} 个提交{impact.upstream ? `；上游 ${impact.upstream}${impact.published ? '（已发布：完成后需 --force-with-lease 强推）' : ''}` : ''}</p>
-            {impact.branchesLeftBehind.length > 0 && <p>掉队分支：{impact.branchesLeftBehind.join('、')}</p>}
-            {impact.tagsOnRewritten.length > 0 && <p>钉在旧提交上的标签：{impact.tagsOnRewritten.join('、')}</p>}
+            <h3>{t('historyEdit.impactTitle')}</h3>
+            <p>{t('historyEdit.expectedRewrite')} {impact.rewrittenUpper} {t('historyEdit.commitsUnit')}{impact.upstream ? `；上游 ${impact.upstream}${impact.published ? t('historyEdit.publishedNote') : ''}` : ''}</p>
+            {impact.branchesLeftBehind.length > 0 && <p>{t('historyEdit.strandedBranches')}{impact.branchesLeftBehind.join('、')}</p>}
+            {impact.tagsOnRewritten.length > 0 && <p>{t('historyEdit.pinnedTags')}{impact.tagsOnRewritten.join('、')}</p>}
             {impact.warnings.map((warning) => <p key={warning} className="history-edit-warning">{warning}</p>)}
             {impact.dangerous && (
               <label className="history-edit-confirm">
                 <input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />
-                <span><AlertTriangle size={13} /> 我已确认这是不可轻易撤销的历史改写</span>
+                <span><AlertTriangle size={13} /> {t('historyEdit.ackConfirm')}</span>
               </label>
             )}
           </div>
@@ -191,17 +191,17 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
 
         {report && (
           <div className={`history-edit-report ${report.status}`}>
-            <p>{report.status === 'completed' ? `完成：分支 ${report.branch} 已重写为 ${report.resultCount} 个提交。` : '变基已暂停（冲突或停点），请按恢复指引处理。'}</p>
+            <p>{report.status === 'completed' ? `完成：分支 ${report.branch} 已重写为 ${report.resultCount} 个提交。` : t('historyEdit.pausedNotice')}</p>
             {report.recovery && <pre>{report.recovery}</pre>}
             {report.notice && <p className="history-edit-notice">{report.notice}</p>}
           </div>
         )}
 
         <footer className="history-edit-footer">
-          <Button variant="secondary" onClick={onClose} disabled={busy}>关闭</Button>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>{t('common.close')}</Button>
           <Button onClick={() => void apply()} disabled={blocked}>
             {busy ? <Loader2 size={14} className="spin" /> : <History size={14} />}
-            应用历史编辑
+            {t('historyEdit.apply')}
           </Button>
         </footer>
       </section>
