@@ -95,8 +95,9 @@ export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick
   // 回调经 ref 转发：挂载 effect 只跑一次，仍能用到最新回调。
   const lineClickRef = useRef(onLineNumberClick)
   lineClickRef.current = onLineNumberClick
-  const [initialText, initialPath] = useMemo(() => [text, filePath], [])
-  const languageDescription = useMemo(() => matchLanguage(initialPath), [initialPath])
+  const [initialText] = useMemo(() => [text], [])
+  // 语言跟随当前文件：切文件（跨扩展名）时热切换语法，而不是冻结在首次挂载的文件。
+  const languageDescription = useMemo(() => matchLanguage(filePath), [filePath])
 
   useEffect(() => {
     const host = hostRef.current
@@ -127,7 +128,7 @@ export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick
       viewRef.current = null
       view.destroy()
     }
-    // initialText/initialPath 取自首次挂载：换文件由下方 effect 热替换，不重建视图。
+    // 文本/语言/gutter 都经 effect 热替换，换文件不重建视图。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -148,7 +149,11 @@ export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick
 
   useEffect(() => {
     let cancelled = false
-    if (!languageDescription) return
+    // 未知扩展名：清掉上一个文件的语言残留，避免错挂高亮。
+    if (!languageDescription) {
+      viewRef.current?.dispatch({ effects: languageCompartment.current.reconfigure([]) })
+      return
+    }
     void languageDescription
       .load()
       .then((support) => {

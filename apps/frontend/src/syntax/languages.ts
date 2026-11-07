@@ -18,5 +18,6 @@ export function matchLanguage(path: string): LanguageDescription | null {
     const description = languages.find((item) => item.name === override)
     if (description) return description
   }
-  return LanguageDescription.matchFilename(languages, filename)
+  // matchFilename 对无扩展名等未命中场景可能返回 undefined，统一归一为 null。
+  return LanguageDescription.matchFilename(languages, filename) ?? null
 }

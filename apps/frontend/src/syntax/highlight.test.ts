@@ -13,6 +13,15 @@ describe('matchLanguage', () => {
     expect(matchLanguage('Makefile')?.name).toBe('C')
     expect(matchLanguage('unknown.zzz')).toBeNull()
   })
+
+  it('matches tree-preview paths with any supported extension', () => {
+    expect(matchLanguage('src/main/java/org/openmuc/jdlms/APduBlockingQueue.java')?.name).toBe('Java')
+    expect(matchLanguage('src/lib.rs')?.name).toBe('Rust')
+    expect(matchLanguage('cmd/server/main.go')?.name).toBe('Go')
+    expect(matchLanguage('styles/main.css')?.name).toBe('CSS')
+    expect(matchLanguage('py/main.py')?.name).toBe('Python')
+    expect(matchLanguage('doc/readme')).toBeNull()
+  })
 })
 
 describe('tokenizeBlock', () => {
