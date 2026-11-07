@@ -144,6 +144,26 @@ describe('commit tree row list', () => {
     expect(html).not.toContain('窗口化渲染')
   })
 
+  it('shows colored language icons for known file types and a generic fallback', () => {
+    const java = renderToStaticMarkup(<CommitTreeRowList {...listProps} rows={[
+      row({ name: 'Main.java', path: 'src/Main.java', key: 'java', kind: 'blob', hasChildren: false }),
+    ]}/>)
+    expect(java).toContain('java-icon')
+    expect(java).not.toContain('<svg')
+    const unknown = renderToStaticMarkup(<CommitTreeRowList {...listProps} rows={[
+      row({ name: 'data.unknownext', path: 'data.unknownext', key: 'unk', kind: 'blob', hasChildren: false }),
+    ]}/>)
+    expect(unknown).toContain('<svg')
+  })
+
+  it('exposes keyboard-navigation hooks: focusable list and per-row data-path', () => {
+    const html = renderToStaticMarkup(<CommitTreeRowList {...listProps} rows={[
+      row({ name: 'Main.java', path: 'src/Main.java', key: 'java', kind: 'blob', hasChildren: false }),
+    ]}/>)
+    expect(html).toContain('tabindex="0"')
+    expect(html).toContain('data-path="src/Main.java"')
+  })
+
   it('separates empty, filtered-empty, loading and error states', () => {
     expect(renderToStaticMarkup(<CommitTreeRowList {...listProps} rows={[]}/>)).toContain('该版本没有已跟踪的文件。')
     expect(renderToStaticMarkup(<CommitTreeRowList {...listProps} rows={[]} query="logo"/>)).toContain('没有匹配「logo」的节点。')
@@ -162,13 +182,26 @@ describe('commit tree preview', () => {
     expect(html).not.toContain('外部打开')
   })
 
+  it('renders code in the read-only editor wrapper with a copy button', () => {
+    const html = renderToStaticMarkup(<CommitTreePreview
+      selected="apps/desktop/src/main.rs"
+      kind="blob"
+      preview={preview({ path: 'apps/desktop/src/main.rs', kind: 'text', text: 'fn main() {}\n', sizeBytes: 13, truncated: true, media: null })}
+      onOpenExternally={() => {}}/>)
+    expect(html).toContain('tree-code-preview')
+    expect(html).not.toContain('<pre>')
+    expect(html).toContain('复制全文')
+    expect(html).toContain('已截断')
+  })
+
   it('renders the text of a revision with size and truncation', () => {
     const html = renderToStaticMarkup(<CommitTreePreview
       selected="apps/desktop/src/main.rs"
       kind="blob"
       preview={preview({ path: 'apps/desktop/src/main.rs', kind: 'text', text: 'fn main() {}\n', sizeBytes: 13, truncated: true, media: null })}
       onOpenExternally={() => {}}/>)
-    expect(html).toContain('<pre>fn main() {}')
+    // 文本交给只读 CodeMirror（挂载后填充），静态渲染只见容器
+    expect(html).toContain('tree-code-preview')
     expect(html).toContain('13 B')
     expect(html).toContain('已截断')
     expect(html).toContain('外部打开')

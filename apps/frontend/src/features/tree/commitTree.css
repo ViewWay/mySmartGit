@@ -82,6 +82,18 @@
   padding: 0;
 }
 
+/* file-icons 的彩色图标字体：类名形如 java-icon medium-purple。 */
+.commit-tree-row .file-icon,
+.commit-tree-preview-header .file-icon {
+  font-style: normal;
+  width: 14px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: inherit;
+}
+
 .commit-tree-row .commit-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -159,6 +171,20 @@
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 只读 CodeMirror 预览：撑满面板，内部自带滚动。 */
+.tree-code-preview {
+  height: 100%;
+  min-height: 0;
+}
+
+.tree-code-preview .cm-editor {
+  height: 100%;
+}
+
+.tree-code-preview .cm-scroller {
+  overflow: auto;
 }
 
 .commit-tree-preview-note {

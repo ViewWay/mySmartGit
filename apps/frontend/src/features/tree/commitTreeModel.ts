@@ -265,3 +265,57 @@ export function createNameMatcher(query: string): ((node: CommitTreeNodeRecord) 
   if (!needle) return undefined
   return (node) => node.name.toLowerCase().includes(needle)
 }
+
+export type TreeNavigationKey = 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End'
+
+export type TreeContextAction = 'copyPath' | 'copyName' | 'openExternal' | 'viewHistory'
+
+/** 右键菜单的动作集：复制始终可用；外部打开/看历史只对文件行有意义（目录、子模组排除）。 */
+export function buildTreeContextActions(
+  row: { kind: string },
+  options: { canOpenExternally: boolean; canViewHistory: boolean },
+): TreeContextAction[] {
+  const actions: TreeContextAction[] = ['copyPath', 'copyName']
+  const isFile = isPreviewableRow(row)
+  if (isFile && options.canOpenExternally) actions.push('openExternal')
+  if (isFile && options.canViewHistory) actions.push('viewHistory')
+  return actions
+}
+
+export type TreeNavigation = {
+  /** 新的选中行下标；null 表示行列表为空、无处可去。 */
+  index: number | null
+  /** 需要切换展开态的目录路径（仅 ArrowRight 展开折叠目录 / ArrowLeft 折叠展开目录时给出）。 */
+  togglePath: string | null
+}
+
+/**
+ * 文件树键盘导航的纯逻辑（与渲染无关，组件只消费结果）：
+ * ↑↓ 在可视行间移动并夹在首尾；→ 展开折叠的目录或前进；← 折叠目录或跳到父目录；Home/End 跳首尾。
+ */
+export function navigateTreeRows(rows: CommitTreeRow[], currentIndex: number, key: TreeNavigationKey): TreeNavigation {
+  const none: TreeNavigation = { index: null, togglePath: null }
+  if (!rows.length) return none
+  const clamped = Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < rows.length ? currentIndex : null
+  const move = (index: number): TreeNavigation => ({ index, togglePath: null })
+  if (key === 'Home') return move(0)
+  if (key === 'End') return move(rows.length - 1)
+  if (key === 'ArrowDown') return move(clamped === null ? 0 : Math.min(rows.length - 1, clamped + 1))
+  if (key === 'ArrowUp') return move(clamped === null ? rows.length - 1 : Math.max(0, clamped - 1))
+  if (key === 'ArrowRight') {
+    if (clamped !== null) {
+      const row = rows[clamped]
+      if (row.hasChildren && !row.expanded) return { index: clamped, togglePath: row.path }
+    }
+    return move(Math.min(rows.length - 1, (clamped ?? -1) + 1))
+  }
+  // ArrowLeft
+  if (clamped !== null) {
+    const row = rows[clamped]
+    if (row.hasChildren && row.expanded) return { index: clamped, togglePath: row.path }
+    for (let index = clamped - 1; index >= 0; index -= 1) {
+      if (rows[index].depth < row.depth) return move(index)
+    }
+  }
+  return move(clamped ?? 0)
+}

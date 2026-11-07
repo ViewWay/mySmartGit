@@ -13,6 +13,8 @@ import {
   isDirectory,
   isExpandable,
   isPreviewableRow,
+  buildTreeContextActions,
+  navigateTreeRows,
   needsChildrenFetch,
   toggleExpanded,
   withDirectoryLoading,
@@ -277,5 +279,69 @@ describe('windowing', () => {
     const small = computeTreeWindow(3, 0, 1_000_000, 22)
     expect(small.end).toBeLessThanOrEqual(3)
     expect(small.bottomSpacer).toBe(0)
+  })
+})
+
+describe('context menu actions', () => {
+  it('always offers copy path/name and gates external/history on file kind', () => {
+    const file = { kind: 'blob' }
+    expect(buildTreeContextActions(file, { canOpenExternally: true, canViewHistory: true })).toEqual(['copyPath', 'copyName', 'openExternal', 'viewHistory'])
+    const submodule = { kind: 'commit' }
+    expect(buildTreeContextActions(submodule, { canOpenExternally: true, canViewHistory: true })).toEqual(['copyPath', 'copyName'])
+    const directory = { kind: 'tree' }
+    expect(buildTreeContextActions(directory, { canOpenExternally: true, canViewHistory: false })).toEqual(['copyPath', 'copyName'])
+    // 没接外部打开/历史回调时只剩复制两项
+    expect(buildTreeContextActions(file, { canOpenExternally: false, canViewHistory: false })).toEqual(['copyPath', 'copyName'])
+  })
+})
+
+describe('keyboard navigation', () => {
+  const collapsed = flattenTreeRows(nestedIndex(), {})
+  // [apps, 图片 资产, README.md, vendor]
+  const expandedApps = flattenTreeRows(nestedIndex(), { apps: true })
+  // [apps, apps/desktop, README.md, vendor]，apps/desktop 的子项已随树带来
+
+  it('moves selection down and up with bounds clamped', () => {
+    expect(navigateTreeRows(collapsed, -1, 'ArrowDown')).toEqual({ index: 0, togglePath: null })
+    expect(navigateTreeRows(collapsed, 0, 'ArrowDown')).toEqual({ index: 1, togglePath: null })
+    expect(navigateTreeRows(collapsed, 3, 'ArrowDown')).toEqual({ index: 3, togglePath: null })
+    expect(navigateTreeRows(collapsed, 0, 'ArrowUp')).toEqual({ index: 0, togglePath: null })
+    expect(navigateTreeRows(collapsed, 2, 'ArrowUp')).toEqual({ index: 1, togglePath: null })
+    // 没有选中项时从末尾进入
+    expect(navigateTreeRows(collapsed, -1, 'ArrowUp')).toEqual({ index: 3, togglePath: null })
+  })
+
+  it('expands a collapsed directory on ArrowRight without moving', () => {
+    expect(navigateTreeRows(collapsed, 0, 'ArrowRight')).toEqual({ index: 0, togglePath: 'apps' })
+  })
+
+  it('moves into children on ArrowRight when already expanded', () => {
+    // [apps, apps/desktop, 图片 资产, README.md, vendor]
+    expect(navigateTreeRows(expandedApps, 0, 'ArrowRight')).toEqual({ index: 1, togglePath: null })
+    // 内层目录还没展开：先展开（desktop 的子项已随树带来，展开即可见）
+    expect(navigateTreeRows(expandedApps, 1, 'ArrowRight')).toEqual({ index: 1, togglePath: 'apps/desktop' })
+    expect(navigateTreeRows(expandedApps, 2, 'ArrowRight')).toEqual({ index: 2, togglePath: '图片 资产' })
+    // 文件/子模组行直接前进
+    expect(navigateTreeRows(expandedApps, 3, 'ArrowRight')).toEqual({ index: 4, togglePath: null })
+  })
+
+  it('collapses an expanded directory on ArrowLeft without moving', () => {
+    expect(navigateTreeRows(expandedApps, 0, 'ArrowLeft')).toEqual({ index: 0, togglePath: 'apps' })
+  })
+
+  it('jumps to the parent directory on ArrowLeft from a nested row', () => {
+    // apps/desktop 在 depth 1，收起不了 → 跳到父行 apps
+    expect(navigateTreeRows(expandedApps, 1, 'ArrowLeft')).toEqual({ index: 0, togglePath: null })
+    // 根层文件没有父目录：原地不动
+    expect(navigateTreeRows(expandedApps, 2, 'ArrowLeft')).toEqual({ index: 2, togglePath: null })
+  })
+
+  it('supports Home and End', () => {
+    expect(navigateTreeRows(collapsed, -1, 'Home')).toEqual({ index: 0, togglePath: null })
+    expect(navigateTreeRows(collapsed, 1, 'End')).toEqual({ index: 3, togglePath: null })
+  })
+
+  it('returns null for an empty row list', () => {
+    expect(navigateTreeRows([], -1, 'ArrowDown')).toEqual({ index: null, togglePath: null })
   })
 })

@@ -1577,7 +1577,7 @@ export default function App() {
         )}
         {workspaceView === 'recovery' && <RecoveryPage repository={repository} onSnapshot={(snapshot) => { handleSnapshot(snapshot) }} onNotice={setRepositoryNotice}/>}
         {workspaceView === 'search' && <SearchPage repository={repository} onSnapshot={handleSnapshot} onNotice={setRepositoryNotice} onSelectCommit={(hash) => { setSelected(hash); setWorkspaceView('history') }}/>}
-        {workspaceView === 'tree' && repository && <CommitTreeBrowser repositoryPath={repository.path} reference={selectedCommitBase.id} onOpenExternally={(filePath) => { void openRevisionFileExternally(repository.path, selectedCommitBase.id, filePath).then(() => setRepositoryNotice(t('shell.exportedCopy', { path: filePath }))).catch((reason) => setRepositoryNotice(String(reason))) }}/>}
+        {workspaceView === 'tree' && repository && <CommitTreeBrowser repositoryPath={repository.path} reference={selectedCommitBase.id} onOpenExternally={(filePath) => { void openRevisionFileExternally(repository.path, selectedCommitBase.id, filePath).then(() => setRepositoryNotice(t('shell.exportedCopy', { path: filePath }))).catch((reason) => setRepositoryNotice(String(reason))) }} onOpenHistory={(filePath) => setHistoryTarget({ path: filePath, tab: 'history' })} onCopyPath={(path) => void copyText(path, t('repository.tree.copiedPath', { path }))} onCopyName={(name) => void copyText(name, t('repository.tree.copiedName', { name }))}/>}
         {(workspaceView === 'structure' || workspaceView === 'tags') && (
           <RepositoryStructurePanel
             repository={structureRepository ?? repository}

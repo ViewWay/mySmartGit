@@ -1,13 +1,15 @@
 import { useI18n } from '../../i18n'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, Search, X } from 'lucide-react'
+import { Copy, ExternalLink, FileCode2, Folder, History, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from '../../components/Button'
+import { ContextMenu } from '../../components/ContextMenu'
 import { loadCommitTree, loadCommitTreeChildren, loadRevisionFilePreview, cancelMediaPreview, type RevisionFilePreview } from '../../repository'
 import { isBooleanRecord, usePersistentState } from '../../persistentState'
 import { createMediaRequestId, isStaleRequest } from '../diff/imageDiffModel'
 import { CommitTreePreview, CommitTreeRowList, CommitTreeSummary, TREE_ROW_HEIGHT } from './CommitTreeView'
 import {
   ancestorPaths,
+  buildTreeContextActions,
   childrenOf,
   createCommitTreeIndex,
   createNameMatcher,
@@ -21,6 +23,7 @@ import {
   type CommitTreeIndex,
   type CommitTreeNodeRecord,
   type CommitTreeRow,
+  type TreeContextAction,
 } from './commitTreeModel'
 import './commitTree.css'
 
@@ -31,6 +34,11 @@ export type CommitTreeBrowserProps = {
   onOpenExternally?: (filePath: string) => void
   /** 打开时定位到某个文件（会自动展开祖先目录）。 */
   initialPath?: string
+  /** 右键「查看文件历史」；由 App 层接 HistoryDrawer。 */
+  onOpenHistory?: (filePath: string) => void
+  /** 右键复制路径/文件名（App 层统一走 copyText 给通知反馈）。 */
+  onCopyPath?: (path: string) => void
+  onCopyName?: (name: string) => void
 }
 
 /**
@@ -38,7 +46,7 @@ export type CommitTreeBrowserProps = {
  * 大目录两道闸：后端 partial 时改懒加载（单层列表 + 条目上限），前端固定行高窗口化渲染。
  * 「怎么画」全在 CommitTreeView.tsx（纯展示，可脱离后端单测），这里只管「取什么数据」。
  */
-export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally, initialPath }: CommitTreeBrowserProps) {
+export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally, initialPath, onOpenHistory, onCopyPath, onCopyName }: CommitTreeBrowserProps) {
   const { t } = useI18n()
   const [index, setIndex] = useState<CommitTreeIndex | null>(null)
   const [loading, setLoading] = useState(false)
@@ -51,6 +59,7 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const previewRequestId = useRef<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ row: CommitTreeRow; x: number; y: number } | null>(null)
 
   const loadTree = useCallback((mode: 'initial' | 'reload') => {
     let cancelled = false
@@ -117,6 +126,16 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
     if (willExpand) fetchDirectory(row)
   }, [expanded, fetchDirectory, setExpanded])
 
+  // 键盘导航：与点击共用选中/懒加载逻辑，但只在箭头键要求展开时才切换目录状态。
+  const handleNavigate = useCallback((row: CommitTreeRow, toggle: boolean) => {
+    setSelected(row.path)
+    setSelectedKind(row.kind)
+    if (!toggle) return
+    const willExpand = !expanded[row.path]
+    setExpanded((current) => toggleExpanded(current, row.path))
+    if (willExpand) fetchDirectory(row)
+  }, [expanded, fetchDirectory, setExpanded])
+
   // 预览：换选中项时取消上一请求，迟到的响应直接丢弃；目录与子模组指针不发请求。
   const previewWanted = Boolean(selected) && isPreviewableRow({ kind: selectedKind ?? '' })
   useEffect(() => {
@@ -155,6 +174,18 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
   const matcher = useMemo(() => createNameMatcher(query), [query])
   const rows = useMemo(() => (index ? flattenTreeRows(index, expanded, matcher) : []), [expanded, index, matcher])
 
+  const runContextAction = useCallback((action: TreeContextAction, row: CommitTreeRow) => {
+    setContextMenu(null)
+    if (action === 'copyPath') onCopyPath?.(row.path)
+    else if (action === 'copyName') onCopyName?.(row.name)
+    else if (action === 'openExternal') onOpenExternally?.(row.path)
+    else if (action === 'viewHistory') onOpenHistory?.(row.path)
+  }, [onCopyName, onCopyPath, onOpenExternally, onOpenHistory])
+
+  const contextActions = contextMenu
+    ? buildTreeContextActions(contextMenu.row, { canOpenExternally: Boolean(onOpenExternally), canViewHistory: Boolean(onOpenHistory) })
+    : []
+
   return <div className="commit-tree-browser">
     <div className="commit-tree-pane">
       <div className="commit-tree-toolbar">
@@ -177,8 +208,24 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
         hasIndex={Boolean(index)}
         query={query}
         label={t('repository.tree.titleOf', { reference })}
-        onActivate={handleActivate}/>
+        onActivate={handleActivate}
+        onNavigate={handleNavigate}
+        onRowContextMenu={(row, x, y) => setContextMenu({ row, x, y })}
+        onDoubleClickRow={(row) => { if (isPreviewableRow(row)) onOpenExternally?.(row.path) }}/>
     </div>
+    {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} onClose={() => setContextMenu(null)}>
+      <div className="context-menu-title"><Folder size={13}/><span title={contextMenu.row.path}>{contextMenu.row.name}</span></div>
+      {contextActions.map((action) => <button
+        key={action}
+        type="button"
+        onClick={() => runContextAction(action, contextMenu.row)}
+      >
+        {action === 'copyPath' && <><Copy size={14}/><span>{t('repository.tree.context.copyPath')}</span></>}
+        {action === 'copyName' && <><FileCode2 size={14}/><span>{t('repository.tree.context.copyName')}</span></>}
+        {action === 'openExternal' && <><ExternalLink size={14}/><span>{t('repository.tree.context.openExternal')}</span></>}
+        {action === 'viewHistory' && <><History size={14}/><span>{t('repository.tree.context.viewHistory')}</span></>}
+      </button>)}
+    </ContextMenu>}
     <CommitTreePreview
       selected={selected}
       kind={selectedKind}
