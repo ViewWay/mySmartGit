@@ -505,6 +505,25 @@ fn set_resolved_at(
 }
 
 // ---------------------------------------------------------------------------
+// B5 发布接缝：git_hosting 的发布流程读取并回填远端信息
+// ---------------------------------------------------------------------------
+
+/// 读取仓库全部线程（含锚在其他 ref 上的，由调用方按 reference 过滤）。
+pub(crate) fn load_all_threads(repository_path: &str) -> Result<Vec<ReviewThread>, CommandError> {
+    let base = reviews_directory()?;
+    list_threads_at(&base, repository_path)
+}
+
+/// 覆盖保存线程（发布成功后回填 remote 用；校验与规整与 upsert 一致）。
+pub(crate) fn store_thread(
+    repository_path: &str,
+    thread: ReviewThread,
+) -> Result<ReviewThread, CommandError> {
+    let base = reviews_directory()?;
+    upsert_thread_at(&base, repository_path, thread)
+}
+
+// ---------------------------------------------------------------------------
 // Tauri 命令包装（由 lib.rs 注册）
 // ---------------------------------------------------------------------------
 

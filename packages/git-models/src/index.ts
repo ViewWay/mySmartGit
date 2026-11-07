@@ -1069,6 +1069,14 @@ export type HostingReviewComment = {
   webUrl: string | null
 }
 
+/** B5 单条线程的发布结果：成功者已回填本地 remote。 */
+export type ReviewPublishResult = {
+  threadId: string
+  ok: boolean
+  remoteId: string | null
+  error: string | null
+}
+
 // ---------------------------------------------------------------------------
 // 子项目 B1（Gerrit 式代码审查）本地行级评论 —— 与 git_review.rs 同名结构对齐
 // ---------------------------------------------------------------------------

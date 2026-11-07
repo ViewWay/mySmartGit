@@ -22,7 +22,8 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+use crate::git_review::{ReviewThread, ReviewThreadRemote};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1448,6 +1449,197 @@ fn fetch_review_comments(
     }
 }
 
+// ---------------------------------------------------------------------------
+// B5 草稿发布：本地线程 → 托管平台 diff 评论（逐条发布，失败不中断）
+// ---------------------------------------------------------------------------
+
+/// 单条线程的发布结果（逐条回显；成功者已回填 remote）。
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPublishResult {
+    pub thread_id: String,
+    pub ok: bool,
+    pub remote_id: Option<String>,
+    pub error: Option<String>,
+}
+
+/// GitHub 发帖体：commit_id 固定 PR head；side 转大小写 RIGHT/LEFT。
+fn github_publish_payload(thread: &ReviewThread, head_sha: &str) -> Value {
+    json!({
+        "body": thread.comments[0].body,
+        "commit_id": head_sha,
+        "path": thread.file_path,
+        "line": thread.line,
+        "side": if thread.side == "old" { "LEFT" } else { "RIGHT" },
+    })
+}
+
+/// GitLab 发帖体：position 三 sha 统一取 head（针对最新 diff 版本评论）。
+fn gitlab_publish_payload(thread: &ReviewThread, head_sha: &str) -> Value {
+    let mut position = json!({
+        "position_type": "text",
+        "base_sha": head_sha,
+        "start_sha": head_sha,
+        "head_sha": head_sha,
+        "new_path": thread.file_path,
+        "old_path": thread.file_path,
+    });
+    if thread.side == "old" {
+        position["old_line"] = json!(thread.line);
+    } else {
+        position["new_line"] = json!(thread.line);
+    }
+    json!({ "body": thread.comments[0].body, "position": position })
+}
+
+/// 解析 GitHub 评论创建响应的 id 与链接。
+fn github_publish_remote_id(value: &Value) -> (String, Option<String>) {
+    (
+        value.get("id").map(|id| id.to_string()).unwrap_or_default(),
+        string_at(value, "/html_url").map(str::to_string),
+    )
+}
+
+/// 解析 GitLab discussion 响应：取首条 note 的 id 与链接。
+fn gitlab_publish_remote_id(value: &Value) -> (String, Option<String>) {
+    let note = value.get("notes").and_then(Value::as_array).and_then(|notes| notes.first());
+    (
+        note.and_then(|note| note.get("id")).map(|id| id.to_string()).unwrap_or_default(),
+        note.and_then(|note| string_at(note, "/html_url")).map(str::to_string),
+    )
+}
+
+/// 解析 PR head commit：GitHub head/sha；GitLab 顶层 sha。
+fn pull_request_head_sha(
+    repository: &HostingRepository,
+    token: &str,
+    number: u64,
+) -> Result<(String, String), String> {
+    let base = api_base(&repository.provider, &repository.host);
+    let value = if repository.provider == PROVIDER_GITHUB {
+        let (owner, repo) = github_project(&repository.project_path)?;
+        request_json("GET", &format!("{base}/repos/{owner}/{repo}/pulls/{number}"), token, &repository.provider, None)?
+    } else {
+        let project_id = percent_encode(&repository.project_path);
+        request_json("GET", &format!("{base}/projects/{project_id}/merge_requests/{number}"), token, &repository.provider, None)?
+    };
+    let sha = if repository.provider == PROVIDER_GITHUB {
+        string_at(&value, "/head/sha")
+    } else {
+        string_at(&value, "/sha")
+    }
+    .filter(|sha| !sha.trim().is_empty())
+    .ok_or_else(|| "托管平台响应缺少 PR head commit".to_string())?;
+    let source_branch = if repository.provider == PROVIDER_GITHUB {
+        string_at(&value, "/head/ref").unwrap_or("").to_string()
+    } else {
+        string_at(&value, "/source_branch").unwrap_or("").to_string()
+    };
+    Ok((sha.to_string(), source_branch))
+}
+
+fn publish_one_thread(
+    repository: &HostingRepository,
+    token: &str,
+    number: u64,
+    head_sha: &str,
+    thread: &ReviewThread,
+) -> Result<(String, Option<String>), String> {
+    let base = api_base(&repository.provider, &repository.host);
+    if repository.provider == PROVIDER_GITHUB {
+        let (owner, repo) = github_project(&repository.project_path)?;
+        let url = format!("{base}/repos/{owner}/{repo}/pulls/{number}/comments");
+        let payload = github_publish_payload(thread, head_sha);
+        let value = request_json("POST", &url, token, &repository.provider, Some(&payload))?;
+        Ok(github_publish_remote_id(&value))
+    } else {
+        let project_id = percent_encode(&repository.project_path);
+        let url = format!("{base}/projects/{project_id}/merge_requests/{number}/discussions");
+        let payload = gitlab_publish_payload(thread, head_sha);
+        let value = request_json("POST", &url, token, &repository.provider, Some(&payload))?;
+        Ok(gitlab_publish_remote_id(&value))
+    }
+}
+
+fn publish_review_threads(
+    repository_path: &str,
+    number: u64,
+    thread_ids: &[String],
+) -> Result<Vec<ReviewPublishResult>, String> {
+    let context = hosting_context(repository_path)?;
+    let (head_sha, source_branch) =
+        pull_request_head_sha(&context.repository, &context.token, number)?;
+    let threads = crate::git_review::load_all_threads(repository_path)
+        .map_err(|error| format!("读取本地评审线程失败：{error}"))?;
+    let mut results = Vec::new();
+    for thread_id in thread_ids {
+        let Some(thread) = threads.iter().find(|thread| thread.id == *thread_id) else {
+            results.push(ReviewPublishResult {
+                thread_id: thread_id.clone(),
+                ok: false,
+                remote_id: None,
+                error: Some("本地不存在该评论线程".to_string()),
+            });
+            continue;
+        };
+        // 已发布的线程跳过（回帖能力后续版本提供），幂等且不会重复发帖。
+        if thread.remote.is_some() {
+            results.push(ReviewPublishResult {
+                thread_id: thread.id.clone(),
+                ok: true,
+                remote_id: Some(thread.remote.as_ref().map(|remote| remote.remote_id.clone()).unwrap_or_default()),
+                error: None,
+            });
+            continue;
+        }
+        // 设计约束：只发布锚定在当前 PR 源分支 head 上的线程。
+        if !thread.reference.is_empty()
+            && thread.reference != head_sha
+            && thread.reference != source_branch
+        {
+            results.push(ReviewPublishResult {
+                thread_id: thread.id.clone(),
+                ok: false,
+                remote_id: None,
+                error: Some("该线程锚定的版本不是当前 PR 的源分支，未发布".to_string()),
+            });
+            continue;
+        }
+        match publish_one_thread(&context.repository, &context.token, number, &head_sha, thread) {
+            Ok((remote_id, web_url)) => {
+                let mut published = thread.clone();
+                published.remote = Some(ReviewThreadRemote {
+                    provider: context.repository.provider.clone(),
+                    pull_number: number,
+                    remote_id: remote_id.clone(),
+                    web_url,
+                });
+                match crate::git_review::store_thread(repository_path, published) {
+                    Ok(_) => results.push(ReviewPublishResult {
+                        thread_id: thread.id.clone(),
+                        ok: true,
+                        remote_id: Some(remote_id),
+                        error: None,
+                    }),
+                    Err(error) => results.push(ReviewPublishResult {
+                        thread_id: thread.id.clone(),
+                        ok: false,
+                        remote_id: Some(remote_id),
+                        error: Some(format!("发布成功但回填本地记录失败：{error}")),
+                    }),
+                }
+            }
+            Err(error) => results.push(ReviewPublishResult {
+                thread_id: thread.id.clone(),
+                ok: false,
+                remote_id: None,
+                error: Some(error),
+            }),
+        }
+    }
+    Ok(results)
+}
+
 fn hosting_context(repository_path: &str) -> Result<HostingContext, String> {
     let settings = load_settings()?;
     let repository = detect_repository(&settings, repository_path)?;
@@ -1565,6 +1757,19 @@ pub async fn fetch_hosting_review_comments(
         .map_err(|error| task_error("拉取远端评审评论", error))?
 }
 
+#[tauri::command]
+pub async fn publish_hosting_review(
+    repository_path: String,
+    number: u64,
+    thread_ids: Vec<String>,
+) -> Result<Vec<ReviewPublishResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        publish_review_threads(&repository_path, number, &thread_ids)
+    })
+    .await
+    .map_err(|error| task_error("发布评审评论", error))?
+}
+
 /// B4 映射单测：GitHub / GitLab 评论 fixture（合成样例，非生产数据）。
 #[cfg(test)]
 mod review_comment_tests {
@@ -1644,6 +1849,68 @@ mod review_comment_tests {
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].side, "old");
         assert_eq!(comments[0].line, 4);
+    }
+
+    fn publish_thread(side: &str, line: u32, body: &str) -> ReviewThread {
+        ReviewThread {
+            id: "t1".to_string(),
+            file_path: "src/a.ts".to_string(),
+            reference: "feature".to_string(),
+            line,
+            side: side.to_string(),
+            resolved: false,
+            created_at: "2026-11-07T00:00:00Z".to_string(),
+            updated_at: "2026-11-07T00:00:00Z".to_string(),
+            comments: vec![crate::git_review::ReviewComment {
+                id: "c1".to_string(),
+                author: "dev".to_string(),
+                body: body.to_string(),
+                created_at: "2026-11-07T00:00:00Z".to_string(),
+            }],
+            remote: None,
+        }
+    }
+
+    #[test]
+    fn github_publish_payload_carries_file_line_and_side() {
+        let payload = github_publish_payload(&publish_thread("new", 5, "fix this"), "abc123");
+        assert_eq!(payload["path"], "src/a.ts");
+        assert_eq!(payload["line"], 5);
+        assert_eq!(payload["side"], "RIGHT");
+        assert_eq!(payload["commit_id"], "abc123");
+        assert_eq!(payload["body"], "fix this");
+
+        let payload = github_publish_payload(&publish_thread("old", 3, "why"), "abc123");
+        assert_eq!(payload["side"], "LEFT");
+        assert_eq!(payload["line"], 3);
+    }
+
+    #[test]
+    fn gitlab_publish_payload_targets_new_or_old_line() {
+        let payload = gitlab_publish_payload(&publish_thread("new", 9, "note"), "abc123");
+        assert_eq!(payload["position"]["new_line"], 9);
+        assert!(payload["position"].get("old_line").is_none());
+        assert_eq!(payload["position"]["head_sha"], "abc123");
+        assert_eq!(payload["position"]["new_path"], "src/a.ts");
+
+        let payload = gitlab_publish_payload(&publish_thread("old", 4, "note"), "abc123");
+        assert_eq!(payload["position"]["old_line"], 4);
+        assert!(payload["position"].get("new_line").is_none());
+    }
+
+    #[test]
+    fn publish_remote_id_parsers_read_platform_shapes() {
+        let github = json!({"id": 777, "html_url": "https://github.com/x/y/pull/1#c777"});
+        let (id, url) = github_publish_remote_id(&github);
+        assert_eq!(id, "777");
+        assert_eq!(url.as_deref(), Some("https://github.com/x/y/pull/1#c777"));
+
+        let gitlab = json!({"id": "disc-9", "notes": [
+            {"id": 42, "html_url": "https://gitlab.com/x/y/-/merge_requests/1#note_42"}
+        ]});
+        let (id, url) = gitlab_publish_remote_id(&gitlab);
+        assert_eq!(id, "42");
+        assert_eq!(url.as_deref(), Some("https://gitlab.com/x/y/-/merge_requests/1#note_42"));
     }
 }
 

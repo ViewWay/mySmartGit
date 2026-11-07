@@ -22,9 +22,11 @@ import {
   detectHostingRepository,
   fetchHostingReviewComments,
   listHostingPullRequests,
+  listReviewThreads,
   loadHostingPullRequest,
   loadHostingSettings,
   loadRepository,
+  publishHostingReview,
   saveHostingSettings,
   type HostingProvider,
   type HostingPullRequest,
@@ -32,6 +34,8 @@ import {
   type HostingRepository,
   type HostingReviewComment,
   type HostingSettings,
+  type ReviewPublishResult,
+  type ReviewThread,
 } from '../../repository'
 import {
   buildCreatePullRequestInput,
@@ -94,6 +98,10 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
   // B4 远端评审评论（只读）：随详情一起拉取，离开详情即清空。
   const [reviewComments, setReviewComments] = useState<HostingReviewComment[] | null>(null)
   const [commentsLoading, setCommentsLoading] = useState(false)
+  // B5 本地草稿发布：待发布线程（remote 为空）+ 逐条发布结果。
+  const [drafts, setDrafts] = useState<ReviewThread[]>([])
+  const [publishing, setPublishing] = useState(false)
+  const [publishResults, setPublishResults] = useState<ReviewPublishResult[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [listLoading, setListLoading] = useState(false)
   const [error, setError] = useState('')
@@ -281,6 +289,32 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
       setReviewComments([])
     } finally {
       setCommentsLoading(false)
+    }
+    // 本地草稿：只列未发布的线程；锚定校验由后端逐条判定。
+    setPublishResults(null)
+    try {
+      const all = await listReviewThreads(repositoryPath)
+      setDrafts(all.filter((thread) => !thread.remote))
+    } catch {
+      setDrafts([])
+    }
+  }
+
+  const publishDrafts = async () => {
+    if (!detail || !drafts.length || publishing) return
+    setPublishing(true)
+    try {
+      const results = await publishHostingReview(repositoryPath, detail.number, drafts.map((thread) => thread.id))
+      setPublishResults(results)
+      // 成功者从待发列表移除（远端信息已回填本地存储）。
+      setDrafts((current) => current.filter((thread) => {
+        const result = results.find((item) => item.threadId === thread.id)
+        return !(result?.ok)
+      }))
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setPublishing(false)
     }
   }
 
@@ -562,6 +596,25 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                     ))}
                   </ul>
                 )}
+              </div>
+              <div>
+                <h5>{t('hosting.publishDrafts')}</h5>
+                {drafts.length === 0 && <p className="hosting-empty">{t('hosting.noDraftThreads')}</p>}
+                {drafts.length > 0 && <>
+                  <Button variant="secondary" disabled={publishing} onClick={() => void publishDrafts()}>
+                    {publishing ? t('hosting.publishing') : t('hosting.publishAll', { count: drafts.length })}
+                  </Button>
+                  {publishResults && (
+                    <ul className="hosting-check-list">
+                      {publishResults.map((result) => (
+                        <li key={result.threadId} className="hosting-check-row">
+                          <span className="hosting-mono">{result.ok ? '✓' : '✗'}</span>
+                          <span>{result.ok ? result.remoteId : result.error}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>}
               </div>
               <a className="hosting-external" href={detail.webUrl} target="_blank" rel="noreferrer">
                 {t('hosting.openInBrowser')}

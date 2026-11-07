@@ -1075,6 +1075,7 @@ export type {
   HostingCheck,
   HostingPullRequestDetail,
   HostingReviewComment,
+  ReviewPublishResult,
   CreatePullRequestInput,
 } from '@branchline/git-models'
 
@@ -1140,6 +1141,18 @@ export async function fetchHostingReviewComments(repositoryPath: string, number:
     'fetch_hosting_review_comments',
     { repositoryPath, number },
   )
+}
+
+/**
+ * B5 逐条发布本地草稿线程到 PR/MR。成功者回填本地 remote；失败不中断其余线程，
+ * 逐条结果由返回值给出。只发布锚定在当前 PR 源分支 head 上的线程。
+ */
+export async function publishHostingReview(repositoryPath: string, number: number, threadIds: string[]) {
+  return invoke<import('@branchline/git-models').ReviewPublishResult[]>('publish_hosting_review', {
+    repositoryPath,
+    number,
+    threadIds,
+  })
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,17 @@ impl From<String> for CommandError {
     }
 }
 
+/// 供日志与宿主错误串接使用：`[code] detail`。
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", self.code)?;
+        if let Some(detail) = &self.detail {
+            write!(f, " {detail}")?;
+        }
+        Ok(())
+    }
+}
+
 /// 把常见 git 失败归类为稳定错误码；未匹配回退 `git.unknown`。
 /// 规则刻意保守：只匹配确证性强的短语，避免把无关错误误标。
 pub fn classify(message: &str) -> &'static str {

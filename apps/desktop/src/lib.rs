@@ -216,6 +216,7 @@ pub fn run() {
             crate::git_hosting::create_hosting_pull_request,
             crate::git_hosting::load_hosting_pull_request,
             crate::git_hosting::fetch_hosting_review_comments,
+            crate::git_hosting::publish_hosting_review,
             // 子项目 B1 本地行级审查评论（Gerrit 式）
             crate::git_review::list_review_threads,
             crate::git_review::upsert_review_thread,
