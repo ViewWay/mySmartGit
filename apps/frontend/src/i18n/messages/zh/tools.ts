@@ -560,4 +560,6 @@ export const tools = {
   'flow.conflictKeepNote': '冲突时后端保留 MERGE_HEAD 状态，不会自动 abort；可到「操作」页继续或中止。',
   'flow.executing': '执行中…',
   'flow.startMergeAction': '开始合并',
+  'flow.configNoteSuffix': '-format 规则校验。',
+  'flow.startBranchHintFull': 'feature 默认基于 develop，release / hotfix / support 默认基于 main。',
 } as const

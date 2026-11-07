@@ -560,4 +560,6 @@ export const tools = {
   'flow.conflictKeepNote': 'On conflict the backend keeps the MERGE_HEAD state and never aborts automatically; continue or abort on the “Operations” page.',
   'flow.executing': 'Running…',
   'flow.startMergeAction': 'Start merge',
+  'flow.configNoteSuffix': '-format rules.',
+  'flow.startBranchHintFull': 'feature branches default from develop; release / hotfix / support default from main.',
 } satisfies Record<keyof typeof import('../zh/tools').tools, string>
