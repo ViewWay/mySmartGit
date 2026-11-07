@@ -21,9 +21,9 @@
 
 #![allow(dead_code)]
 
+use crate::git_review::{ReviewThread, ReviewThreadRemote};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use crate::git_review::{ReviewThread, ReviewThreadRemote};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1339,7 +1339,11 @@ fn map_github_review_comment(item: &Value) -> Result<HostingReviewComment, Strin
         .map(|value| value.to_string())
         .ok_or_else(|| "GitHub 评论缺少 id".to_string())?;
     let file_path = required_string(item, "/path", "评论文件路径")?;
-    let body = item.get("body").and_then(Value::as_str).unwrap_or("").to_string();
+    let body = item
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let side = match string_at(item, "/side").unwrap_or("RIGHT") {
         "LEFT" => "old",
         _ => "new",
@@ -1354,7 +1358,9 @@ fn map_github_review_comment(item: &Value) -> Result<HostingReviewComment, Strin
         file_path,
         line: u32::try_from(line).map_err(|_| "评论行号超出范围".to_string())?,
         side: side.to_string(),
-        author: string_at(item, "/user/login").unwrap_or("未知作者").to_string(),
+        author: string_at(item, "/user/login")
+            .unwrap_or("未知作者")
+            .to_string(),
         body,
         created_at: string_at(item, "/created_at").unwrap_or("").to_string(),
         in_reply_to: item
@@ -1420,9 +1426,17 @@ fn gitlab_review_comments_from_json(value: &Value) -> Result<Vec<HostingReviewCo
                 author: string_at(note, "/author/username")
                     .unwrap_or("未知作者")
                     .to_string(),
-                body: note.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
+                body: note
+                    .get("body")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 created_at: string_at(note, "/created_at").unwrap_or("").to_string(),
-                in_reply_to: if index == 0 { None } else { Some(discussion_id.clone()) },
+                in_reply_to: if index == 0 {
+                    None
+                } else {
+                    Some(discussion_id.clone())
+                },
                 web_url: string_at(note, "/html_url").map(str::to_string),
             });
         }
@@ -1439,12 +1453,26 @@ fn fetch_review_comments(
     if context.repository.provider == PROVIDER_GITHUB {
         let (owner, repo) = github_project(&context.repository.project_path)?;
         let url = format!("{base}/repos/{owner}/{repo}/pulls/{number}/comments?per_page=100");
-        let value = request_json("GET", &url, &context.token, &context.repository.provider, None)?;
+        let value = request_json(
+            "GET",
+            &url,
+            &context.token,
+            &context.repository.provider,
+            None,
+        )?;
         github_review_comments_from_json(&value)
     } else {
         let project_id = percent_encode(&context.repository.project_path);
-        let url = format!("{base}/projects/{project_id}/merge_requests/{number}/discussions?per_page=100");
-        let value = request_json("GET", &url, &context.token, &context.repository.provider, None)?;
+        let url = format!(
+            "{base}/projects/{project_id}/merge_requests/{number}/discussions?per_page=100"
+        );
+        let value = request_json(
+            "GET",
+            &url,
+            &context.token,
+            &context.repository.provider,
+            None,
+        )?;
         gitlab_review_comments_from_json(&value)
     }
 }
@@ -1502,10 +1530,16 @@ fn github_publish_remote_id(value: &Value) -> (String, Option<String>) {
 
 /// 解析 GitLab discussion 响应：取首条 note 的 id 与链接。
 fn gitlab_publish_remote_id(value: &Value) -> (String, Option<String>) {
-    let note = value.get("notes").and_then(Value::as_array).and_then(|notes| notes.first());
+    let note = value
+        .get("notes")
+        .and_then(Value::as_array)
+        .and_then(|notes| notes.first());
     (
-        note.and_then(|note| note.get("id")).map(|id| id.to_string()).unwrap_or_default(),
-        note.and_then(|note| string_at(note, "/html_url")).map(str::to_string),
+        note.and_then(|note| note.get("id"))
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+        note.and_then(|note| string_at(note, "/html_url"))
+            .map(str::to_string),
     )
 }
 
@@ -1518,10 +1552,22 @@ fn pull_request_head_sha(
     let base = api_base(&repository.provider, &repository.host);
     let value = if repository.provider == PROVIDER_GITHUB {
         let (owner, repo) = github_project(&repository.project_path)?;
-        request_json("GET", &format!("{base}/repos/{owner}/{repo}/pulls/{number}"), token, &repository.provider, None)?
+        request_json(
+            "GET",
+            &format!("{base}/repos/{owner}/{repo}/pulls/{number}"),
+            token,
+            &repository.provider,
+            None,
+        )?
     } else {
         let project_id = percent_encode(&repository.project_path);
-        request_json("GET", &format!("{base}/projects/{project_id}/merge_requests/{number}"), token, &repository.provider, None)?
+        request_json(
+            "GET",
+            &format!("{base}/projects/{project_id}/merge_requests/{number}"),
+            token,
+            &repository.provider,
+            None,
+        )?
     };
     let sha = if repository.provider == PROVIDER_GITHUB {
         string_at(&value, "/head/sha")
@@ -1533,7 +1579,9 @@ fn pull_request_head_sha(
     let source_branch = if repository.provider == PROVIDER_GITHUB {
         string_at(&value, "/head/ref").unwrap_or("").to_string()
     } else {
-        string_at(&value, "/source_branch").unwrap_or("").to_string()
+        string_at(&value, "/source_branch")
+            .unwrap_or("")
+            .to_string()
     };
     Ok((sha.to_string(), source_branch))
 }
@@ -1587,7 +1635,13 @@ fn publish_review_threads(
             results.push(ReviewPublishResult {
                 thread_id: thread.id.clone(),
                 ok: true,
-                remote_id: Some(thread.remote.as_ref().map(|remote| remote.remote_id.clone()).unwrap_or_default()),
+                remote_id: Some(
+                    thread
+                        .remote
+                        .as_ref()
+                        .map(|remote| remote.remote_id.clone())
+                        .unwrap_or_default(),
+                ),
                 error: None,
             });
             continue;
@@ -1605,7 +1659,13 @@ fn publish_review_threads(
             });
             continue;
         }
-        match publish_one_thread(&context.repository, &context.token, number, &head_sha, thread) {
+        match publish_one_thread(
+            &context.repository,
+            &context.token,
+            number,
+            &head_sha,
+            thread,
+        ) {
             Ok((remote_id, web_url)) => {
                 let mut published = thread.clone();
                 published.remote = Some(ReviewThreadRemote {
@@ -1910,7 +1970,10 @@ mod review_comment_tests {
         ]});
         let (id, url) = gitlab_publish_remote_id(&gitlab);
         assert_eq!(id, "42");
-        assert_eq!(url.as_deref(), Some("https://gitlab.com/x/y/-/merge_requests/1#note_42"));
+        assert_eq!(
+            url.as_deref(),
+            Some("https://gitlab.com/x/y/-/merge_requests/1#note_42")
+        );
     }
 }
 

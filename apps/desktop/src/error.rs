@@ -19,7 +19,11 @@ pub struct CommandError {
 
 impl CommandError {
     pub fn new(code: impl Into<String>) -> Self {
-        Self { code: code.into(), params: BTreeMap::new(), detail: None }
+        Self {
+            code: code.into(),
+            params: BTreeMap::new(),
+            detail: None,
+        }
     }
 
     pub fn param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
@@ -36,7 +40,11 @@ impl CommandError {
 impl From<String> for CommandError {
     fn from(message: String) -> Self {
         let code = classify(&message);
-        Self { code: code.to_string(), params: BTreeMap::new(), detail: Some(message) }
+        Self {
+            code: code.to_string(),
+            params: BTreeMap::new(),
+            detail: Some(message),
+        }
     }
 }
 
@@ -82,7 +90,9 @@ pub fn classify(message: &str) -> &'static str {
     if lower.contains("local changes") || lower.contains("would be overwritten") {
         return "git.worktree.dirty";
     }
-    if lower.contains("git-lfs") && (lower.contains("not installed") || lower.contains("command not found")) {
+    if lower.contains("git-lfs")
+        && (lower.contains("not installed") || lower.contains("command not found"))
+    {
         return "git.lfs.missing";
     }
     "git.unknown"
@@ -111,10 +121,22 @@ mod tests {
             classify("! [rejected] main -> main (non-fast-forward)"),
             "git.push.nonFastForward"
         );
-        assert_eq!(classify("CONFLICT (content): Merge conflict in a.ts"), "git.conflict");
-        assert_eq!(classify("fatal: Authentication failed for 'https://...'"), "git.auth.failed");
-        assert_eq!(classify("ssh: Could not resolve host github.com"), "git.network");
-        assert_eq!(classify("fatal: branch 'x' already exists"), "git.branch.exists");
+        assert_eq!(
+            classify("CONFLICT (content): Merge conflict in a.ts"),
+            "git.conflict"
+        );
+        assert_eq!(
+            classify("fatal: Authentication failed for 'https://...'"),
+            "git.auth.failed"
+        );
+        assert_eq!(
+            classify("ssh: Could not resolve host github.com"),
+            "git.network"
+        );
+        assert_eq!(
+            classify("fatal: branch 'x' already exists"),
+            "git.branch.exists"
+        );
         assert_eq!(
             classify("error: Your local changes to the following files would be overwritten"),
             "git.worktree.dirty"
