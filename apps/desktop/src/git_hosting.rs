@@ -166,7 +166,8 @@ impl HostingSettingsFile {
 }
 
 /// 配置根目录：BRANCHLINE_HOME 优先（测试注入一次性目录），否则用户配置目录。
-fn settings_directory() -> Result<PathBuf, String> {
+/// pub(crate)：git_review.rs 的评论存储与 hosting.json 同目录。
+pub(crate) fn settings_directory() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("BRANCHLINE_HOME") {
         if !root.is_empty() {
             return Ok(PathBuf::from(root));

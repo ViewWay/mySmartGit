@@ -1054,6 +1054,48 @@ export type CreatePullRequestInput = {
 }
 
 // ---------------------------------------------------------------------------
+// 子项目 B1（Gerrit 式代码审查）本地行级评论 —— 与 git_review.rs 同名结构对齐
+// ---------------------------------------------------------------------------
+
+/** 评论锚定的侧：new = 新版本行号，old = 旧版本行号（树预览恒为 new）。 */
+export type ReviewThreadSide = 'new' | 'old'
+
+/** 线程内的一条评论；author 取写入时刻的 git config user.name（可为空串）。 */
+export type ReviewComment = {
+  id: string
+  author: string
+  body: string
+  createdAt: string
+}
+
+/** 已发布到托管平台后的回填信息。 */
+export type ReviewThreadRemote = {
+  provider: HostingProvider
+  pullNumber: number
+  /** GitHub comment id / GitLab discussion id。 */
+  remoteId: string
+  webUrl: string | null
+}
+
+/** 一条行级评论线程：锚定 ref + 文件 + 行号 + 新旧侧。 */
+export type ReviewThread = {
+  /** uuid v4，前端生成。 */
+  id: string
+  /** 仓库相对路径，'/' 分隔。 */
+  filePath: string
+  /** 锚定的 ref：提交 hash / 分支 / 标签。 */
+  reference: string
+  /** 1 起的行号。 */
+  line: number
+  side: ReviewThreadSide
+  resolved: boolean
+  createdAt: string
+  updatedAt: string
+  comments: ReviewComment[]
+  remote: ReviewThreadRemote | null
+}
+
+// ---------------------------------------------------------------------------
 // W4-2 内置终端与自定义命令流水线 —— 与 git_terminal.rs 同名结构对齐
 // ---------------------------------------------------------------------------
 

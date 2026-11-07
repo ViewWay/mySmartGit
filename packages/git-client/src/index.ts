@@ -1134,6 +1134,56 @@ export async function loadHostingPullRequest(repositoryPath: string, number: num
 }
 
 // ---------------------------------------------------------------------------
+// 子项目 B1 本地行级审查评论（apps/desktop/src/git_review.rs）
+//
+// 纯本地存储（<配置目录>/reviews/<仓库键>.json），离线可用；
+// 发布 / 拉取远端评论的同步命令在 B4/B5 加入。
+// ---------------------------------------------------------------------------
+
+export type {
+  ReviewThreadSide,
+  ReviewComment,
+  ReviewThreadRemote,
+  ReviewThread,
+} from '@branchline/git-models'
+
+/** 列出当前仓库的全部评论线程；仓库无存储文件时返回空数组。 */
+export async function listReviewThreads(repositoryPath: string) {
+  return invoke<import('@branchline/git-models').ReviewThread[]>('list_review_threads', {
+    repositoryPath,
+  })
+}
+
+/** 新建或按 id 覆盖保存线程；返回后端规整后的最终形态（含补齐的时间戳）。 */
+export async function upsertReviewThread(
+  repositoryPath: string,
+  thread: import('@branchline/git-models').ReviewThread,
+) {
+  return invoke<import('@branchline/git-models').ReviewThread>('upsert_review_thread', {
+    repositoryPath,
+    thread,
+  })
+}
+
+/** 删除线程（幂等：目标不存在也返回成功）。带 remote 的线程只删本地记录。 */
+export async function deleteReviewThread(repositoryPath: string, threadId: string) {
+  return invoke<void>('delete_review_thread', { repositoryPath, threadId })
+}
+
+/** 翻转线程的已解决标记；返回更新后的线程。 */
+export async function setReviewThreadResolved(
+  repositoryPath: string,
+  threadId: string,
+  resolved: boolean,
+) {
+  return invoke<import('@branchline/git-models').ReviewThread>('set_review_thread_resolved', {
+    repositoryPath,
+    threadId,
+    resolved,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // W4-2 内置终端与自定义命令流水线
 // ---------------------------------------------------------------------------
 

@@ -27,4 +27,9 @@ export const errors = {
   'errors.git.worktree.dirty': '工作区存在未提交的更改',
   'errors.git.lfs.missing': '未安装 Git LFS',
   'errors.git.unknown': 'Git 操作失败',
+  'errors.review.storeUnavailable': '无法定位配置目录，审查数据不可用',
+  'errors.review.storeIoFailed': '审查数据读写失败',
+  'errors.review.storeCorrupted': '审查数据文件已损坏，原文件未被修改；可导出备份后重置',
+  'errors.review.invalidThread': '评论线程数据无效（{{field}}）',
+  'errors.review.threadNotFound': '未找到该评论线程',
 } as const

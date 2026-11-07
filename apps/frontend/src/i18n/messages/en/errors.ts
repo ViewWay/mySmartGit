@@ -27,4 +27,9 @@ export const errors = {
   'errors.git.worktree.dirty': 'The worktree has uncommitted changes',
   'errors.git.lfs.missing': 'Git LFS is not installed',
   'errors.git.unknown': 'Git operation failed',
+  'errors.review.storeUnavailable': 'Cannot locate the settings directory; review data is unavailable',
+  'errors.review.storeIoFailed': 'Failed to read or write review data',
+  'errors.review.storeCorrupted': 'The review data file is corrupted; the original file was left untouched. Export a backup and reset it',
+  'errors.review.invalidThread': 'Invalid review thread ({{field}})',
+  'errors.review.threadNotFound': 'Review thread not found',
 } satisfies Record<keyof typeof import('../zh/errors').errors, string>

@@ -11,6 +11,7 @@ mod git_media;
 mod git_tree;
 mod git_remote;
 mod git_recovery;
+mod git_review;
 mod git_history_edit;
 mod git_search;
 mod git_submodule;
@@ -214,6 +215,11 @@ pub fn run() {
             crate::git_hosting::list_hosting_pull_requests,
             crate::git_hosting::create_hosting_pull_request,
             crate::git_hosting::load_hosting_pull_request,
+            // 子项目 B1 本地行级审查评论（Gerrit 式）
+            crate::git_review::list_review_threads,
+            crate::git_review::upsert_review_thread,
+            crate::git_review::delete_review_thread,
+            crate::git_review::set_review_thread_resolved,
             // W4-2 内置终端与命令流水线
             crate::git_terminal::start_terminal_session,
             crate::git_terminal::read_terminal_output,
