@@ -161,7 +161,7 @@ export function SequenceEditor({ open, repositoryPath, baseRef, onClose, onChang
 
         {summary && (
           <p className="history-edit-summary">
-            {t('historyEdit.summaryPrefix')} {summary.total} {t('historyEdit.summaryUnit')} {summary.resultCount} {t('historyEdit.summaryFixup')} {summary.folded} {t('historyEdit.summaryDrop')} {summary.dropped} {t('historyEdit.summaryReword')} {summary.reworded} {t('historyEdit.summaryEdit')} {summary.edited}
+            {summary.total} {t('historyEdit.summaryUnit')} {summary.resultCount} {t('historyEdit.summaryFixup')} {summary.folded} {t('historyEdit.summaryDrop')} {summary.dropped} {t('historyEdit.summaryReword')} {summary.reworded} {t('historyEdit.summaryEdit')} {summary.edited}
             {summary.changed ? t('historyEdit.willRewrite') : t('historyEdit.noChanges')}
           </p>
         )}

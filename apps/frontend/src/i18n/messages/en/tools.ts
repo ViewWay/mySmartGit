@@ -376,7 +376,6 @@ export const tools = {
   'historyEdit.moveDown': 'Move down',
   'historyEdit.newMessagePlaceholder': 'New commit message (required)',
   'historyEdit.squashMessagePlaceholder': 'Merged message after squash (empty concatenates the previous one)',
-  'historyEdit.summaryPrefix': '',
   'historyEdit.summaryUnit': ' total: keep',
   'historyEdit.summaryFixup': ' · fixup',
   'historyEdit.summaryDrop': ' · drop',
