@@ -487,6 +487,8 @@ export const tools = {
   'hosting.noDescription': '(no description)',
   'hosting.checksPrefix': 'Checks (',
   'hosting.noChecks': 'No readable check results.',
+  'hosting.reviewCommentsPrefix': 'Review comments (',
+  'hosting.noReviewComments': 'No line comments on this PR/MR yet.',
   'hosting.view': 'View',
   'hosting.openInBrowser': 'Open in browser',
   'hosting.stateOpenLabel': 'Open',

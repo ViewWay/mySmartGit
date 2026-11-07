@@ -128,6 +128,25 @@ pub struct CreatePullRequestInput {
     pub draft: bool,
 }
 
+/// 远端 PR/MR 上的一条 diff 行评论（B4 只读拉取；行号语义随平台原始口径）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostingReviewComment {
+    pub id: String,
+    /// 仓库相对路径，'/' 分隔。
+    pub file_path: String,
+    /// 1 起行号；side=new 取新侧行号，side=old 取旧侧行号。
+    pub line: u32,
+    /// "new" | "old"。
+    pub side: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    /// GitHub in_reply_to_id / GitLab discussion 内后续 note 归属的 discussion id。
+    pub in_reply_to: Option<String>,
+    pub web_url: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // 磁盘格式、路径与读写
 // ---------------------------------------------------------------------------
@@ -1308,6 +1327,127 @@ struct HostingContext {
     token: String,
 }
 
+// ---------------------------------------------------------------------------
+// B4 远端评论拉取：GitHub review comments / GitLab discussions → 只读契约
+// ---------------------------------------------------------------------------
+
+/// GitHub PR review comment：side 取 RIGHT/LEFT，行号新侧优先 line，旧侧回退 original_line。
+fn map_github_review_comment(item: &Value) -> Result<HostingReviewComment, String> {
+    let id = item
+        .get("id")
+        .map(|value| value.to_string())
+        .ok_or_else(|| "GitHub 评论缺少 id".to_string())?;
+    let file_path = required_string(item, "/path", "评论文件路径")?;
+    let body = item.get("body").and_then(Value::as_str).unwrap_or("").to_string();
+    let side = match string_at(item, "/side").unwrap_or("RIGHT") {
+        "LEFT" => "old",
+        _ => "new",
+    };
+    let line = item
+        .get("line")
+        .or_else(|| item.get("original_line"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "GitHub 评论缺少行号（未锚定到 diff 行）".to_string())?;
+    Ok(HostingReviewComment {
+        id,
+        file_path,
+        line: u32::try_from(line).map_err(|_| "评论行号超出范围".to_string())?,
+        side: side.to_string(),
+        author: string_at(item, "/user/login").unwrap_or("未知作者").to_string(),
+        body,
+        created_at: string_at(item, "/created_at").unwrap_or("").to_string(),
+        in_reply_to: item
+            .get("in_reply_to_id")
+            .filter(|value| !value.is_null())
+            .map(|value| value.to_string()),
+        web_url: string_at(item, "/html_url").map(str::to_string),
+    })
+}
+
+fn github_review_comments_from_json(value: &Value) -> Result<Vec<HostingReviewComment>, String> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| "GitHub 返回的评论列表格式无效".to_string())?;
+    Ok(items
+        .iter()
+        .filter_map(|item| map_github_review_comment(item).ok())
+        .collect())
+}
+
+/// GitLab discussion：仅保留带 position（锚定 diff 行）的非 system note；
+/// discussion 内第一条为线程头，其余 note 的 in_reply_to = discussion id。
+fn gitlab_review_comments_from_json(value: &Value) -> Result<Vec<HostingReviewComment>, String> {
+    let discussions = value
+        .as_array()
+        .ok_or_else(|| "GitLab 返回的 discussion 列表格式无效".to_string())?;
+    let mut comments = Vec::new();
+    for discussion in discussions {
+        let discussion_id = discussion
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let notes = discussion.get("notes").and_then(Value::as_array);
+        let Some(notes) = notes else { continue };
+        let anchored: Vec<&Value> = notes
+            .iter()
+            .filter(|note| !note.get("system").and_then(Value::as_bool).unwrap_or(false))
+            .filter(|note| note.get("position").map(Value::is_object).unwrap_or(false))
+            .collect();
+        for (index, note) in anchored.iter().enumerate() {
+            let position = note.get("position").and_then(Value::as_object);
+            let Some(position) = position else { continue };
+            let new_line = position.get("new_line").and_then(Value::as_u64);
+            let old_line = position.get("old_line").and_then(Value::as_u64);
+            let (side, line) = match (new_line, old_line) {
+                (Some(line), _) => ("new", line),
+                (None, Some(line)) => ("old", line),
+                _ => continue,
+            };
+            comments.push(HostingReviewComment {
+                id: note
+                    .get("id")
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                file_path: position
+                    .get("file_path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                line: u32::try_from(line).map_err(|_| "评论行号超出范围".to_string())?,
+                side: side.to_string(),
+                author: string_at(note, "/author/username")
+                    .unwrap_or("未知作者")
+                    .to_string(),
+                body: note.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
+                created_at: string_at(note, "/created_at").unwrap_or("").to_string(),
+                in_reply_to: if index == 0 { None } else { Some(discussion_id.clone()) },
+                web_url: string_at(note, "/html_url").map(str::to_string),
+            });
+        }
+    }
+    Ok(comments)
+}
+
+fn fetch_review_comments(
+    repository_path: &str,
+    number: u64,
+) -> Result<Vec<HostingReviewComment>, String> {
+    let context = hosting_context(repository_path)?;
+    let base = api_base(&context.repository.provider, &context.repository.host);
+    if context.repository.provider == PROVIDER_GITHUB {
+        let (owner, repo) = github_project(&context.repository.project_path)?;
+        let url = format!("{base}/repos/{owner}/{repo}/pulls/{number}/comments?per_page=100");
+        let value = request_json("GET", &url, &context.token, &context.repository.provider, None)?;
+        github_review_comments_from_json(&value)
+    } else {
+        let project_id = percent_encode(&context.repository.project_path);
+        let url = format!("{base}/projects/{project_id}/merge_requests/{number}/discussions?per_page=100");
+        let value = request_json("GET", &url, &context.token, &context.repository.provider, None)?;
+        gitlab_review_comments_from_json(&value)
+    }
+}
+
 fn hosting_context(repository_path: &str) -> Result<HostingContext, String> {
     let settings = load_settings()?;
     let repository = detect_repository(&settings, repository_path)?;
@@ -1413,6 +1553,98 @@ pub async fn load_hosting_pull_request(
     tauri::async_runtime::spawn_blocking(move || load_pull_request(&repository_path, number))
         .await
         .map_err(|error| task_error("读取 PR/MR 详情", error))?
+}
+
+#[tauri::command]
+pub async fn fetch_hosting_review_comments(
+    repository_path: String,
+    number: u64,
+) -> Result<Vec<HostingReviewComment>, String> {
+    tauri::async_runtime::spawn_blocking(move || fetch_review_comments(&repository_path, number))
+        .await
+        .map_err(|error| task_error("拉取远端评审评论", error))?
+}
+
+/// B4 映射单测：GitHub / GitLab 评论 fixture（合成样例，非生产数据）。
+#[cfg(test)]
+mod review_comment_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn maps_github_review_comments() {
+        let value = json!([
+            {
+                "id": 123, "path": "src/a.ts", "line": 5, "side": "RIGHT",
+                "user": {"login": "alice"}, "body": "fix this",
+                "created_at": "2026-11-07T00:00:00Z", "html_url": "https://github.com/x/y/pull/1#c1",
+                "in_reply_to_id": null
+            },
+            {
+                "id": 124, "path": "src/a.ts", "original_line": 3, "side": "LEFT",
+                "user": {"login": "bob"}, "body": "why",
+                "created_at": "2026-11-07T01:00:00Z", "html_url": "https://github.com/x/y/pull/1#c2",
+                "in_reply_to_id": 123
+            },
+            // 未锚定行的评论（file-level）应被跳过而不是失败
+            {"id": 125, "path": "src/a.ts", "user": {"login": "carol"}, "body": "general"}
+        ]);
+        let comments = github_review_comments_from_json(&value).expect("parse");
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].id, "123");
+        assert_eq!(comments[0].side, "new");
+        assert_eq!(comments[0].line, 5);
+        assert_eq!(comments[0].author, "alice");
+        assert!(comments[0].in_reply_to.is_none());
+        assert_eq!(comments[1].side, "old");
+        assert_eq!(comments[1].line, 3);
+        assert_eq!(comments[1].in_reply_to.as_deref(), Some("123"));
+    }
+
+    #[test]
+    fn maps_gitlab_discussions_with_position_only() {
+        let value = json!([
+            {
+                "id": "disc-1",
+                "notes": [
+                    {"id": 1, "system": false, "author": {"username": "alice"}, "body": "head note",
+                     "created_at": "2026-11-07T00:00:00Z",
+                     "position": {"position_type": "text", "old_line": null, "new_line": 9, "file_path": "src/b.rs"},
+                     "html_url": "https://gitlab.com/x/y/-/merge_requests/1#note_1"},
+                    {"id": 2, "system": false, "author": {"username": "bob"}, "body": "reply",
+                     "created_at": "2026-11-07T01:00:00Z",
+                     "position": {"position_type": "text", "old_line": null, "new_line": 9, "file_path": "src/b.rs"}},
+                    // system note（提交改动提示）应被过滤
+                    {"id": 3, "system": true, "author": {"username": "alice"}, "body": "changed this line",
+                     "position": {"position_type": "text", "new_line": 9, "file_path": "src/b.rs"}},
+                    // 无 position 的普通讨论不进评论列表
+                    {"id": 4, "system": false, "author": {"username": "carol"}, "body": "general"}
+                ]
+            }
+        ]);
+        let comments = gitlab_review_comments_from_json(&value).expect("parse");
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].id, "1");
+        assert_eq!(comments[0].file_path, "src/b.rs");
+        assert_eq!(comments[0].side, "new");
+        assert_eq!(comments[0].line, 9);
+        assert!(comments[0].in_reply_to.is_none());
+        assert_eq!(comments[1].in_reply_to.as_deref(), Some("disc-1"));
+    }
+
+    #[test]
+    fn gitlab_old_side_only_uses_old_line() {
+        let value = json!([
+            {"id": "disc-2", "notes": [
+                {"id": 7, "system": false, "author": {"username": "bob"}, "body": "old side",
+                 "position": {"position_type": "text", "old_line": 4, "new_line": null, "file_path": "a.txt"}}
+            ]}
+        ]);
+        let comments = gitlab_review_comments_from_json(&value).expect("parse");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].side, "old");
+        assert_eq!(comments[0].line, 4);
+    }
 }
 
 // ---------------------------------------------------------------------------

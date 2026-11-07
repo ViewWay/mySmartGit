@@ -487,6 +487,8 @@ export const tools = {
   'hosting.noDescription': '（无描述）',
   'hosting.checksPrefix': '检查（',
   'hosting.noChecks': '没有可读取的检查结果。',
+  'hosting.reviewCommentsPrefix': '远端评审评论（',
+  'hosting.noReviewComments': '该 PR/MR 暂无行级评论。',
   'hosting.view': '查看',
   'hosting.openInBrowser': '在浏览器中打开',
   'hosting.stateOpenLabel': '开放',

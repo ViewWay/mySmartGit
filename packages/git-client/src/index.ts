@@ -1074,6 +1074,7 @@ export type {
   HostingPullRequest,
   HostingCheck,
   HostingPullRequestDetail,
+  HostingReviewComment,
   CreatePullRequestInput,
 } from '@branchline/git-models'
 
@@ -1129,6 +1130,14 @@ export async function createHostingPullRequest(
 export async function loadHostingPullRequest(repositoryPath: string, number: number) {
   return invoke<import('@branchline/git-models').HostingPullRequestDetail>(
     'load_hosting_pull_request',
+    { repositoryPath, number },
+  )
+}
+
+/** B4 拉取远端 PR/MR 的 diff 行评论（GitHub review comments / GitLab discussions）。 */
+export async function fetchHostingReviewComments(repositoryPath: string, number: number) {
+  return invoke<import('@branchline/git-models').HostingReviewComment[]>(
+    'fetch_hosting_review_comments',
     { repositoryPath, number },
   )
 }

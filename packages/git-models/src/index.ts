@@ -1053,6 +1053,22 @@ export type CreatePullRequestInput = {
   draft: boolean
 }
 
+/** B4 远端 PR/MR 上的一条 diff 行评论（只读；行号随平台原始口径）。 */
+export type HostingReviewComment = {
+  id: string
+  /** 仓库相对路径，'/' 分隔。 */
+  filePath: string
+  /** 1 起行号；side=new 取新侧行号，side=old 取旧侧行号。 */
+  line: number
+  side: ReviewThreadSide
+  author: string
+  body: string
+  createdAt: string
+  /** GitHub in_reply_to_id / GitLab discussion 内归属的 discussion id。 */
+  inReplyTo: string | null
+  webUrl: string | null
+}
+
 // ---------------------------------------------------------------------------
 // 子项目 B1（Gerrit 式代码审查）本地行级评论 —— 与 git_review.rs 同名结构对齐
 // ---------------------------------------------------------------------------

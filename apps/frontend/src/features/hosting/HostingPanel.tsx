@@ -20,6 +20,7 @@ import {
   clearHostingToken,
   createHostingPullRequest,
   detectHostingRepository,
+  fetchHostingReviewComments,
   listHostingPullRequests,
   loadHostingPullRequest,
   loadHostingSettings,
@@ -29,6 +30,7 @@ import {
   type HostingPullRequest,
   type HostingPullRequestDetail,
   type HostingRepository,
+  type HostingReviewComment,
   type HostingSettings,
 } from '../../repository'
 import {
@@ -89,6 +91,9 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
   const [pullRequests, setPullRequests] = useState<HostingPullRequest[]>([])
   const [detail, setDetail] = useState<HostingPullRequestDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  // B4 远端评审评论（只读）：随详情一起拉取，离开详情即清空。
+  const [reviewComments, setReviewComments] = useState<HostingReviewComment[] | null>(null)
+  const [commentsLoading, setCommentsLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [listLoading, setListLoading] = useState(false)
   const [error, setError] = useState('')
@@ -130,6 +135,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
     setRepositoryError('')
     setPullRequests([])
     setDetail(null)
+    setReviewComments(null)
     setError('')
     setCurrentBranch('')
     setHost('')
@@ -246,6 +252,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
       setSettings(next)
       setPullRequests([])
       setDetail(null)
+      setReviewComments(null)
       notify(t('hosting.tokenCleared'))
     } catch (reason) {
       setError(errorText(reason))
@@ -257,6 +264,8 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
   const openDetail = async (number: number) => {
     setDetailLoading(true)
     setDetail(null)
+    setReviewComments(null)
+    setCommentsLoading(true)
     setError('')
     try {
       setDetail(await loadHostingPullRequest(repositoryPath, number))
@@ -264,6 +273,14 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
       setError(errorText(reason))
     } finally {
       setDetailLoading(false)
+    }
+    // 评论拉取失败不阻塞详情展示，仅留空列表。
+    try {
+      setReviewComments(await fetchHostingReviewComments(repositoryPath, number))
+    } catch {
+      setReviewComments([])
+    } finally {
+      setCommentsLoading(false)
     }
   }
 
@@ -470,7 +487,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               <GitPullRequest size={15} />
               {t('hosting.detailTitle')}
             </h3>
-            <Button variant="secondary" onClick={() => setDetail(null)}>
+            <Button variant="secondary" onClick={() => { setDetail(null); setReviewComments(null) }}>
               <ChevronLeft size={14} />
               {t('hosting.backToList')}
             </Button>
@@ -511,6 +528,33 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                         </span>
                         {check.webUrl && (
                           <a href={check.webUrl} target="_blank" rel="noreferrer">
+                            {t('hosting.view')}
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <h5>{t('hosting.reviewCommentsPrefix')}{reviewComments?.length ?? '…'}）</h5>
+                {commentsLoading && <p className="hosting-empty">{t('hosting.readingDetail')}</p>}
+                {!commentsLoading && reviewComments?.length === 0 && (
+                  <p className="hosting-empty">{t('hosting.noReviewComments')}</p>
+                )}
+                {!commentsLoading && (reviewComments?.length ?? 0) > 0 && (
+                  <ul className="hosting-check-list">
+                    {(reviewComments ?? []).map((comment) => (
+                      <li key={comment.id} className="hosting-check-row">
+                        <span className="hosting-check-name">
+                          {comment.filePath}
+                          :{comment.line}
+                          {comment.inReplyTo ? ' ↩' : ''}
+                        </span>
+                        <span className="hosting-mono">{comment.author}</span>
+                        <span>{comment.body}</span>
+                        {comment.webUrl && (
+                          <a href={comment.webUrl} target="_blank" rel="noreferrer">
                             {t('hosting.view')}
                           </a>
                         )}
