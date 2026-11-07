@@ -67,10 +67,10 @@ function errorText(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
 }
 
-function mergeableLabel(value: boolean | null): { text: string; tone: string } {
-  if (value === true) return { text: '可合并', tone: 'ok' }
-  if (value === false) return { text: '存在冲突或暂不可合并', tone: 'warn' }
-  return { text: '合并状态未知', tone: 'unknown' }
+function mergeableLabel(value: boolean | null, t: (key: string, params?: Record<string, string | number>) => string): { text: string; tone: string } {
+  if (value === true) return { text: t('hosting.mergeable'), tone: 'ok' }
+  if (value === false) return { text: t('hosting.notMergeable'), tone: 'warn' }
+  return { text: t('hosting.mergeUnknown'), tone: 'unknown' }
 }
 
 const EMPTY_FORM: CreatePullRequestForm = {
@@ -186,7 +186,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
     }
     try {
       await navigator.clipboard.writeText(url)
-      notify('已复制链接到剪贴板')
+      notify(t('hosting.linkCopied'))
     } catch {
       notify(`复制失败，请手动复制：${url}`)
     }
@@ -216,7 +216,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
       setProvider(next.provider)
       setHost(next.host ?? '')
       setToken('')
-      notify(next.tokenConfigured ? '托管设置已保存，访问令牌已配置' : '托管设置已保存')
+      notify(next.tokenConfigured ? t('hosting.settingsSavedWithToken') : t('hosting.settingsSaved'))
       if (next.tokenConfigured) void refreshList()
     } catch (reason) {
       setError(errorText(reason))
@@ -227,16 +227,16 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
 
   const clearToken = async () => {
     const options: ConfirmDialogOptions = {
-      title: '清除访问令牌',
-      message: '清除后将无法读取 PR/MR 与 CI 状态，需要重新保存令牌。',
-      confirmLabel: '确认清除',
+      title: t('hosting.clearTokenTitle'),
+      message: t('hosting.clearTokenMessage'),
+      confirmLabel: t('hosting.clearTokenConfirm'),
       variant: 'danger',
     }
     const accepted = confirm
       ? await confirm(options)
       : window.confirm(`${options.title}\n\n${options.message}`)
     if (!accepted) {
-      notify('已取消清除令牌')
+      notify(t('hosting.clearCancelled'))
       return
     }
     setBusy('clear')
@@ -246,7 +246,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
       setSettings(next)
       setPullRequests([])
       setDetail(null)
-      notify('访问令牌已清除')
+      notify(t('hosting.tokenCleared'))
     } catch (reason) {
       setError(errorText(reason))
     } finally {
@@ -302,8 +302,8 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
     return (
       <section className="workspace-empty">
         <GitPullRequest size={34} />
-        <strong>PR / MR 与 CI</strong>
-        <span>请先打开本地仓库，再管理 GitHub / GitLab 协作。</span>
+        <strong>{t('hosting.panelTitle')}</strong>
+        <span>{t('hosting.requiresRepository')}</span>
       </section>
     )
   }
@@ -312,14 +312,14 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
   const tokenReady = settings?.tokenConfigured === true
   const effectiveProvider = repository?.provider ?? provider
   const noun = effectiveProvider === 'gitlab' ? 'MR' : 'PR'
-  const mergeable = detail ? mergeableLabel(detail.mergeable) : null
+  const mergeable = detail ? mergeableLabel(detail.mergeable, t) : null
 
   return (
     <section className="structure-panel workspace-page hosting-panel">
       <div className="workspace-page-heading">
         <div>
-          <span className="eyebrow">代码托管</span>
-          <h2>PR / MR 与 CI</h2>
+          <span className="eyebrow">{t('hosting.cardTitle')}</span>
+          <h2>{t('hosting.panelTitle')}</h2>
           <p>{hostingSettingsSummary(settings, t)}</p>
         </div>
         <div className="structure-actions">
@@ -329,7 +329,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
             onClick={() => void refreshList()}
           >
             <RefreshCw size={14} className={listLoading ? 'spin' : ''} />
-            {listLoading ? '读取中…' : '刷新列表'}
+            {listLoading ? t('hosting.loadingList') : t('hosting.refreshList')}
           </Button>
         </div>
       </div>
@@ -338,7 +338,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
         <div className="hosting-error" role="alert">
           <AlertTriangle size={14} />
           <span>{error}</span>
-          <Button variant="icon" onClick={() => setError('')} title="关闭">
+          <Button variant="icon" onClick={() => setError('')} title={t('common.close')}>
             <X size={14} />
           </Button>
         </div>
@@ -349,18 +349,18 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
           <div className="hosting-card-heading">
             <h3>
               <Settings2 size={15} />
-              托管设置
+              {t('hosting.settingsSection')}
             </h3>
             <span className={`hosting-badge ${tokenReady ? 'ok' : 'warn'}`}>
-              {tokenReady ? '令牌已配置' : '未配置令牌'}
+              {tokenReady ? t('hosting.tokenConfigured') : t('hosting.tokenMissing')}
             </span>
           </div>
           <p className="hosting-card-hint">
-            令牌仅保存在本机 0600 配置文件中，不会回显；留空保存表示保持现有令牌不变。
+            {t('hosting.tokenNote')}
           </p>
           <form className="hosting-form" onSubmit={(event) => void saveSettings(event)}>
             <label className="hosting-field">
-              <span>托管平台</span>
+              <span>{t('hosting.providerLabel')}</span>
               <select
                 value={provider}
                 disabled={disabled}
@@ -374,7 +374,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               </select>
             </label>
             <label className="hosting-field">
-              <span>主机名（可选）</span>
+              <span>{t('hosting.hostLabel')}</span>
               <input
                 value={host}
                 spellCheck={false}
@@ -391,14 +391,14 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                 autoComplete="new-password"
                 spellCheck={false}
                 disabled={disabled}
-                placeholder={tokenReady ? '已保存，留空则保持不变' : '粘贴访问令牌'}
+                placeholder={tokenReady ? t('hosting.tokenPlaceholder') : t('hosting.tokenInputPlaceholder')}
                 onChange={(event) => setToken(event.target.value)}
               />
             </label>
             <div className="hosting-actions hosting-field-wide">
               <Button variant="primary" type="submit" disabled={disabled}>
                 <KeyRound size={14} />
-                {busy === 'settings' ? '保存中…' : '保存设置'}
+                {busy === 'settings' ? t('hosting.savingSettings') : t('hosting.saveSettings')}
               </Button>
               <Button
                 variant="danger"
@@ -407,7 +407,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                 onClick={() => void clearToken()}
               >
                 <X size={14} />
-                {busy === 'clear' ? '清除中…' : '清除令牌'}
+                {busy === 'clear' ? t('hosting.clearing') : t('hosting.clearToken')}
               </Button>
             </div>
           </form>
@@ -417,7 +417,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
           <div className="hosting-card-heading">
             <h3>
               <Server size={15} />
-              仓库识别
+              {t('hosting.repoIdentify')}
             </h3>
             {repository && (
               <span className="hosting-badge ok">{hostingProviderLabel(repository.provider)}</span>
@@ -426,24 +426,24 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
           {repository ? (
             <dl className="hosting-detected">
               <div>
-                <dt>平台</dt>
+                <dt>{t('hosting.providerColumn')}</dt>
                 <dd>{hostingProviderLabel(repository.provider)}</dd>
               </div>
               <div>
-                <dt>项目</dt>
+                <dt>{t('hosting.projectLabel')}</dt>
                 <dd className="hosting-mono">{repository.projectPath}</dd>
               </div>
               <div>
-                <dt>主机</dt>
+                <dt>{t('hosting.hostColumn')}</dt>
                 <dd className="hosting-mono">{repository.host}</dd>
               </div>
               <div>
-                <dt>网页地址</dt>
+                <dt>{t('hosting.webUrl')}</dt>
                 <dd>
                   <button
                     type="button"
                     className="hosting-link-button"
-                    title="复制仓库网页地址"
+                    title={t('hosting.copyWebUrl')}
                     onClick={() => void copyUrl(repository.webUrl)}
                   >
                     <Copy size={12} />
@@ -454,7 +454,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
             </dl>
           ) : (
             <p className="hosting-empty">
-              {loading ? '正在读取 origin 远端…' : repositoryError || '尚未识别到 origin 远端。'}
+              {loading ? t('hosting.readingOrigin') : repositoryError || t('hosting.noOrigin')}
             </p>
           )}
           {repositoryError && repository && (
@@ -468,14 +468,14 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
           <div className="hosting-card-heading">
             <h3>
               <GitPullRequest size={15} />
-              详情
+              {t('hosting.detailTitle')}
             </h3>
             <Button variant="secondary" onClick={() => setDetail(null)}>
               <ChevronLeft size={14} />
-              返回列表
+              {t('hosting.backToList')}
             </Button>
           </div>
-          {detailLoading && <p className="hosting-empty">正在读取详情…</p>}
+          {detailLoading && <p className="hosting-empty">{t('hosting.readingDetail')}</p>}
           {detail && (
             <>
               <h4 className="hosting-detail-title">
@@ -493,13 +493,13 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                 )}
               </div>
               <div className="hosting-detail-body">
-                <h5>描述</h5>
-                <pre>{detail.body ?? '（无描述）'}</pre>
+                <h5>{t('hosting.description')}</h5>
+                <pre>{detail.body ?? t('hosting.noDescription')}</pre>
               </div>
               <div>
-                <h5>检查（{detail.checks.length}）</h5>
+                <h5>{t('hosting.checksPrefix')}{detail.checks.length}）</h5>
                 {detail.checks.length === 0 ? (
-                  <p className="hosting-empty">没有可读取的检查结果。</p>
+                  <p className="hosting-empty">{t('hosting.noChecks')}</p>
                 ) : (
                   <ul className="hosting-check-list">
                     {detail.checks.map((check, index) => (
@@ -511,7 +511,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                         </span>
                         {check.webUrl && (
                           <a href={check.webUrl} target="_blank" rel="noreferrer">
-                            查看
+                            {t('hosting.view')}
                           </a>
                         )}
                       </li>
@@ -520,7 +520,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                 )}
               </div>
               <a className="hosting-external" href={detail.webUrl} target="_blank" rel="noreferrer">
-                在浏览器中打开
+                {t('hosting.openInBrowser')}
               </a>
             </>
           )}
@@ -531,19 +531,19 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
         <div className="hosting-card-heading">
           <h3>
             <GitPullRequest size={15} />
-            开放 {noun}（{pullRequests.length}）
+            {t('hosting.stateOpenLabel')} {noun}（{pullRequests.length}）
           </h3>
         </div>
         {!tokenReady && (
           <p className="hosting-hint hosting-hint-warning">
-            尚未配置访问令牌：请在上方「托管设置」中保存 {hostingProviderLabel(effectiveProvider)}{' '}
-            Personal Access Token，再刷新列表。
+            {t('hosting.tokenMissingNoticePrefix')} {hostingProviderLabel(effectiveProvider)}{' '}
+            {t('hosting.tokenMissingNoticeSuffix')}
           </p>
         )}
-        {listLoading && <p className="hosting-empty">正在读取列表…</p>}
+        {listLoading && <p className="hosting-empty">{t('hosting.readingPullRequests')}</p>}
         {!listLoading && pullRequests.length === 0 && (
           <p className="hosting-empty">
-            {tokenReady ? '当前没有开放的 PR/MR。' : '配置令牌后即可读取开放 PR/MR。'}
+            {tokenReady ? t('hosting.noOpenPullRequests') : t('hosting.tokenToRead')}
           </p>
         )}
         <ul className="hosting-pr-list">
@@ -557,7 +557,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                 >
                   <span className="hosting-pr-number">#{pr.number}</span>
                   <span>{pr.title}</span>
-                  {pr.draft && <span className="hosting-badge">草稿</span>}
+                  {pr.draft && <span className="hosting-badge">{t('hosting.stateDraft')}</span>}
                 </button>
                 <p className="hosting-pr-meta">{summarizePullRequest(pr, t)}</p>
               </div>
@@ -566,7 +566,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               </span>
               <Button
                 variant="icon"
-                title="复制链接"
+                title={t('hosting.copyLink')}
                 aria-label={`复制 PR/MR #${pr.number} 链接`}
                 onClick={() => void copyUrl(pr.webUrl)}
               >
@@ -574,7 +574,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               </Button>
               <Button
                 variant="icon"
-                title="查看详情"
+                title={t('hosting.viewDetail')}
                 aria-label={`查看 PR/MR #${pr.number} 详情`}
                 onClick={() => void openDetail(pr.number)}
               >
@@ -589,16 +589,15 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
         <div className="hosting-card-heading">
           <h3>
             <Plus size={15} />
-            新建 {noun}
+            {t('hosting.create')} {noun}
           </h3>
         </div>
         <p className="hosting-card-hint">
-          源分支默认为当前分支{currentBranch ? `（${currentBranch}）` : ''}；目标分支取列表中
-          最常见的分支，没有数据时回退 main。
+          {t('hosting.createSourceHint')}{currentBranch ? `（${currentBranch}）` : ''}{t('hosting.createTargetHint')}
         </p>
         <form className="hosting-form" onSubmit={(event) => void submitCreate(event)}>
           <label className="hosting-field hosting-field-wide">
-            <span>{noun} 标题</span>
+            <span>{t('hosting.titleLabel')} {noun}</span>
             <input
               value={form.title}
               maxLength={256}
@@ -608,17 +607,17 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
             />
           </label>
           <label className="hosting-field hosting-field-wide">
-            <span>描述</span>
+            <span>{t('hosting.description')}</span>
             <textarea
               rows={4}
               value={form.body}
               disabled={disabled || !tokenReady}
-              placeholder="可选：说明改动背景、验证方式"
+              placeholder={t('hosting.bodyPlaceholder')}
               onChange={(event) => setForm({ ...form, body: event.target.value })}
             />
           </label>
           <label className="hosting-field">
-            <span>源分支</span>
+            <span>{t('hosting.sourceBranchLabel')}</span>
             <input
               value={form.sourceBranch}
               spellCheck={false}
@@ -628,7 +627,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
             />
           </label>
           <label className="hosting-field">
-            <span>目标分支</span>
+            <span>{t('hosting.targetBranchLabel')}</span>
             <input
               value={form.targetBranch}
               spellCheck={false}
@@ -645,7 +644,7 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
                 disabled={disabled || !tokenReady}
                 onChange={(event) => setForm({ ...form, draft: event.target.checked })}
               />
-              创建为草稿（Draft）
+              {t('hosting.createAsDraft')}
             </label>
           )}
           <div className="hosting-actions hosting-field-wide">
@@ -655,9 +654,9 @@ export function HostingPanel({ repositoryPath, onNotice, confirm }: HostingPanel
               disabled={disabled || !tokenReady || !repository}
             >
               <Check size={14} />
-              {busy === 'create' ? '创建中…' : `创建 ${noun}`}
+              {busy === 'create' ? t('hosting.creating') : `创建 ${noun}`}
             </Button>
-            {!repository && <span className="hosting-hint">需要先识别到 origin 远端。</span>}
+            {!repository && <span className="hosting-hint">{t('hosting.originRequired')}</span>}
           </div>
         </form>
       </article>
