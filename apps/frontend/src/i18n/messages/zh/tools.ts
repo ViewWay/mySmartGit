@@ -376,7 +376,6 @@ export const tools = {
   'historyEdit.moveDown': '下移',
   'historyEdit.newMessagePlaceholder': '新的提交消息（必填）',
   'historyEdit.squashMessagePlaceholder': 'squash 合并后的消息（留空则自动拼接上一条）',
-  'historyEdit.summaryPrefix': '共',
   'historyEdit.summaryUnit': '条：保留',
   'historyEdit.summaryFixup': '· 折叠',
   'historyEdit.summaryDrop': '· 丢弃',
