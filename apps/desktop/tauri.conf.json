@@ -50,7 +50,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCRTM5QTA1NzE4NjRBNDEKUldSQlNvWnhCWnJqVy9tbkVzeGhRTm43b0hWU29CT3EwUlB5bDBJOUR1WVZ1QnFkUmtrTUxKNi8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM1QjVGQzgyQzIxQ0MwNjIKUldSaXdCekNndnkxTlhCaDNiVlh3azNITGI3ajZNVWp0NC9TcUFOSTh2cGErb3drSWNkQXZHeGoK",
       "endpoints": [
         "https://github.com/ViewWay/mySmartGit/releases/latest/download/latest.json"
       ],
