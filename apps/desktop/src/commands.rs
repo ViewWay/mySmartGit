@@ -4,7 +4,7 @@ use crate::{
         BlameLine, DiffLine, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot,
         RepositoryCommitStats, RepositoryComparison, RepositoryFile, RepositorySnapshot,
     },
-    repository_service::RepositoryServiceState,
+    repository_service::{NotifyTexts, RepositoryServiceState},
 };
 use std::path::Path;
 
@@ -320,14 +320,20 @@ pub async fn fetch_repository(
     Ok(snapshot)
 }
 
-/// 前端设置面板下发定时 Fetch 配置（开关 + 间隔）。纯状态操作，无阻塞工作。
+/// 前端设置面板下发定时 Fetch 配置（开关 + 间隔 + 系统通知文案，文案随语言
+/// 切换重发）。纯状态操作，无阻塞工作。
 #[tauri::command]
 pub async fn set_repository_auto_fetch_config(
     service: tauri::State<'_, RepositoryServiceState>,
     enabled: bool,
     interval_minutes: u64,
+    notify_failed_text: Option<String>,
+    notify_recovered_text: Option<String>,
 ) -> Result<(), String> {
-    service.set_auto_fetch_config(enabled, interval_minutes)
+    let notify_texts = notify_failed_text
+        .zip(notify_recovered_text)
+        .map(|(failed, recovered)| NotifyTexts { failed, recovered });
+    service.set_auto_fetch_config(enabled, interval_minutes, notify_texts)
 }
 
 #[tauri::command]

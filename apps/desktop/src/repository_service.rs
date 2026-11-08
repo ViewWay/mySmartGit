@@ -23,6 +23,7 @@ use notify_debouncer_full::{
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 use crate::git;
 use crate::models::{DiffLine, RepositorySnapshot};
@@ -68,6 +69,44 @@ impl Default for AutoFetchConfig {
             interval: Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60),
         }
     }
+}
+
+/// 系统通知文案：跟随原生菜单的模式，由前端按当前语言下发（配置接口携带），
+/// Rust 只存储与发送，不做翻译。默认给双语兜底（语言未同步前不发转换通知也
+/// 不致出现空文案）。
+#[derive(Clone)]
+pub struct NotifyTexts {
+    pub failed: String,
+    pub recovered: String,
+}
+
+impl Default for NotifyTexts {
+    fn default() -> Self {
+        Self {
+            failed: "后台获取失败 / Background fetch failed".into(),
+            recovered: "后台获取已恢复 / Background fetch recovered".into(),
+        }
+    }
+}
+
+/// 状态转换判定（纯函数，便于单测）：上一结果已知且与本次不同时通知——
+/// 稳态静默（连续失败不重复打扰），只在「成功→失败」「失败→成功」跳变时
+/// 提示。`None` 起始（首次结果）不通知。
+fn fetch_notify_transition(prev: Option<bool>, ok: bool) -> Option<bool> {
+    match prev {
+        Some(previous) if previous != ok => Some(!ok),
+        _ => None,
+    }
+}
+
+/// 展示路径 → 通知标题（取末段目录名；与快照 name 同源口径）。
+fn notify_title(display: &str) -> String {
+    display
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(display)
+        .to_string()
 }
 
 /// `repository-changed` 事件载荷。`repository_path` 是前端持有的展示路径
@@ -211,6 +250,8 @@ struct OpenedRepository {
     next_fetch_due: Option<Instant>,
     /// 连续失败退避档（0 = 正常间隔；每失败 +1 封顶，成功清零）。
     fetch_backoff_step: u32,
+    /// 上一次网络任务结果（None=尚无）：通知只在转换跳变时发。
+    prev_fetch_ok: Option<bool>,
 }
 
 /// 仓库层服务，由 Tauri `manage` 托管（lib.rs setup）。
@@ -230,6 +271,8 @@ struct RepositoryServiceInner {
     /// 单飞集合：键 = service_key。定时线程与手动 `fetch_repository` 命令共用，
     /// 同一仓库任意时刻至多一个网络任务（README 性能边界）。
     fetch_in_flight: HashSet<String>,
+    /// 系统通知文案（前端按语言下发；默认双语兜底）。
+    notify_texts: NotifyTexts,
 }
 
 impl RepositoryServiceInner {
@@ -257,6 +300,7 @@ impl RepositoryServiceInner {
                     last_used: 0,
                     next_fetch_due: fetch_due,
                     fetch_backoff_step: 0,
+                    prev_fetch_ok: None,
                 },
             );
         }
@@ -472,16 +516,20 @@ impl RepositoryServiceState {
     }
 
     /// 更新定时 Fetch 配置（前端设置面板下发）。重排全部驻留仓库的到期时刻，
-    /// 唤醒定时线程立即生效。
+    /// 唤醒定时线程立即生效。通知文案随配置一并同步（语言切换时前端会重发）。
     pub fn set_auto_fetch_config(
         &self,
         enabled: bool,
         interval_minutes: u64,
+        notify_texts: Option<NotifyTexts>,
     ) -> Result<(), String> {
         let minutes = interval_minutes.clamp(AUTO_FETCH_MIN_MINUTES, AUTO_FETCH_MAX_MINUTES);
         let interval = Duration::from_secs(minutes * 60);
         let mut inner = self.inner.lock().map_err(|_| "repository service lock")?;
         inner.fetch_config = AutoFetchConfig { enabled, interval };
+        if let Some(texts) = notify_texts {
+            inner.notify_texts = texts;
+        }
         let now = Instant::now();
         for entry in inner.opened.values_mut() {
             entry.next_fetch_due = enabled.then(|| now + interval);
@@ -552,7 +600,8 @@ impl RepositoryServiceState {
     }
 
     /// 网络任务收尾：释放单飞、按结果重排到期（成功 = 间隔；失败 = 退避倍增）、
-    /// 推送 repository-auto-fetched 事件（仅定时任务，手动路径前端已知结果）。
+    /// 推送 repository-auto-fetched 事件（仅定时任务，手动路径前端已知结果）、
+    /// 状态转换时发系统通知（稳态静默——连续失败不重复打扰）。
     pub fn complete_fetch(&self, path: &str, ok: bool, auto: bool, _elapsed: Duration) {
         let key = service_key(path);
         let mut inner = self.inner.lock().expect("repository service lock");
@@ -569,7 +618,10 @@ impl RepositoryServiceState {
         };
         let delay = interval * 2u32.saturating_pow(backoff);
         let next_due = inner.fetch_config.enabled.then(|| Instant::now() + delay);
+        let mut notify_failure: Option<bool> = None;
         if let Some(entry) = inner.opened.get_mut(&key) {
+            notify_failure = fetch_notify_transition(entry.prev_fetch_ok, ok);
+            entry.prev_fetch_ok = Some(ok);
             entry.fetch_backoff_step = backoff;
             entry.next_fetch_due = next_due;
         }
@@ -582,6 +634,20 @@ impl RepositoryServiceState {
                         ok,
                     },
                 );
+                if let Some(failure) = notify_failure {
+                    let texts = &inner.notify_texts;
+                    let body = if failure {
+                        texts.failed.as_str()
+                    } else {
+                        texts.recovered.as_str()
+                    };
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title(notify_title(path))
+                        .body(body)
+                        .show();
+                }
             }
         }
         let _ = self.fetch_wake.send(());
@@ -959,13 +1025,17 @@ mod tests {
         }
 
         // 配置下发：禁用清空排程；改间隔重排并清退避；超范围夹取到 60 分钟。
-        service.set_auto_fetch_config(false, 5).expect("禁用配置");
+        service
+            .set_auto_fetch_config(false, 5, None)
+            .expect("禁用配置");
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).unwrap();
             assert!(entry.next_fetch_due.is_none(), "禁用后不排程");
         }
-        service.set_auto_fetch_config(true, 3).expect("改 3 分钟");
+        service
+            .set_auto_fetch_config(true, 3, None)
+            .expect("改 3 分钟");
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).unwrap();
@@ -975,7 +1045,9 @@ mod tests {
                 "按新间隔重排：{wait:?}"
             );
         }
-        service.set_auto_fetch_config(true, 999).expect("超限配置");
+        service
+            .set_auto_fetch_config(true, 999, None)
+            .expect("超限配置");
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).unwrap();
@@ -1038,5 +1110,78 @@ mod tests {
             );
         }
         service.complete_fetch(path, true, false, Duration::ZERO);
+    }
+
+    /// 通知转换判定：首结果（None 起始）不通知；稳态（连续同结果）不通知；
+    /// 只有成功↔失败跳变时通知，极性 = 本次失败与否。
+    #[test]
+    fn fetch_notify_transition_only_on_flips() {
+        assert_eq!(fetch_notify_transition(None, true), None, "首次成功不通知");
+        assert_eq!(fetch_notify_transition(None, false), None, "首次失败不通知");
+        assert_eq!(
+            fetch_notify_transition(Some(true), true),
+            None,
+            "连续成功静默"
+        );
+        assert_eq!(
+            fetch_notify_transition(Some(false), false),
+            None,
+            "连续失败静默（退避期不重复打扰）"
+        );
+        assert_eq!(
+            fetch_notify_transition(Some(true), false),
+            Some(true),
+            "成功→失败：通知失败"
+        );
+        assert_eq!(
+            fetch_notify_transition(Some(false), true),
+            Some(false),
+            "失败→成功：通知恢复"
+        );
+    }
+
+    /// prev_fetch_ok 跟踪所有完成路径（含手动），文案随配置存储；手动完成
+    /// 参与转换基线但不发通知（auto=false），detached 实例无 app 不出系统弹窗。
+    #[test]
+    fn complete_fetch_tracks_prev_result_and_stores_notify_texts() {
+        let service = RepositoryServiceState::detached();
+        let path = "/tmp/branchline-notify-demo";
+        let key = service_key(path);
+        let _ = service.begin_read(path);
+
+        // 手动成功 → prev 更新但不通知（auto=false 路径同样登记基线）。
+        assert!(service.try_claim_fetch(path));
+        service.complete_fetch(path, true, false, Duration::ZERO);
+        assert_eq!(
+            service.inner.lock().unwrap().opened[&key].prev_fetch_ok,
+            Some(true),
+            "手动结果计入转换基线"
+        );
+
+        // 配置下发携带文案：存储可读回。
+        service
+            .set_auto_fetch_config(
+                true,
+                5,
+                Some(NotifyTexts {
+                    failed: "获取失败（测试）".into(),
+                    recovered: "获取恢复（测试）".into(),
+                }),
+            )
+            .expect("下发文案");
+        {
+            let inner = service.inner.lock().unwrap();
+            assert_eq!(inner.notify_texts.failed, "获取失败（测试）");
+            assert_eq!(inner.notify_texts.recovered, "获取恢复（测试）");
+            // 重排行为不变：due 仍按新间隔设置。
+            assert!(inner.opened[&key].next_fetch_due.is_some());
+        }
+
+        // 通知标题取展示路径末段。
+        assert_eq!(
+            notify_title("/tmp/branchline-notify-demo"),
+            "branchline-notify-demo"
+        );
+        assert_eq!(notify_title("/tmp/rt/"), "rt");
     }
 }
