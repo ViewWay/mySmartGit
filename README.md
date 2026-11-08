@@ -63,7 +63,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 ## 界面语言与偏好设置
 
 - 界面默认中文，可在偏好设置（⌘,）或侧栏底部按钮切换到英文；语言选择持久化到本地。
-- 偏好设置面板（⌘,）提供语言、主题、Diff 布局、自动换行、显示空白差异与 Diff 字号设置。
+- 偏好设置面板（⌘,）提供语言、主题（浅色 / 深色 / 跟随系统，默认跟随系统）、Diff 布局、自动换行、显示空白差异与 Diff 字号设置。
 - 全部界面文案（含原生菜单、通知、确认框、错误摘要）均由 `apps/frontend/src/i18n/messages` 的 zh/en 字典提供；`pnpm check:i18n` 保证界面不再出现未迁移的硬编码中文。
 - 后端错误统一走结构化 `CommandError`（code + params + detail）：前端显示本地化摘要，git 原始 stderr 折叠在"技术详情"中，不参与翻译。
 
@@ -71,6 +71,8 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 
 - Diff、文件树与冲突编辑器共用 CodeMirror/Lezer 高亮，通过 `@codemirror/language-data` 动态加载，覆盖 60+ 编程语言（JS/TS、Rust、Python、Go、Java、C/C++、Shell、SQL、YAML、Markdown 等）。
 - 语言按文件名/扩展名匹配，未识别的文件按纯文本渲染；高亮结果按内容 LRU 缓存。
+- 内置自写的 AsciiDoc 与 Windows Batch 语法模式，并对常用无扩展名文件做特判映射（如 `.gitattributes` → Shell、`Cargo.lock` → TOML、`.prettierrc` → JSON、`ASNTokenTypes.txt` → ASN.1）。
+- 高亮配色覆盖全量 Lezer 标签分组：行/块/文档注释细分、HTML 标签与属性、JSON/YAML 键名、Markdown 结构标记（标题、加粗、链接等）与插入/删除行，统一复用 `--syntax-*` 调色板。
 
 ## 原生菜单（macOS）
 
@@ -90,7 +92,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 
 支持 Gerrit 式行级审查评论（设计文档见 `docs/superpowers/specs/2026-11-07-code-review-design.md`）：
 
-- 在文件树预览与 Diff 视图点击行号即可发起评论，支持回复线程与「已解决」标记；行号旁圆点表示已有评论。
+- 在文件树预览与 Diff 视图中点击行号、右键「评论此行」或划选多行「评论选中行」发起评论（支持行范围），评论以锚定所在行的浮动评论卡展示，越界自动翻转；支持回复线程与「已解决」标记，行号旁圆点表示已有评论。
 - 评论锚定「ref + 文件 + 行号 + 新旧侧」，由 Rust 侧持久化到 `<设置目录>/reviews/<仓库>.json`，离线可用，不依赖 webview 存储。
 - 本地草稿可一键发布为 GitHub PR review comments / GitLab MR discussions，逐条报告结果并回填远端 ID，失败线程保留草稿可重试。
 - 可拉取远端已有 PR/MR 评审评论合并展示（远端内容只读）。
@@ -103,6 +105,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 读取最近 500 条提交、完整提交信息、父级提交和提交/作者时间
 - 读取工作区变更和真实文本 Diff
 - 多仓库最近记录、Worktree 和 Submodule 快速切换
+- 仓库管理支持扫描文件夹批量添加本地 Git 仓库（自动跳过 node_modules、target 等重目录）
 - 真实 Fetch、每 5 分钟低优先级自动 Fetch
 - 真实暂存、取消暂存、提交、Amend 和签名提交
 - gitlink 冲突本地优先解析命令
@@ -110,6 +113,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 按提交信息、Hash、提交人搜索
 - 完整提交元数据、父级 Hash、作者和提交日期
 - 统一/并排 Diff、宽屏聚焦模式、文件树形/列表视图
+- Diff 概览条（mini-map）快速定位变更，划选行 / 变更块局部暂存、取消暂存与恢复
 - 分支前缀树（如 `feat/1248`）及前缀级操作入口
 - 文件提交历史与逐行 Blame 历史
 - 分支前缀删除前预览、二次确认和并发变更校验
@@ -126,7 +130,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - Gitflow 工作流、Git LFS 跟踪管理、SSH 密钥与凭据助手管理
 - 内置终端、自定义命令流水线与执行命令日志
 - AI 提交信息助手
-- 深色/浅色主题和全局快捷键面板
+- 浅色 / 深色 / 跟随系统主题和全局快捷键面板
 - 在同一仓库切换器中快速进入 Worktree 与 Submodule
 - 900px 以上桌面窗口响应式布局
 
@@ -149,6 +153,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - Rust 侧维护可取消的任务队列；搜索、切换仓库和关闭窗口时中止旧任务。
 - 文件状态、提交图谱和 Diff 分开缓存，缓存使用条目和字节双重上限。
 - 定时 Fetch 在后台低优先级执行，同一仓库只允许一个网络任务。
+- 文本预览用单次 `git cat-file --batch` 往返完成解析、验型、测长与读取，替代 rev-parse + cat-file 多进程串联，消除文件预览的「正在读取内容」卡顿。
 - 前端避免 Electron 常驻进程；目标空闲内存控制在 100 MB 左右，具体以接入 Tauri 后的基准测试为准。
 
 ## 安装包、自动更新与签名
