@@ -106,7 +106,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 读取工作区变更和真实文本 Diff
 - 多仓库最近记录、Worktree 和 Submodule 快速切换
 - 仓库管理支持扫描文件夹批量添加本地 Git 仓库（自动跳过 node_modules、target 等重目录）
-- 真实 Fetch、每 5 分钟低优先级自动 Fetch
+- 真实 Fetch、Rust 侧定时自动 Fetch（覆盖全部已开仓库、失败退避、每仓库单飞）
 - 真实暂存、取消暂存、提交、Amend 和签名提交
 - gitlink 冲突本地优先解析命令
 - 虚拟化提交图谱的界面结构
@@ -142,7 +142,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 2. 提交层：流式解析提交、拓扑和 refs，分页送入前端并做可见区域渲染。
 3. 操作层：stage、commit、branch、merge、rebase、cherry-pick、stash、tag、remote、worktree 和 submodule。
 4. 历史层：继续增加任意文件选择、指定行范围和提交跳转。
-5. 自动化层：可暂停的定时 Fetch、网络/电源策略、凭据代理和通知。
+5. 自动化层：定时 Fetch 已移入 Rust `RepositoryService`（已落地：单后台线程调度全部已开仓库、可暂停开关由前端设置下发、失败退避封顶 4×、每仓库单飞且手动 Fetch 共用同一单飞、完成推 `repository-auto-fetched` 事件）；剩余：网络/电源策略细化、凭据代理扩展和系统级通知。
 6. 冲突层：检测 mode `160000` 的 gitlink 冲突，默认执行本地优先策略，同时保留确认和撤销记录。
 
 分支前缀批量删除会先展示受影响的本地分支，并在后端再次校验删除范围；“删除前缀”实际是删除其下所有实际 refs，Git 本身不存在目录型分支。
@@ -152,7 +152,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 提交列表和 Diff 使用窗口化渲染，禁止一次性向前端发送完整大型历史。
 - Rust 侧维护可取消的任务队列；搜索、切换仓库和关闭窗口时中止旧任务。
 - 文件状态、提交图谱和 Diff 在 Rust 侧 `RepositoryService` 分开缓存，缓存使用条目和字节双重上限；文件监听（notify）失效缓存并向前端推送 `repository-changed`。状态 token 未变时轮询零成本，命中失效需要计算时走 gix 进程内直读（灵敏度对齐 Git CLI，异常自动回退 CLI），快照的分支/标签枚举与提交图谱（revwalk + 装饰渲染）同样走 gix（输出与 CLI 逐项对拍锁定），高频路径零 git 子进程。
-- 定时 Fetch 在后台低优先级执行，同一仓库只允许一个网络任务。
+- 定时 Fetch 在 Rust 后台线程执行（覆盖全部已开仓库），同一仓库只允许一个网络任务——手动 Fetch 与定时 Fetch 共用单飞；失败退避封顶 4×间隔，成功即恢复。
 - 文本预览用单次 `git cat-file --batch` 往返完成解析、验型、测长与读取，替代 rev-parse + cat-file 多进程串联，消除文件预览的「正在读取内容」卡顿。
 - 前端避免 Electron 常驻进程；目标空闲内存控制在 100 MB 左右，具体以接入 Tauri 后的基准测试为准。
 
