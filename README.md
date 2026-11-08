@@ -151,7 +151,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 
 - 提交列表和 Diff 使用窗口化渲染，禁止一次性向前端发送完整大型历史。
 - Rust 侧维护可取消的任务队列；搜索、切换仓库和关闭窗口时中止旧任务。
-- 文件状态、提交图谱和 Diff 在 Rust 侧 `RepositoryService` 分开缓存，缓存使用条目和字节双重上限；文件监听（notify）失效缓存并向前端推送 `repository-changed`。状态 token 未变时轮询零成本，命中失效需要计算时走 gix 进程内直读（灵敏度对齐 Git CLI，异常自动回退 CLI），全程零 git 子进程。
+- 文件状态、提交图谱和 Diff 在 Rust 侧 `RepositoryService` 分开缓存，缓存使用条目和字节双重上限；文件监听（notify）失效缓存并向前端推送 `repository-changed`。状态 token 未变时轮询零成本，命中失效需要计算时走 gix 进程内直读（灵敏度对齐 Git CLI，异常自动回退 CLI），快照的分支/标签枚举同样走 gix（输出与 CLI 逐项对拍），高频路径零 git 子进程。
 - 定时 Fetch 在后台低优先级执行，同一仓库只允许一个网络任务。
 - 文本预览用单次 `git cat-file --batch` 往返完成解析、验型、测长与读取，替代 rev-parse + cat-file 多进程串联，消除文件预览的「正在读取内容」卡顿。
 - 前端避免 Electron 常驻进程；目标空闲内存控制在 100 MB 左右，具体以接入 Tauri 后的基准测试为准。

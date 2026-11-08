@@ -2071,7 +2071,7 @@ pub fn deinitialize_repository_submodule(repository_path: &str, submodule_path: 
     .map(|_| ())
 }
 
-fn parse_branches(path: &Path) -> Vec<String> {
+pub(crate) fn parse_branches(path: &Path) -> Vec<String> {
     let mut branches: Vec<String> = optional_git_output(
         path,
         &[
@@ -2170,7 +2170,7 @@ fn parse_branch_tracking(path: &Path) -> HashMap<String, RepositoryBranchTrackin
     result
 }
 
-fn parse_tags(path: &Path) -> Vec<String> {
+pub(crate) fn parse_tags(path: &Path) -> Vec<String> {
     optional_git_output(path, &["tag", "--list", "--sort=-creatordate"])
         .lines()
         .map(str::trim)
@@ -2711,6 +2711,18 @@ pub fn read_repository_with_commit_limit(
             let structure =
                 scope.spawn(|| (parse_worktrees(root_path), parse_submodules(root_path)));
             let refs = scope.spawn(|| {
+                // gix 快路径：分支/标签枚举进程内直读，替代 3 个 for-each-ref/tag
+                // 子进程；ahead/behind 仍走 CLI rev-list（parse_branch_tracking）。
+                // gix 失败（非标准仓库布局等）整体回退 CLI 实现。
+                if let Ok(gix_refs) = crate::git_gix::read_refs(root_path) {
+                    let tracking = parse_branch_tracking(root_path);
+                    return (
+                        gix_refs.branches,
+                        gix_refs.remote_branches,
+                        tracking,
+                        gix_refs.tags,
+                    );
+                }
                 (
                     parse_branches(root_path),
                     parse_remote_branches(root_path),

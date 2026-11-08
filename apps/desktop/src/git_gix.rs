@@ -168,6 +168,108 @@ fn path_string(path: &[u8]) -> String {
     String::from_utf8_lossy(path).to_string()
 }
 
+/// 快照 refs 线程的 gix 读结果：与 CLI 版同语义的分支/标签名枚举。
+/// ahead/behind（`parse_branch_tracking`）仍走 CLI rev-list，本轮不含。
+#[derive(Debug, Clone)]
+pub struct RefSnapshot {
+    /// heads+remotes 合并短名：排序、去重、滤 `/HEAD` 结尾（parse_branches 语义）。
+    pub branches: Vec<String>,
+    /// remotes 短名：滤 `/HEAD`、按名排序（parse_remote_branches 语义，
+    /// CLI for-each-ref 默认按全名排序，同前缀下与短名排序一致）。
+    pub remote_branches: Vec<String>,
+    /// heads 短名：按名排序（parse_local_branches 语义）。
+    pub local_branches: Vec<String>,
+    /// 标签名：creatordate 降序、并列按名升序（`tag --list --sort=-creatordate`：
+    /// 稳定排序，初始序为引用名字典序）。
+    pub tags: Vec<String>,
+}
+
+/// gix 版分支/标签枚举：进程内直读，替代 refs 线程的 3 个 for-each-ref/tag 子进程。
+/// 错误由调用方回退 CLI 实现。
+pub fn read_refs(path: &std::path::Path) -> Result<RefSnapshot, String> {
+    let repo = gix::discover(path).map_err(|error| format!("gix open: {error}"))?;
+    let mut heads: Vec<String> = Vec::new();
+    let mut remotes: Vec<String> = Vec::new();
+    let mut tags: Vec<(i64, String)> = Vec::new();
+
+    let references_platform = repo
+        .references()
+        .map_err(|error| format!("gix refs: {error}"))?;
+    let references = references_platform
+        .all()
+        .map_err(|error| format!("gix refs iter: {error}"))?;
+    for reference in references {
+        let reference = reference.map_err(|error| format!("gix ref: {error}"))?;
+        let name = reference.name().as_bstr().to_string();
+        if let Some(short) = name.strip_prefix("refs/heads/") {
+            heads.push(short.to_string());
+        } else if let Some(rest) = name.strip_prefix("refs/remotes/") {
+            // git 的 %(refname:short) 会把 refs/remotes/<remote>/HEAD 缩成 <remote>
+            // （实测规则：剥 /HEAD 后缀），CLI 的 ends_with("/HEAD") 过滤因此
+            // 实际从不触发——这里复刻同样行为保持列表逐项一致。
+            let short = rest.strip_suffix("/HEAD").unwrap_or(rest);
+            remotes.push(short.to_string());
+        } else if let Some(short) = name.strip_prefix("refs/tags/") {
+            let date = tag_creatordate(&repo, reference.try_id());
+            tags.push((date, short.to_string()));
+        }
+    }
+
+    // tags：先按名升序建立初始序，再稳定降序——并列 creatordate 保持名序，
+    // 对齐 `git tag --sort=-creatordate`（稳定排序）的并列行为。
+    tags.sort_by(|left, right| left.1.cmp(&right.1));
+    tags.sort_by(|left, right| right.0.cmp(&left.0));
+    let tag_names = tags.into_iter().map(|(_, name)| name).collect();
+
+    let mut branches = heads
+        .iter()
+        .chain(remotes.iter())
+        .cloned()
+        .collect::<Vec<String>>();
+    branches.sort();
+    branches.dedup();
+
+    let mut remote_branches = remotes;
+    remote_branches.sort();
+    let mut local_branches = heads;
+    local_branches.sort();
+
+    Ok(RefSnapshot {
+        branches,
+        remote_branches,
+        local_branches,
+        tags: tag_names,
+    })
+}
+
+/// 标签的 creatordate（秒）：annotated tag 取 tagger 时间，lightweight 取指向
+/// commit 的 committer 时间；指向 tree/blob 的罕见标签按 0 处理（排到最后）。
+fn tag_creatordate(repo: &gix::Repository, id: Option<gix::Id<'_>>) -> i64 {
+    let Some(id) = id else {
+        return 0;
+    };
+    let Ok(obj) = repo.find_object(id) else {
+        return 0;
+    };
+    match obj.kind {
+        gix::objs::Kind::Tag => match obj.try_into_tag() {
+            Ok(tag) => tag
+                .tagger()
+                .ok()
+                .flatten()
+                .and_then(|signature| signature.time().ok())
+                .map(|time| time.seconds)
+                .unwrap_or(0),
+            Err(_) => 0,
+        },
+        gix::objs::Kind::Commit => match obj.try_into_commit() {
+            Ok(commit) => commit.time().map(|time| time.seconds).unwrap_or(0),
+            Err(_) => 0,
+        },
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +296,11 @@ mod tests {
         }
 
         fn git(&self, args: &[&str]) {
+            self.git_env(args, &[]);
+        }
+
+        /// 带环境变量（如 GIT_COMMITTER_DATE）的 git 调用。
+        fn git_env(&self, args: &[&str], envs: &[(&str, &str)]) {
             let output = std::process::Command::new("git")
                 .args(["-C", self.0.to_str().unwrap()])
                 .args([
@@ -202,6 +309,7 @@ mod tests {
                     "-c",
                     "user.email=test@branchline.local",
                 ])
+                .envs(envs.iter().copied())
                 .args(args)
                 .output()
                 .expect("git 可用");
@@ -210,6 +318,20 @@ mod tests {
                 "git {args:?} 失败：{}",
                 String::from_utf8_lossy(&output.stderr)
             );
+        }
+
+        fn git_output(&self, args: &[&str]) -> String {
+            let output = std::process::Command::new("git")
+                .args(["-C", self.0.to_str().unwrap()])
+                .args(args)
+                .output()
+                .expect("git 可用");
+            assert!(
+                output.status.success(),
+                "git {args:?} 失败：{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).to_string()
         }
 
         fn write(&self, name: &str, content: &str) {
@@ -309,5 +431,74 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
         let token = repository_state_token(nested.to_str().unwrap()).expect("子目录也能算");
         assert_eq!(token, sandbox.token(), "子目录与根路径算出同一 token");
+    }
+
+    /// 建一个带分支/远端引用/双类标签的仓库，gix 与 CLI 的 refs 枚举逐字段对拍。
+    #[test]
+    fn read_refs_matches_cli_output_field_by_field() {
+        let sandbox = seeded_repo();
+
+        // 第二个提交（晚于首个），lightweight 标签指在它上。
+        sandbox.write("b.txt", "second\n");
+        sandbox.git(&["add", "."]);
+        sandbox.git(&["commit", "-q", "-m", "second"]);
+        sandbox.git(&["tag", "light-second"]);
+
+        // annotated tag：带明确 tagger 时间的最早标签（应排最后）。
+        sandbox.git_env(
+            &["tag", "-a", "annotated-early", "-m", "early"],
+            &[("GIT_COMMITTER_DATE", "2020-01-01T00:00:00Z")],
+        );
+
+        // 分支：含嵌套名（feat/1248）。
+        sandbox.git(&["branch", "feat/1248"]);
+        sandbox.git(&["branch", "topic"]);
+
+        // 远端引用不走网络：手工建 tracking refs + HEAD 符号引用。
+        let commit = sandbox.git_output(&["rev-parse", "main"]);
+        sandbox.git(&[
+            "update-ref",
+            &format!("refs/remotes/origin/main"),
+            commit.trim(),
+        ]);
+        sandbox.git(&["update-ref", "refs/remotes/origin/feat/1248", commit.trim()]);
+        sandbox.git(&[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ]);
+
+        let gix_refs = read_refs(&sandbox.0).expect("gix read_refs");
+        let root = sandbox.0.clone();
+        let cli_branches = crate::git::parse_branches(&root);
+        let cli_remote = crate::git::parse_remote_branches(&root);
+        let cli_local = crate::git::parse_local_branches(&root);
+        let cli_tags = crate::git::parse_tags(&root);
+
+        assert_eq!(gix_refs.branches, cli_branches, "branches 与 CLI 对拍");
+        assert_eq!(
+            gix_refs.remote_branches, cli_remote,
+            "remote_branches 与 CLI 对拍"
+        );
+        assert_eq!(
+            gix_refs.local_branches, cli_local,
+            "local_branches 与 CLI 对拍"
+        );
+        assert_eq!(
+            gix_refs.tags, cli_tags,
+            "tags 与 CLI 对拍（creatordate 降序）"
+        );
+
+        // 结构自检：origin/HEAD 按 git 短名规则缩成 "origin"、嵌套名在列、
+        // annotated 最早排最后。
+        assert!(
+            gix_refs.remote_branches.iter().any(|name| name == "origin"),
+            "origin/HEAD 应缩短为 origin 出现在远端列表"
+        );
+        assert!(gix_refs.branches.iter().any(|name| name == "feat/1248"));
+        assert_eq!(
+            gix_refs.tags.last().map(String::as_str),
+            Some("annotated-early")
+        );
     }
 }
