@@ -113,6 +113,8 @@ export const nav = {
   'shell.autoFetchStatusOff': '自动 Fetch：已停用',
   'shell.autoFetchTitle': '后台同步',
   'shell.autoFetchHint': '控制远程引用更新与本地状态采样',
+  'shell.autoFetchNotifyFailed': '后台获取失败，已暂停自动重试',
+  'shell.autoFetchNotifyRecovered': '后台获取已恢复',
   'shell.autoFetchEnable': '启用自动 Fetch',
   'shell.autoFetchEnableHint': '仅在仓库已打开时执行',
   'shell.fetchInterval': '获取间隔',

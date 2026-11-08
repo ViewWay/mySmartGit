@@ -113,6 +113,8 @@ export const nav = {
   'shell.autoFetchStatusOff': 'Auto fetch: off',
   'shell.autoFetchTitle': 'Background sync',
   'shell.autoFetchHint': 'Controls remote ref updates and local status sampling',
+  'shell.autoFetchNotifyFailed': 'Background fetch failed; auto retry paused',
+  'shell.autoFetchNotifyRecovered': 'Background fetch recovered',
   'shell.autoFetchEnable': 'Enable auto fetch',
   'shell.autoFetchEnableHint': 'Runs only while a repository is open',
   'shell.fetchInterval': 'Fetch interval',

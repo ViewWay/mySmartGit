@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getLanguage, translate } from '../../i18n'
+import { getLanguage, translate, useI18n } from '../../i18n'
 import {
   fetchRepository,
   loadRepository,
@@ -7,6 +7,7 @@ import {
   onRepositoryAutoFetched,
   onRepositoryChanged,
   pickAndLoadRepository,
+  requestNotificationPermission,
   setRepositoryAutoFetchConfig,
   type RepositorySnapshot,
 } from '../../repository'
@@ -343,11 +344,22 @@ export function useRepositoryWorkspace() {
   }, [applyRefreshedSnapshot, repository, setRepositoryNotice])
 
   // 定时 Fetch 由 Rust service 执行（覆盖全部已开仓库、单飞、失败退避）：
-  // 前端只下发开关与间隔，配置变更即时生效；Web 模式 invoke 不可用，静默跳过。
+  // 前端下发开关、间隔与系统通知文案（跟随菜单模式——文案按当前语言随配置
+  // 重发，语言切换即时生效）；Web 模式 invoke 不可用，静默跳过。
+  const { language } = useI18n()
   useEffect(() => {
-    void setRepositoryAutoFetchConfig(autoFetchSettings.enabled, autoFetchSettings.intervalMinutes)
-      .catch(() => undefined)
-  }, [autoFetchSettings.enabled, autoFetchSettings.intervalMinutes])
+    void setRepositoryAutoFetchConfig(
+      autoFetchSettings.enabled,
+      autoFetchSettings.intervalMinutes,
+      translate(language, 'shell.autoFetchNotifyFailed'),
+      translate(language, 'shell.autoFetchNotifyRecovered'),
+    ).catch(() => undefined)
+  }, [autoFetchSettings.enabled, autoFetchSettings.intervalMinutes, language])
+
+  // 系统通知授权：桌面端启动即请求一次（macOS 弹授权框，Windows/Linux 默认放行）。
+  useEffect(() => {
+    void requestNotificationPermission().catch(() => undefined)
+  }, [])
 
   // 后台定时 Fetch 完成事件：命中当前仓库即回填「上次获取」时间戳。快照刷新
   // 不在这里做——fetch 的 refs 变化会经 repository-changed 推送走既有同步链路。

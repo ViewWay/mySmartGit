@@ -140,8 +140,25 @@ export async function onRepositoryChanged(
 
 // 定时 Fetch 已移到 Rust service（覆盖全部已开仓库、单飞、失败退避）；前端设置
 // 面板只负责下发开关与间隔，快照刷新仍走 repository-changed 推送。
-export async function setRepositoryAutoFetchConfig(enabled: boolean, intervalMinutes: number) {
-  return invoke<void>('set_repository_auto_fetch_config', { enabled, intervalMinutes })
+export async function setRepositoryAutoFetchConfig(
+  enabled: boolean,
+  intervalMinutes: number,
+  notifyFailedText?: string,
+  notifyRecoveredText?: string,
+) {
+  return invoke<void>('set_repository_auto_fetch_config', {
+    enabled,
+    intervalMinutes,
+    notifyFailedText,
+    notifyRecoveredText,
+  })
+}
+
+/** 请求系统通知权限（macOS 需授权，Windows/Linux 默认放行）；返回授权结果。 */
+export async function requestNotificationPermission(): Promise<string> {
+  if (!isTauriRuntime()) return 'granted'
+  const { requestPermission } = await import('@tauri-apps/plugin-notification')
+  return requestPermission()
 }
 
 /** 订阅后台定时 Fetch 完成事件；返回取消订阅函数。 */
