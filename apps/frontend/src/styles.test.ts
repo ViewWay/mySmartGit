@@ -184,6 +184,16 @@ describe('semantic style architecture', () => {
     expect(diffPanel).not.toContain('<ChevronDown size={14}/><code title={activeFileInfo?.path}')
   })
 
+  it('keeps scan-result checkboxes sized independently of the add-dialog input rule', () => {
+    const repositoryManager = readFileSync(new URL('./styles/repository-manager.css', import.meta.url), 'utf8')
+    const checkboxRule = repositoryManager.match(/\.repository-scan-row input\[type='checkbox'\] \{[^}]+\}/)?.[0] ?? ''
+    // 复选框若继承 .repository-add-dialog input 的 100% 宽，会把行内仓库路径文本挤成 0 宽。
+    expect(checkboxRule).toContain('flex-shrink: 0;')
+    expect(checkboxRule).toContain('width: 14px;')
+    expect(checkboxRule).toContain('height: 14px;')
+    expect(checkboxRule).toContain('background: none;')
+  })
+
   it('opens commit details from a selected row and closes them from the panel', () => {
     expect(app).toContain("usePersistentState('branchline.inspectorCollapsed.v2', true")
     expect(app).toContain('onSelect={(id) => { setSelected(id); setInspectorCollapsed(false) }}')

@@ -124,7 +124,8 @@
 .repository-scan-empty { color: var(--text-tertiary); font-size: 12px; text-align: center; padding: 18px 0; }
 .repository-scan-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; font-size: 12px; }
 .repository-scan-row:hover { background: var(--surface-hover); }
-.repository-scan-row input[type='checkbox'] { flex-shrink: 0; }
+/* 复选框要挣脱 .repository-add-dialog input 的 100% 宽/34px 高，否则会把行内文本挤成 0 宽。 */
+.repository-scan-row input[type='checkbox'] { flex-shrink: 0; width: 14px; height: 14px; margin: 0; padding: 0; border: 0; background: none; accent-color: var(--accent); }
 .repository-scan-row-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .repository-scan-row-text strong { color: var(--text-primary); }
 .repository-scan-row-text code { color: var(--text-tertiary); font: 11px var(--font-code); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
