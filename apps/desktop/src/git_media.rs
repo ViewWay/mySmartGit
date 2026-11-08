@@ -15,7 +15,7 @@
 use crate::git;
 use crate::models::{ImageFileDiff, MediaBlob};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{Read, Take};
+use std::io::{BufRead, Read, Take, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -256,6 +256,89 @@ pub fn blob_size(root: &Path, oid: &str) -> Result<u64, String> {
         .trim()
         .parse::<u64>()
         .map_err(|_| format!("无法读取对象大小：{oid}"))
+}
+
+/// `cat-file --batch` 一次往返的结果：内容寻址 oid、完整大小与按预算截断的内容。
+pub struct BatchBlob {
+    pub oid: String,
+    pub size_bytes: u64,
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
+}
+
+/// 用一次 `git cat-file --batch` 进程同时解析 `<ref>:<path>` 的 oid、类型、大小并读取内容，
+/// 替代 rev-parse + `cat-file -t`/`-s`/`blob` 的四次进程串联——每次 spawn ≈ 6ms，
+/// 串联起来正是文件预览「正在读取内容」卡顿的主要来源。
+/// spec 经 stdin 传入（天然免疫参数注入），单次请求后即关闭，不常驻进程。
+/// 返回 `None` 表示 spec 不存在或指向非 blob 对象（目录、gitlink），按「无此文件」处理。
+pub fn batch_read_blob(repository_path: &Path, spec: &str, budget: u64) -> Result<Option<BatchBlob>, String> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(repository_path)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().map_err(|error| format!("无法启动 Git：{error}"))?;
+    let outcome = batch_round_trip(&mut child, spec, budget);
+    // 无论成败都收掉子进程：截断读取时 git 还挂着，管道关闭后它自行退出，这里兜底。
+    let _ = child.kill();
+    let _ = child.wait();
+    outcome
+}
+
+fn batch_round_trip(child: &mut std::process::Child, spec: &str, budget: u64) -> Result<Option<BatchBlob>, String> {
+    let mut stdin = child.stdin.take().ok_or_else(|| "无法写入 Git 请求".to_string())?;
+    let write_result = stdin.write_all(format!("{spec}\n").as_bytes()).and_then(|()| stdin.flush());
+    // EOF 即「请求结束」：git 输出完当前对象后自行退出，不必常驻。
+    drop(stdin);
+    write_result.map_err(|error| format!("无法写入 Git 请求：{error}"))?;
+    let stdout = child.stdout.take().ok_or_else(|| "无法读取 Git 输出".to_string())?;
+    let mut reader = std::io::BufReader::new(stdout);
+    let mut header = String::new();
+    let header_read = reader.read_line(&mut header).map_err(|error| format!("读取 Git 输出失败：{error}"))?;
+    if header_read == 0 {
+        // 连对象头都没吐就退出：多半不是仓库或 git 自身报错，收掉进程再读 stderr 给出原因。
+        let _ = child.kill();
+        let _ = child.wait();
+        let mut message = String::new();
+        if let Some(stderr) = child.stderr.as_mut() {
+            let _ = stderr.read_to_string(&mut message);
+        }
+        let message = message.trim();
+        return Err(if message.is_empty() { "Git 未返回对象信息".to_string() } else { message.to_string() });
+    }
+    // 成功时头为 `<oid> <type> <size>`；spec 不存在时为 `<spec> missing`。
+    let header = header.trim_end();
+    let mut parts = header.split(' ');
+    let (oid, kind, size_text) = match (parts.next(), parts.next(), parts.next()) {
+        (Some(_), Some("missing"), _) => return Ok(None),
+        (Some(oid), Some(kind), Some(size_text)) => (oid, kind, size_text),
+        _ => return Err(format!("Git 返回了无法解析的对象信息：{header}")),
+    };
+    let size_bytes: u64 = size_text.parse().map_err(|_| format!("无法解析对象大小：{header}"))?;
+    if kind != "blob" {
+        // 目录（tree）/子模组指针（commit）：与 resolve_blob_oid 的非 blob 分支对齐。
+        return Ok(None);
+    }
+    if oid.len() != 40 || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{spec} 不是一个有效的文件对象"));
+    }
+    // 多读 1 字节用来区分「刚好等于预算」和「后面还有内容」，与 read_blob_head 一致。
+    let want = size_bytes.min(budget.saturating_add(1)) as usize;
+    let mut buffer = vec![0u8; want];
+    reader.read_exact(&mut buffer).map_err(|error| format!("读取 blob 失败：{error}"))?;
+    let truncated = size_bytes > budget;
+    if truncated {
+        buffer.truncate(budget as usize);
+    }
+    Ok(Some(BatchBlob { oid: oid.to_string(), size_bytes, bytes: buffer, truncated }))
 }
 
 /// 先按扩展名，再用文件头 magic bytes 纠正（重命名成 .png 的 JPEG 也能识别）。
@@ -786,13 +869,6 @@ fn open_with_default_app(path: &Path) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(error) => Err(format!("无法调用系统打开程序：{error}")),
     }
-}
-
-/// 供文本预览判定「这个 blob 值不值得当文本读」。
-/// 供 git_tree.rs 的文本预览复用：按预算流式读取 blob，避免整体进内存。
-/// 返回值第二项表示是否被截断。
-pub fn blob_bytes_for_text(root: &Path, oid: &str, budget: u64) -> Result<(Vec<u8>, bool), String> {
-    read_blob_head(root, oid, budget)
 }
 
 #[cfg(test)]

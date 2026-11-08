@@ -369,7 +369,7 @@ pub fn load_commit_tree_children(
 }
 
 /// 按 ref 打开某个文件的预览：文本截断返回，图片交给 git_media。
-/// 同样先查 `cat-file -s`，超限不整体读入内存。
+/// 文本走单进程 `cat-file --batch`（解析+验型+测长+读取一次完成），图片仍先查大小、超限不整体读入内存。
 pub fn load_revision_file_preview(
     repository_path: &str,
     reference: &str,
@@ -377,7 +377,6 @@ pub fn load_revision_file_preview(
     max_text_bytes: Option<u64>,
     request_id: Option<&str>,
 ) -> Result<RevisionFilePreview, String> {
-    let root = git::repository_root(repository_path)?;
     let reference = validated_reference(reference)?;
     let path = validated_path(file_path)?;
     let budget = max_text_bytes.unwrap_or(DEFAULT_TEXT_PREVIEW_BYTES).clamp(1024, 4 * 1024 * 1024);
@@ -407,12 +406,16 @@ pub fn load_revision_file_preview(
         });
     }
 
-    let oid = git_media::resolve_blob_oid(&root, &reference, &path)?
+    // 一次 `cat-file --batch` 进程同时完成解析、验型、测长与读取——
+    // 原先这条链要串行 spawn 五个 git 进程（root/resolve/-t/-s/blob），是预览卡顿的主因。
+    // `git -C <任意仓库内路径>` 会自行定位仓库，因此也不必先 rev-parse 仓库根。
+    let spec = format!("{reference}:{path}");
+    let blob = git_media::batch_read_blob(Path::new(repository_path), &spec, budget)?
         .ok_or_else(|| format!("{reference}:{path} 在该引用下不存在"))?;
     git_media::ensure_not_cancelled(request_id)?;
-    let size_bytes = git_media::blob_size(&root, &oid)?;
-    let read_budget = size_bytes.min(budget);
-    let (bytes, truncated) = git_media::blob_bytes_for_text(&root, &oid, read_budget)?;
+    let oid = blob.oid;
+    let size_bytes = blob.size_bytes;
+    let (bytes, truncated) = (blob.bytes, blob.truncated);
     // NUL 出现在前 8 KiB 内即判定为二进制，与 git 的经验规则一致。
     let probe = &bytes[..bytes.len().min(8 * 1024)];
     if probe.contains(&0u8) {
@@ -435,7 +438,7 @@ pub fn load_revision_file_preview(
         oid,
         size_bytes,
         kind: "text".to_string(),
-        truncated: truncated || size_bytes > read_budget,
+        truncated,
         text: Some(text),
         media: None,
         error: None,
@@ -654,6 +657,39 @@ mod tests {
 
         // 不存在的文件明确报错，不 panic。
         assert!(load_revision_file_preview(&path, "HEAD", "nope.txt", None, None).is_err());
+    }
+
+    #[test]
+    fn text_preview_works_from_a_subdirectory_path_and_rejects_directory_specs() {
+        let repository = repository();
+        seed(&repository);
+        // 文本路径不再先 rev-parse 仓库根，而是直接 `git -C <路径>`：
+        // 仓库内任意子目录作为 repository_path 都必须照样工作。
+        // 注意 `<rev>:<path>` 的 path 相对仓库根（git 语义，与 cwd 无关），这里传完整路径。
+        let subdir = repository.0.join("apps/desktop");
+        let from_subdir = load_revision_file_preview(
+            &subdir.to_string_lossy(), "HEAD", "apps/desktop/src/main.rs", None, None,
+        )
+        .expect("preview from subdirectory");
+        assert_eq!(from_subdir.kind, "text");
+        assert_eq!(from_subdir.text.as_deref(), Some("fn main() {}\n"));
+
+        // 目录 spec 解析到 tree 对象：按「无此文件」报错，而不是把二进制树内容当文本返回。
+        let directory = load_revision_file_preview(
+            &repository.0.to_string_lossy(), "HEAD", "apps", None, None,
+        );
+        assert!(directory.is_err());
+
+        // 空文件也是合法文本：kind=text、空串、不截断。
+        fs::write(repository.0.join("empty.txt"), "").expect("write empty");
+        commit(&repository.0, "加空文件");
+        let empty = load_revision_file_preview(
+            &repository.0.to_string_lossy(), "HEAD", "empty.txt", None, None,
+        )
+        .expect("empty text");
+        assert_eq!(empty.kind, "text");
+        assert_eq!(empty.text.as_deref(), Some(""));
+        assert!(!empty.truncated);
     }
 
     #[test]

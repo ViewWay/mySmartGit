@@ -513,6 +513,7 @@ struct CachedIndex {
     truncated: bool,
     cancelled: bool,
     notice: Option<String>,
+    #[allow(dead_code)] // 预留：索引缓存字节量元数据
     bytes: usize,
     sequence: u64,
 }
@@ -1596,6 +1597,7 @@ fn read_file_bytes(root: &Path, relative: &str, revision: Option<&str>, max_byte
 
 #[derive(Clone, Copy)]
 struct PlanEdit {
+    #[allow(dead_code)] // 预留：替换计划中的人类可读行号
     line_number: usize,
     byte_offset: usize,
     byte_length: usize,
@@ -1622,6 +1624,7 @@ struct ReplacePlan {
     total_occurrences: usize,
     skipped: Vec<(String, String)>,
     truncated: bool,
+    #[allow(dead_code)] // 预留：替换预览的字节量估算
     estimated_bytes: usize,
     created_at_ms: u128,
     sequence: u64,
@@ -2070,8 +2073,10 @@ fn write_file_atomic(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), St
 struct ManifestEntry {
     index: usize,
     relative_path: String,
+    #[allow(dead_code)] // 预留：应用替换前的完整性校验元数据
     before_checksum: String,
     after_checksum: String,
+    #[allow(dead_code)] // 预留：清单条目的字节量
     size_bytes: usize,
     occurrences: usize,
 }
