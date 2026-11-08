@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { RepositoryDiffLine } from '../../repository'
-import { buildStagePatch, changeBlock, changeLine } from './DiffPanel'
+import { buildStagePatch, changeBlock, changeLine } from './stagePatch'
 
 function repository(before: string | null, after: string, run: (git: (...args: string[]) => string, path: string) => void) {
   const path = mkdtempSync(join(tmpdir(), 'branchline-patch-'))

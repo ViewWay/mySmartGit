@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { RepositoryDiffLine } from '../../repository'
-import { buildStagePatch, changeBlock, changeLine, diffActionEdgeSpace, diffOverviewBounds, diffOverviewMarkers, diffOverviewViewport, diffSplitRowHeight, diffVirtualWindow, diffScrollTarget, diffReflowScrollTop, shouldJumpToFirstChange, shouldRenderLoadedRows } from './DiffPanel'
+import { buildStagePatch, changeBlock, changeLine } from './stagePatch'
+import { diffActionEdgeSpace, diffSplitRowHeight, diffScrollTarget, diffVirtualWindow, diffReflowScrollTop, shouldJumpToFirstChange, shouldRenderLoadedRows } from './diffVirtual'
+import { diffOverviewBounds, diffOverviewMarkers, diffOverviewViewport } from './diffOverview'
 
 // These fixtures catch constant-height indexing and fixed row-count viewport limits.
 describe('variable diff navigation', () => {
