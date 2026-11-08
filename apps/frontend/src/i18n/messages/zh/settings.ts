@@ -24,7 +24,7 @@ export const settings = {
   'gitconfig.globalTemplate': '全局提交模板',
   'gitconfig.globalTemplateHint': '完整保留多行文本、空行和注释',
   'gitconfig.globalTemplatePlaceholder': '例如：\n类型：\n说明：\n\n关联 Issue：',
-  'gitconfig.savedNote': '配置保存到 ~/.gitconfig，并应用于本机的所有仓库。',
+  'gitconfig.savedNote': '配置保存到 ~/.gitconfig，并应用于本机的所有仓库；仓库内的同名配置优先级更高。',
   'gitconfig.saving': '正在保存…',
   'gitconfig.save': '保存配置',
   'cmdlog.noOutput': '命令没有输出',

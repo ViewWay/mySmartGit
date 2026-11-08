@@ -24,7 +24,7 @@ export const settings = {
   'gitconfig.globalTemplate': 'Global commit template',
   'gitconfig.globalTemplateHint': 'Multi-line text, blank lines, and comments are preserved',
   'gitconfig.globalTemplatePlaceholder': 'e.g.\nType:\nDescription:\n\nRefs: ',
-  'gitconfig.savedNote': 'Saved to ~/.gitconfig and applied to every repository on this machine.',
+  'gitconfig.savedNote': 'Saved to ~/.gitconfig and applied to every repository on this machine; repo-level settings of the same key take precedence.',
   'gitconfig.saving': 'Saving…',
   'gitconfig.save': 'Save configuration',
   'cmdlog.noOutput': 'The command produced no output',
