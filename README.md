@@ -138,7 +138,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 
 当前使用 Tauri 2 + Rust 后端，通过受控的 Git CLI 读取仓库。后续可将高频只读操作迁移到 `gix` 或 `git2`，复杂写操作继续使用 Git CLI 保持行为兼容。
 
-1. 仓库层：统一 `RepositoryService`，支持发现、打开、最近仓库、状态缓存和文件监听。
+1. 仓库层：统一 `RepositoryService`（已落地基础版：打开仓库生命周期管理、状态 token/快照/Diff 三缓存、文件监听推送 `repository-changed`，最近仓库持久化仍归前端）。
 2. 提交层：流式解析提交、拓扑和 refs，分页送入前端并做可见区域渲染。
 3. 操作层：stage、commit、branch、merge、rebase、cherry-pick、stash、tag、remote、worktree 和 submodule。
 4. 历史层：继续增加任意文件选择、指定行范围和提交跳转。
@@ -151,7 +151,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 
 - 提交列表和 Diff 使用窗口化渲染，禁止一次性向前端发送完整大型历史。
 - Rust 侧维护可取消的任务队列；搜索、切换仓库和关闭窗口时中止旧任务。
-- 文件状态、提交图谱和 Diff 分开缓存，缓存使用条目和字节双重上限。
+- 文件状态、提交图谱和 Diff 在 Rust 侧 `RepositoryService` 分开缓存，缓存使用条目和字节双重上限；文件监听（notify）失效缓存并向前端推送 `repository-changed`，状态 token 未变时轮询不再起 git 子进程。
 - 定时 Fetch 在后台低优先级执行，同一仓库只允许一个网络任务。
 - 文本预览用单次 `git cat-file --batch` 往返完成解析、验型、测长与读取，替代 rev-parse + cat-file 多进程串联，消除文件预览的「正在读取内容」卡顿。
 - 前端避免 Electron 常驻进程；目标空闲内存控制在 100 MB 左右，具体以接入 Tauri 后的基准测试为准。

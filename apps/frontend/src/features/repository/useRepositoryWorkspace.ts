@@ -4,6 +4,7 @@ import {
   fetchRepository,
   loadRepository,
   loadRepositoryStateToken,
+  onRepositoryChanged,
   pickAndLoadRepository,
   type RepositorySnapshot,
 } from '../../repository'
@@ -381,8 +382,21 @@ export function useRepositoryWorkspace() {
     }
     window.addEventListener('focus', synchronizeWhenVisible)
     document.addEventListener('visibilitychange', synchronizeWhenVisible)
+    // 后端文件监听推送（repository-changed）：命中当前仓库即跳过轮询周期立即同步；
+    // 轮询仍保留作降级兜底（token 命中缓存时后端不再起 git 子进程，轮询成本近零）。
+    let unlisten: (() => void) | null = null
+    let subscriptionDisposed = false
+    void onRepositoryChanged((event) => {
+      if (repositoryCacheKey(event.repositoryPath) !== key) return
+      if (!document.hidden) void synchronizeLocalState()
+    }).then((stop) => {
+      if (subscriptionDisposed) stop()
+      else unlisten = stop
+    })
     return () => {
       cancelled = true
+      subscriptionDisposed = true
+      unlisten?.()
       if (timer !== null) window.clearInterval(timer)
       window.removeEventListener('focus', synchronizeWhenVisible)
       document.removeEventListener('visibilitychange', synchronizeWhenVisible)

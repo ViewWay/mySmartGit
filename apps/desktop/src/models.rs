@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryCommit {
     pub id: String,
@@ -35,7 +35,7 @@ pub struct RepositoryCommitStats {
     pub deletions: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryFile {
     pub path: String,
@@ -47,7 +47,7 @@ pub struct RepositoryFile {
     pub incoming: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryOperationStep {
     pub hash: String,
@@ -57,7 +57,7 @@ pub struct RepositoryOperationStep {
     pub status: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryOperationState {
     pub kind: String,
@@ -164,7 +164,7 @@ pub struct BlameLine {
     pub content: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryWorktree {
     pub path: String,
@@ -175,7 +175,7 @@ pub struct RepositoryWorktree {
     pub prunable: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositorySubmodule {
     pub path: String,
@@ -184,7 +184,7 @@ pub struct RepositorySubmodule {
     pub branch: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryBranchTracking {
     pub upstream: Option<String>,
@@ -192,7 +192,7 @@ pub struct RepositoryBranchTracking {
     pub behind: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryStash {
     pub reference: String,
@@ -202,7 +202,7 @@ pub struct RepositoryStash {
     pub time: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryCommitTemplate {
     pub path: String,
@@ -236,7 +236,7 @@ pub struct MergeQueueSnapshot {
     pub candidates: Vec<MergeCandidate>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositorySnapshot {
     pub name: String,

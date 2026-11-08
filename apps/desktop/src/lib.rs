@@ -18,6 +18,7 @@ mod git_submodule;
 mod menu;
 mod models;
 mod repository_management;
+mod repository_service;
 
 use tauri::{Emitter, Manager};
 
@@ -35,6 +36,8 @@ pub fn run() {
                 let _ = app.set_menu(built);
             }
             app.manage(std::sync::Mutex::new(runtime));
+            // 仓库层服务：打开仓库生命周期、三类缓存与文件监听（repository_service.rs）。
+            app.manage(repository_service::RepositoryServiceState::new(app.handle().clone()));
             Ok(())
         })
         .on_menu_event(|app, event| {

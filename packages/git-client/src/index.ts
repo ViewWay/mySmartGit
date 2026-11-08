@@ -124,6 +124,20 @@ export async function loadRepositoryStateToken(repositoryPath: string) {
   return invoke<string>('load_repository_state_token', { repositoryPath })
 }
 
+/** 订阅后端文件监听推送的仓库变更事件（repository_service）；返回取消订阅函数。 */
+export async function onRepositoryChanged(
+  handler: (event: { repositoryPath: string; generation: number }) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<{ repository_path: string; generation: number }>('repository-changed', (event) => {
+    handler({
+      repositoryPath: event.payload.repository_path,
+      generation: event.payload.generation,
+    })
+  })
+}
+
 export async function pickAndLoadRepository(): Promise<RepositorySnapshot | null> {
   if (!isTauriRuntime()) {
     throw new Error('打开本地仓库需要桌面版。请运行 pnpm desktop:dev。')

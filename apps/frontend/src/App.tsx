@@ -153,7 +153,6 @@ function mergeHistoryStreamCommits(base: Commit[], extra: Commit[]) {
 }
 
 const nextThemePreference: Record<ThemePreference, ThemePreference> = { light: 'dark', dark: 'system', system: 'light' }
-const themeLabels: Record<ThemePreference, string> = { light: '浅色', dark: '深色', system: '跟随系统' }
 
 const subscribePrefersDark = (listener: () => void) => {
   const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -1601,7 +1600,7 @@ export default function App() {
             {sidebarCollapsed && <Button variant="icon" className="panel-toggle" onClick={() => setSidebarCollapsed(false)} title={t('common.expandSidebar')}><PanelLeftOpen size={17}/></Button>}
             <Button variant="icon" onClick={() => setShortcutOpen(true)} title={t('shell.shortcuts')}><Command size={17}/></Button>
             <Button variant="icon" className="force-push-trigger" onClick={() => setForcePushOpen(true)} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={repository?.operation ? t('shell.finishOperationFirstTitle') : t('shell.forcePushTitle')}><AlertTriangle size={16}/></Button>
-            <Button variant="icon" onClick={() => setPreference('theme', nextThemePreference[theme])} title={`当前主题：${themeLabels[theme]}（显示${themeLabels[resolvedTheme]}），点击切换为${themeLabels[nextThemePreference[theme]]}`}>{resolvedTheme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</Button>
+            <Button variant="icon" onClick={() => setPreference('theme', nextThemePreference[theme])} title={t('shell.themeToggleTitle', { current: t(`preferences.theme.${theme}`), resolved: t(`preferences.theme.${resolvedTheme}`), next: t(`preferences.theme.${nextThemePreference[theme]}`) })}>{resolvedTheme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</Button>
             <Button ref={notificationButtonRef} variant="icon" className="notification" active={notificationOpen} onClick={() => setNotificationOpen((value) => !value)} title={t('shell.notifications')}><Bell size={17}/><span/></Button>
             {notificationOpen && <div ref={notificationPopoverRef} className="notification-popover">
               <div className="popover-heading"><strong>{t('shell.notifications')}</strong><button onClick={() => setNotificationOpen(false)} title={t('shell.closeNotifications')}><X size={13}/></button></div>

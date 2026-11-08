@@ -4,6 +4,7 @@ use crate::{
         BlameLine, DiffLine, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot,
         RepositoryCommitStats, RepositoryComparison, RepositoryFile, RepositorySnapshot,
     },
+    repository_service::RepositoryServiceState,
 };
 use std::path::Path;
 
@@ -12,36 +13,62 @@ fn task_error(action: &str, error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-pub async fn load_repository_details(repository_path: String) -> Result<crate::repository_management::RepositoryDetails, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::repository_management::load_repository_details(&repository_path))
-        .await.map_err(|error| task_error("读取仓库信息", error))?
+pub async fn load_repository_details(
+    repository_path: String,
+) -> Result<crate::repository_management::RepositoryDetails, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::repository_management::load_repository_details(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("读取仓库信息", error))?
 }
 
 #[tauri::command]
-pub async fn load_repository_readme(repository_path: String) -> Result<Option<crate::repository_management::RepositoryReadme>, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::repository_management::load_repository_readme(&repository_path))
-        .await.map_err(|error| task_error("读取 README", error))?
+pub async fn load_repository_readme(
+    repository_path: String,
+) -> Result<Option<crate::repository_management::RepositoryReadme>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::repository_management::load_repository_readme(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("读取 README", error))?
 }
 
 #[tauri::command]
-pub async fn create_repository(destination: String, source: Option<String>) -> Result<crate::repository_management::RepositoryDetails, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::repository_management::create_repository(&destination, source.as_deref()))
-        .await.map_err(|error| task_error("创建仓库", error))?
+pub async fn create_repository(
+    destination: String,
+    source: Option<String>,
+) -> Result<crate::repository_management::RepositoryDetails, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::repository_management::create_repository(&destination, source.as_deref())
+    })
+    .await
+    .map_err(|error| task_error("创建仓库", error))?
 }
 
 /// 扫描文件夹里的 Git 仓库；默认深度 3，超 200 条由后端报错提示收敛范围。
 #[tauri::command]
-pub async fn scan_git_repositories(root: String, max_depth: Option<u32>) -> Result<Vec<crate::repository_management::ScannedRepository>, String> {
+pub async fn scan_git_repositories(
+    root: String,
+    max_depth: Option<u32>,
+) -> Result<Vec<crate::repository_management::ScannedRepository>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::repository_management::scan_git_repositories(&root, max_depth.unwrap_or(crate::repository_management::SCAN_DEFAULT_DEPTH))
+        crate::repository_management::scan_git_repositories(
+            &root,
+            max_depth.unwrap_or(crate::repository_management::SCAN_DEFAULT_DEPTH),
+        )
     })
-    .await.map_err(|error| task_error("扫描仓库", error))?
+    .await
+    .map_err(|error| task_error("扫描仓库", error))?
 }
 
 #[tauri::command]
 pub async fn open_repository_in_vscode(repository_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || crate::repository_management::open_repository_in_vscode(&repository_path))
-        .await.map_err(|error| task_error("打开 VS Code", error))?
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::repository_management::open_repository_in_vscode(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("打开 VS Code", error))?
 }
 
 fn operation_snapshot(
@@ -108,9 +135,11 @@ pub async fn update_repository_commit_template(
 pub async fn clear_repository_commit_template(
     repository_path: String,
 ) -> Result<RepositorySnapshot, String> {
-    tauri::async_runtime::spawn_blocking(move || git::clear_repository_commit_template(&repository_path))
-        .await
-        .map_err(|error| task_error("移除仓库提交模板", error))?
+    tauri::async_runtime::spawn_blocking(move || {
+        git::clear_repository_commit_template(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("移除仓库提交模板", error))?
 }
 
 #[tauri::command]
@@ -125,10 +154,24 @@ pub async fn clear_command_logs() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn load_repository(path: String) -> Result<RepositorySnapshot, String> {
-    tauri::async_runtime::spawn_blocking(move || git::read_repository(&path))
+pub async fn load_repository(
+    service: tauri::State<'_, RepositoryServiceState>,
+    path: String,
+) -> Result<RepositorySnapshot, String> {
+    // 缓存命中：generation 未变直接回快照，切换回访不再重读（README 性能边界）。
+    if let Some(snapshot) = service.snapshot(&path) {
+        return Ok(snapshot);
+    }
+    // 计算前先驻留（挂上文件监听）并取 generation：计算期间发生外部变更时，
+    // 结果不会落缓存，下一次轮询重新读取。
+    let generation = service.begin_read(&path);
+    let git_path = path.clone();
+    let loaded = tauri::async_runtime::spawn_blocking(move || git::read_repository(&git_path))
         .await
-        .map_err(|error| task_error("读取仓库", error))?
+        .map_err(|error| task_error("读取仓库", error))?;
+    let snapshot = loaded?;
+    service.finish_snapshot(&path, generation, &snapshot);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -144,49 +187,93 @@ pub async fn load_repository_history(
 }
 
 #[tauri::command]
-pub async fn load_repository_state_token(repository_path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || git::repository_state_token(&repository_path))
-        .await
-        .map_err(|error| task_error("检查仓库状态", error))?
+pub async fn load_repository_state_token(
+    service: tauri::State<'_, RepositoryServiceState>,
+    repository_path: String,
+) -> Result<String, String> {
+    // 轮询降本：generation 未变时直接回上次 token，不再起 git 子进程。
+    if let Some(token) = service.token(&repository_path) {
+        return Ok(token);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed =
+        tauri::async_runtime::spawn_blocking(move || git::repository_state_token(&git_path))
+            .await
+            .map_err(|error| task_error("检查仓库状态", error))?;
+    let token = computed?;
+    service.finish_token(&repository_path, generation, token.clone());
+    Ok(token)
 }
 
 #[tauri::command]
 pub async fn load_file_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::parse_diff(Path::new(&repository_path), &file_path, show_whitespace)
+    // Diff 缓存键：区分三种 diff 形态与空白开关，随 generation 失效。
+    let cache_key = format!("worktree\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        git::parse_diff(Path::new(&git_path), &file_path, show_whitespace)
     })
     .await
-    .map_err(|error| task_error("读取 Diff", error))?
+    .map_err(|error| task_error("读取 Diff", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 #[tauri::command]
 pub async fn load_unstaged_file_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::parse_unstaged_diff(Path::new(&repository_path), &file_path, show_whitespace)
+    let cache_key = format!("unstaged\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        git::parse_unstaged_diff(Path::new(&git_path), &file_path, show_whitespace)
     })
     .await
-    .map_err(|error| task_error("读取未暂存 Diff", error))?
+    .map_err(|error| task_error("读取未暂存 Diff", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 #[tauri::command]
 pub async fn load_staged_file_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::parse_staged_diff(Path::new(&repository_path), &file_path, show_whitespace)
+    let cache_key = format!("staged\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        git::parse_staged_diff(Path::new(&git_path), &file_path, show_whitespace)
     })
     .await
-    .map_err(|error| task_error("读取已暂存 Diff", error))?
+    .map_err(|error| task_error("读取已暂存 Diff", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 #[tauri::command]
@@ -205,9 +292,11 @@ pub async fn stage_files(
     file_paths: Vec<String>,
     force: bool,
 ) -> Result<Vec<RepositoryFile>, String> {
-    tauri::async_runtime::spawn_blocking(move || git::stage_files(&repository_path, &file_paths, force))
-        .await
-        .map_err(|error| task_error("暂存文件", error))?
+    tauri::async_runtime::spawn_blocking(move || {
+        git::stage_files(&repository_path, &file_paths, force)
+    })
+    .await
+    .map_err(|error| task_error("暂存文件", error))?
 }
 
 #[tauri::command]
@@ -496,11 +585,7 @@ pub async fn cherry_pick_repository_commit(
             ),
             None => git::cherry_pick_repository_commit(&repository_path, &commit),
         };
-        operation_snapshot(
-            &repository_path,
-            result,
-            "Cherry-pick",
-        )
+        operation_snapshot(&repository_path, result, "Cherry-pick")
     })
     .await
     .map_err(|error| error.to_string())?
@@ -705,7 +790,13 @@ pub async fn load_compare_file_diff(
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git::parse_compare_diff(&repository_path, &base, &target, &file_path, show_whitespace)
+        git::parse_compare_diff(
+            &repository_path,
+            &base,
+            &target,
+            &file_path,
+            show_whitespace,
+        )
     })
     .await
     .map_err(|error| task_error("读取比较 Diff", error))?
@@ -757,11 +848,22 @@ pub async fn set_repository_worktree_lock(
         git::read_repository(&repository_path)
     })
     .await
-    .map_err(|error| task_error(if locked { "锁定 Worktree" } else { "解锁 Worktree" }, error))?
+    .map_err(|error| {
+        task_error(
+            if locked {
+                "锁定 Worktree"
+            } else {
+                "解锁 Worktree"
+            },
+            error,
+        )
+    })?
 }
 
 #[tauri::command]
-pub async fn prune_repository_worktrees(repository_path: String) -> Result<RepositorySnapshot, String> {
+pub async fn prune_repository_worktrees(
+    repository_path: String,
+) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         git::prune_repository_worktrees(&repository_path)?;
         git::read_repository(&repository_path)
@@ -797,7 +899,9 @@ pub async fn update_repository_submodule(
 }
 
 #[tauri::command]
-pub async fn sync_repository_submodules(repository_path: String) -> Result<RepositorySnapshot, String> {
+pub async fn sync_repository_submodules(
+    repository_path: String,
+) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         git::sync_repository_submodules(&repository_path)?;
         git::read_repository(&repository_path)
@@ -915,18 +1019,22 @@ use crate::models::{RemoteOperationReport, RepositoryRemoteDetail, RepositoryTag
 pub async fn load_repository_remotes(
     repository_path: String,
 ) -> Result<Vec<RepositoryRemoteDetail>, String> {
-    tauri::async_runtime::spawn_blocking(move || git_remote::list_repository_remotes(&repository_path))
-        .await
-        .map_err(|error| task_error("读取远程列表", error))?
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::list_repository_remotes(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("读取远程列表", error))?
 }
 
 #[tauri::command]
 pub async fn load_repository_tag_details(
     repository_path: String,
 ) -> Result<Vec<RepositoryTagDetail>, String> {
-    tauri::async_runtime::spawn_blocking(move || git_remote::list_repository_tag_details(&repository_path))
-        .await
-        .map_err(|error| task_error("读取标签详情", error))?
+    tauri::async_runtime::spawn_blocking(move || {
+        git_remote::list_repository_tag_details(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("读取标签详情", error))?
 }
 
 #[tauri::command]
@@ -1023,7 +1131,12 @@ pub async fn create_repository_annotated_tag(
 ) -> Result<RemoteOperationReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         git_remote::create_repository_annotated_tag(
-            &repository_path, &tag, &commit, &message, force, confirm,
+            &repository_path,
+            &tag,
+            &commit,
+            &message,
+            force,
+            confirm,
         )
     })
     .await
@@ -1134,14 +1247,22 @@ pub async fn load_revision_file_diff(
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::git_recovery::load_revision_file_diff(&repository_path, &reference, &file_path, show_whitespace)
+        crate::git_recovery::load_revision_file_diff(
+            &repository_path,
+            &reference,
+            &file_path,
+            show_whitespace,
+        )
     })
     .await
     .map_err(|error| task_error("读取历史对象差异", error))?
 }
 
 #[tauri::command]
-pub async fn checkout_reflog_entry(repository_path: String, reference: String) -> Result<RepositorySnapshot, String> {
+pub async fn checkout_reflog_entry(
+    repository_path: String,
+    reference: String,
+) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::git_recovery::checkout_reflog_entry(&repository_path, &reference)?;
         git::read_repository(&repository_path)
@@ -1157,7 +1278,11 @@ pub async fn create_branch_from_reflog_entry(
     branch: String,
 ) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::git_recovery::create_branch_from_reflog_entry(&repository_path, &reference, &branch)?;
+        crate::git_recovery::create_branch_from_reflog_entry(
+            &repository_path,
+            &reference,
+            &branch,
+        )?;
         git::read_repository(&repository_path)
     })
     .await
@@ -1172,7 +1297,12 @@ pub async fn reset_repository_with_mode(
     confirm_hard: bool,
 ) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::git_recovery::reset_repository_with_mode(&repository_path, &commit, &mode, confirm_hard)?;
+        crate::git_recovery::reset_repository_with_mode(
+            &repository_path,
+            &commit,
+            &mode,
+            confirm_hard,
+        )?;
         git::read_repository(&repository_path)
     })
     .await
@@ -1201,10 +1331,14 @@ pub async fn start_repository_bisect(
 }
 
 #[tauri::command]
-pub async fn load_repository_bisect_status(repository_path: String) -> Result<crate::models::BisectStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::git_recovery::load_bisect_status(&repository_path))
-        .await
-        .map_err(|error| task_error("读取 Bisect 状态", error))?
+pub async fn load_repository_bisect_status(
+    repository_path: String,
+) -> Result<crate::models::BisectStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::load_bisect_status(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("读取 Bisect 状态", error))?
 }
 
 #[tauri::command]
@@ -1212,20 +1346,28 @@ pub async fn mark_repository_bisect(
     repository_path: String,
     verdict: String,
 ) -> Result<crate::models::BisectStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::git_recovery::mark_repository_bisect(&repository_path, &verdict))
-        .await
-        .map_err(|error| task_error("记录 Bisect 结论", error))?
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::mark_repository_bisect(&repository_path, &verdict)
+    })
+    .await
+    .map_err(|error| task_error("记录 Bisect 结论", error))?
 }
 
 #[tauri::command]
-pub async fn advance_repository_bisect(repository_path: String) -> Result<crate::models::BisectStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::git_recovery::advance_repository_bisect(&repository_path))
-        .await
-        .map_err(|error| task_error("推进 Bisect", error))?
+pub async fn advance_repository_bisect(
+    repository_path: String,
+) -> Result<crate::models::BisectStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::git_recovery::advance_repository_bisect(&repository_path)
+    })
+    .await
+    .map_err(|error| task_error("推进 Bisect", error))?
 }
 
 #[tauri::command]
-pub async fn reset_repository_bisect(repository_path: String) -> Result<RepositorySnapshot, String> {
+pub async fn reset_repository_bisect(
+    repository_path: String,
+) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::git_recovery::reset_repository_bisect(&repository_path)?;
         git::read_repository(&repository_path)
@@ -1486,9 +1628,7 @@ pub async fn save_repository_text_file(
 }
 
 #[tauri::command]
-pub async fn cancel_repository_search(
-    repository_path: String,
-) -> Result<usize, String> {
+pub async fn cancel_repository_search(repository_path: String) -> Result<usize, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::git_search::cancel_repository_search(&repository_path)
     })

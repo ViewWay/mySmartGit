@@ -87,6 +87,7 @@ export const nav = {
   'shell.forcePushTitle': '以 force-with-lease 强推当前分支（需输入分支名确认）',
   'shell.finishOperationFirstTitle': '请先完成当前 Git 操作',
   'shell.themeToLight': '切换浅色主题',
+  'shell.themeToggleTitle': '当前主题：{{current}}（显示{{resolved}}），点击切换为{{next}}',
   'shell.themeToDark': '切换深色主题',
   'shell.notifications': '查看通知',
   'shell.closeNotifications': '关闭通知',

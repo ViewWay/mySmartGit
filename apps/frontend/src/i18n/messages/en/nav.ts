@@ -87,6 +87,7 @@ export const nav = {
   'shell.forcePushTitle': 'Force-push the current branch with force-with-lease (type the branch name to confirm)',
   'shell.finishOperationFirstTitle': 'Finish the current Git operation first',
   'shell.themeToLight': 'Switch to light theme',
+  'shell.themeToggleTitle': 'Current theme: {{current}} (showing {{resolved}}); click to switch to {{next}}',
   'shell.themeToDark': 'Switch to dark theme',
   'shell.notifications': 'View notifications',
   'shell.closeNotifications': 'Close notifications',
