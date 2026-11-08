@@ -20,7 +20,7 @@ function GeneralPreferences() {
     </div>
     <div className="preferences-field">
       <div><strong>{t('preferences.theme')}</strong><small>{t('preferences.themeHint')}</small></div>
-      <CompactSelect value={preferences.theme} options={[{ value: 'light', label: t('preferences.theme.light') }, { value: 'dark', label: t('preferences.theme.dark') }]} onChange={(value) => setPreference('theme', value === 'dark' ? 'dark' : 'light')} ariaLabel={t('preferences.theme')}/>
+      <CompactSelect value={preferences.theme} options={[{ value: 'light', label: t('preferences.theme.light') }, { value: 'dark', label: t('preferences.theme.dark') }, { value: 'system', label: t('preferences.theme.system') }]} onChange={(value) => setPreference('theme', value)} ariaLabel={t('preferences.theme')}/>
     </div>
     <div className="preferences-field">
       <div><strong>{t('preferences.diffLayout')}</strong><small>{t('preferences.diffLayoutHint')}</small></div>
@@ -29,6 +29,11 @@ function GeneralPreferences() {
     <label className="preferences-toggle">
       <span><strong>{t('preferences.wordWrap')}</strong><small>{t('preferences.wordWrapHint')}</small></span>
       <input type="checkbox" checked={preferences.wordWrap} onChange={(event) => setPreference('wordWrap', event.target.checked)}/>
+      <span className="toggle-track" aria-hidden="true"><span/></span>
+    </label>
+    <label className="preferences-toggle">
+      <span><strong>{t('preferences.showTreeTab')}</strong><small>{t('preferences.showTreeTabHint')}</small></span>
+      <input type="checkbox" checked={preferences.showTreeTab} onChange={(event) => setPreference('showTreeTab', event.target.checked)}/>
       <span className="toggle-track" aria-hidden="true"><span/></span>
     </label>
     <label className="preferences-toggle">

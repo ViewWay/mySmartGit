@@ -11,13 +11,14 @@ describe('preferences', () => {
     })
   })
 
-  it('defaults to light unified layout without word wrap', async () => {
+  it('defaults to system theme and unified layout without word wrap', async () => {
     const { getPreferences } = await import('./preferences')
     expect(getPreferences()).toEqual({
-      theme: 'light',
+      theme: 'system',
       diffLayout: 'unified',
       wordWrap: false,
       showWhitespace: false,
+      showTreeTab: true,
       diffFontSize: 12,
     })
   })

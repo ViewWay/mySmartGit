@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-export type ThemePreference = 'light' | 'dark'
+export type ThemePreference = 'light' | 'dark' | 'system'
 export type DiffLayout = 'unified' | 'split'
 
 export interface Preferences {
@@ -8,13 +8,15 @@ export interface Preferences {
   diffLayout: DiffLayout
   wordWrap: boolean
   showWhitespace: boolean
+  /** 提交详情是否显示「文件树」tab；关闭后详情固定为差异文件视图。 */
+  showTreeTab: boolean
   diffFontSize: number
 }
 
 const STORAGE_KEY = 'branchline.preferences.v1'
 const MIN_FONT_SIZE = 9
 const MAX_FONT_SIZE = 24
-const DEFAULTS: Preferences = { theme: 'light', diffLayout: 'unified', wordWrap: false, showWhitespace: false, diffFontSize: 12 }
+const DEFAULTS: Preferences = { theme: 'system', diffLayout: 'unified', wordWrap: false, showWhitespace: false, showTreeTab: true, diffFontSize: 12 }
 const listeners = new Set<() => void>()
 let current = read()
 
@@ -48,10 +50,11 @@ function readLegacy(): Partial<Preferences> {
 
 function normalize(value: Partial<Preferences>): Preferences {
   return {
-    theme: value.theme === 'dark' ? 'dark' : 'light',
+    theme: value.theme === 'light' || value.theme === 'dark' || value.theme === 'system' ? value.theme : DEFAULTS.theme,
     diffLayout: value.diffLayout === 'split' ? 'split' : 'unified',
     wordWrap: value.wordWrap === true,
     showWhitespace: value.showWhitespace === true,
+    showTreeTab: value.showTreeTab !== false,
     diffFontSize: Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(value.diffFontSize ?? DEFAULTS.diffFontSize))),
   }
 }
