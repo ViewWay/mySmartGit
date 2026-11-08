@@ -138,7 +138,7 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 
 当前使用 Tauri 2 + Rust 后端，通过受控的 Git CLI 读取仓库。后续可将高频只读操作迁移到 `gix` 或 `git2`，复杂写操作继续使用 Git CLI 保持行为兼容。
 
-1. 仓库层：统一 `RepositoryService`（已落地基础版：打开仓库生命周期管理、状态 token/快照/Diff 三缓存、文件监听推送 `repository-changed`，最近仓库持久化仍归前端）。
+1. 仓库层：统一 `RepositoryService`（已落地：打开仓库生命周期管理、状态 token/快照/Diff 三缓存、全部 Diff 形态命令接入缓存、文件监听推送 `repository-changed`、仓库发现 `scan` 并入服务；最近仓库持久化仍归前端；其余写操作命令按需渐进接入）。
 2. 提交层：流式解析提交、拓扑和 refs，分页送入前端并做可见区域渲染。
 3. 操作层：stage、commit、branch、merge、rebase、cherry-pick、stash、tag、remote、worktree 和 submodule。
 4. 历史层：继续增加任意文件选择、指定行范围和提交跳转。

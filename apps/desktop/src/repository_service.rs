@@ -394,6 +394,19 @@ impl RepositoryServiceState {
         }
         changed
     }
+
+    /// 仓库发现并入服务：DFS 引擎复用 repository_management，不重复实现。
+    /// 扫描是无状态发现（不驻留、不挂监听），做成关联函数以便命令侧在
+    /// spawn_blocking 里调用。
+    pub fn scan(
+        root: &str,
+        max_depth: Option<u32>,
+    ) -> Result<Vec<crate::repository_management::ScannedRepository>, String> {
+        crate::repository_management::scan_git_repositories(
+            root,
+            max_depth.unwrap_or(crate::repository_management::SCAN_DEFAULT_DEPTH),
+        )
+    }
 }
 
 /// 快照缓存权重：直接量一次序列化字节数（fresh read 本就以百毫秒计，开销可忽略）。
@@ -627,5 +640,49 @@ mod tests {
             root,
             git_dir
         ));
+    }
+
+    /// scan 入口的接线测试：真实 git init 一个临时仓库，经 service.scan 命中。
+    #[test]
+    fn scan_via_service_finds_fixture_repository() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        struct Sandbox(std::path::PathBuf);
+        impl Sandbox {
+            fn new() -> Self {
+                let unique = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let path = std::env::temp_dir().join(format!(
+                    "branchline-service-{}-{unique}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&path).unwrap();
+                Self(path)
+            }
+        }
+        impl Drop for Sandbox {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let sandbox = Sandbox::new();
+        let repo = sandbox.0.join("demo-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let initialized = std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .current_dir(&repo)
+            .output()
+            .expect("git 可用");
+        assert!(initialized.status.success(), "git init 失败");
+
+        let found = RepositoryServiceState::scan(sandbox.0.to_str().unwrap(), Some(1))
+            .expect("扫描不应报错");
+        assert!(
+            found.iter().any(|repo| repo.name == "demo-repo"),
+            "应命中 demo-repo：{:?}",
+            found
+        );
     }
 }

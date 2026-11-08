@@ -47,19 +47,15 @@ pub async fn create_repository(
 }
 
 /// 扫描文件夹里的 Git 仓库；默认深度 3，超 200 条由后端报错提示收敛范围。
+/// 发现已并入仓库层服务（RepositoryServiceState::scan），引擎复用 repository_management。
 #[tauri::command]
 pub async fn scan_git_repositories(
     root: String,
     max_depth: Option<u32>,
 ) -> Result<Vec<crate::repository_management::ScannedRepository>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::repository_management::scan_git_repositories(
-            &root,
-            max_depth.unwrap_or(crate::repository_management::SCAN_DEFAULT_DEPTH),
-        )
-    })
-    .await
-    .map_err(|error| task_error("扫描仓库", error))?
+    tauri::async_runtime::spawn_blocking(move || RepositoryServiceState::scan(&root, max_depth))
+        .await
+        .map_err(|error| task_error("扫描仓库", error))?
 }
 
 #[tauri::command]
@@ -176,9 +172,13 @@ pub async fn load_repository(
 
 #[tauri::command]
 pub async fn load_repository_history(
+    service: tauri::State<'_, RepositoryServiceState>,
     path: String,
     commit_limit: usize,
 ) -> Result<RepositorySnapshot, String> {
+    // 扩展图谱是 commit_limit 专属视图，不落单一快照槽位；仅确保驻留
+    // （挂监听 + 刷新 LRU），让仅经此入口打开的仓库也被文件监听覆盖。
+    let _generation = service.begin_read(&path);
     tauri::async_runtime::spawn_blocking(move || {
         git::read_repository_with_commit_limit(&path, commit_limit)
     })
@@ -277,13 +277,23 @@ pub async fn load_staged_file_diff(
 }
 
 #[tauri::command]
-pub async fn fetch_repository(repository_path: String) -> Result<RepositorySnapshot, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::fetch_repository(&repository_path)?;
-        git::read_repository(&repository_path)
+pub async fn fetch_repository(
+    service: tauri::State<'_, RepositoryServiceState>,
+    repository_path: String,
+) -> Result<RepositorySnapshot, String> {
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let loaded = tauri::async_runtime::spawn_blocking(move || {
+        git::fetch_repository(&git_path)?;
+        git::read_repository(&git_path)
     })
     .await
-    .map_err(|error| task_error("Fetch", error))?
+    .map_err(|error| task_error("Fetch", error))?;
+    let snapshot = loaded?;
+    // Fetch 期间 refs 已被监听捕获，generation 可能已前进导致本次结果不落缓存——
+    // 无妨，下一次 token 轮询会用新代数重读。
+    service.finish_snapshot(&repository_path, generation, &snapshot);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -463,16 +473,28 @@ pub async fn load_file_history(
 
 #[tauri::command]
 pub async fn load_file_commit_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     commit: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::load_file_commit_diff(&repository_path, &commit, &file_path, show_whitespace)
+    // 历史 diff 只随 .git 变化而失效（改写历史必然写 .git），随 generation
+    // 失效是保守但正确的：工作区编辑也会清掉它们。
+    let cache_key = format!("commit\u{1f}{commit}\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        git::load_file_commit_diff(&git_path, &commit, &file_path, show_whitespace)
     })
     .await
-    .map_err(|error| task_error("读取文件提交 Diff", error))?
+    .map_err(|error| task_error("读取文件提交 Diff", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 #[tauri::command]
@@ -783,23 +805,28 @@ pub async fn compare_repository_refs(
 
 #[tauri::command]
 pub async fn load_compare_file_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     base: String,
     target: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::parse_compare_diff(
-            &repository_path,
-            &base,
-            &target,
-            &file_path,
-            show_whitespace,
-        )
+    let cache_key =
+        format!("compare\u{1f}{base}\u{1f}{target}\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        git::parse_compare_diff(&git_path, &base, &target, &file_path, show_whitespace)
     })
     .await
-    .map_err(|error| task_error("读取比较 Diff", error))?
+    .map_err(|error| task_error("读取比较 Diff", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 #[tauri::command]
@@ -995,16 +1022,26 @@ pub async fn load_stash_files(
 
 #[tauri::command]
 pub async fn load_stash_file_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     reference: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        git::load_stash_file_diff(&repository_path, &reference, &file_path, show_whitespace)
+    let cache_key = format!("stash\u{1f}{reference}\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        git::load_stash_file_diff(&git_path, &reference, &file_path, show_whitespace)
     })
     .await
-    .map_err(|error| task_error("读取 Stash Diff", error))?
+    .map_err(|error| task_error("读取 Stash Diff", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1241,21 +1278,31 @@ pub async fn load_revision_files(
 
 #[tauri::command]
 pub async fn load_revision_file_diff(
+    service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
     reference: String,
     file_path: String,
     show_whitespace: bool,
 ) -> Result<Vec<DiffLine>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let cache_key = format!("revision\u{1f}{reference}\u{1f}{file_path}\u{1f}{show_whitespace}");
+    if let Some(lines) = service.diff(&repository_path, &cache_key) {
+        return Ok(lines);
+    }
+    let generation = service.begin_read(&repository_path);
+    let git_path = repository_path.clone();
+    let computed = tauri::async_runtime::spawn_blocking(move || {
         crate::git_recovery::load_revision_file_diff(
-            &repository_path,
+            &git_path,
             &reference,
             &file_path,
             show_whitespace,
         )
     })
     .await
-    .map_err(|error| task_error("读取历史对象差异", error))?
+    .map_err(|error| task_error("读取历史对象差异", error))?;
+    let lines = computed?;
+    service.finish_diff(&repository_path, generation, &cache_key, &lines);
+    Ok(lines)
 }
 
 #[tauri::command]
