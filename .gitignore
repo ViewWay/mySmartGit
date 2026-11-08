@@ -6,6 +6,13 @@ apps/desktop/target/
 
 .worktrees/
 
+# 本地 AI 工具的会话状态（Mimosa 安全扫描钩子、zcode 会话、v2c、video agent），
+# 只属本机工作区，任何层级出现都不入库。
+.mimosa/
+.v2c/
+.video_agent/
+.zcode/
+
 # Tauri updater signing keys must never be committed.
 .branchline/
 *.key
