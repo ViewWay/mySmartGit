@@ -52,6 +52,9 @@ pnpm desktop:build
 
 ```bash
 pnpm typecheck
+pnpm test:git-client
+pnpm check:i18n
+pnpm check:error-codes
 pnpm rust:fmt
 pnpm rust:check
 cargo test --manifest-path apps/desktop/Cargo.toml
@@ -74,6 +77,25 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 菜单结构与 Sourcetree 同构：Branchline（关于/检查更新/偏好设置）、文件、编辑、格式化（自动换行、Diff 布局、字号）、查看、仓库、动作、窗口、帮助。
 原生菜单由 `useNativeMenu` 单桥驱动；状态（是否有仓库、忙闲、Diff 布局、主题、语言）通过 `sync_menu_state` 同步。Windows/Linux 无应用菜单，"偏好设置/关于/退出"放入文件与帮助菜单。
 
+## 界面布局
+
+主界面采用「活动栏 + 动作工具栏 + 详情 tabs」布局：
+
+- 左侧 46px 图标活动栏：提交图谱、暂存与提交、文件树、深度搜索、恢复与定位、Diff 比较、合并队列，操作进行中显示徽标；工具弹层聚合远程管理、Git LFS、Gitflow、SSH 与凭据、托管平台、内置终端；仓库管理置底。
+- 顶部动作工具栏：获取 / 拉取（显示落后数）/ 推送（显示领先数）/ 贮藏 / 新建分支，全局搜索居中。
+- 侧栏分组：本地分支前缀树 + 仓库结构树（Worktree / Submodule）+ 可折叠的贮藏组与标签组，折叠状态持久化。
+- 详情区提供「差异文件 / 文件树」两个 tabs，文件树以紧凑布局浏览所选提交版本的完整文件。
+
+## 代码审查评论
+
+支持 Gerrit 式行级审查评论（设计文档见 `docs/superpowers/specs/2026-11-07-code-review-design.md`）：
+
+- 在文件树预览与 Diff 视图点击行号即可发起评论，支持回复线程与「已解决」标记；行号旁圆点表示已有评论。
+- 评论锚定「ref + 文件 + 行号 + 新旧侧」，由 Rust 侧持久化到 `<设置目录>/reviews/<仓库>.json`，离线可用，不依赖 webview 存储。
+- 本地草稿可一键发布为 GitHub PR review comments / GitLab MR discussions，逐条报告结果并回填远端 ID，失败线程保留草稿可重试。
+- 可拉取远端已有 PR/MR 评审评论合并展示（远端内容只读）。
+- 操作说明见 [docs/shortcuts.md](docs/shortcuts.md) 的「审查评论」一节。
+
 ## 当前能力
 
 - 打开真实 Git 仓库和 Worktree
@@ -93,6 +115,17 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 分支前缀删除前预览、二次确认和并发变更校验
 - Worktree、Submodule、标签、Stash 和文件/行历史入口
 - 暂存、提交模板、Amend、签名提交流程
+- 撤销上次提交（修改保留在工作区）
+- 文件树彩色语言图标与 IDE 级只读预览（行号、折叠、缩进线、查找）
+- 行级审查评论：本地线程持久化，草稿发布与远端评论拉取（GitHub / GitLab）
+- 深度搜索：全量历史搜索、差异内容搜索与仓库内容替换
+- 恢复与定位：Reflog 找回提交、Bisect 定位问题、按模式 Reset
+- 整理历史：重排、合并、改写或删除近期提交
+- 任意两个提交/分支的 Diff 比较与合并队列
+- 托管平台：查看与创建 GitHub Pull Request / GitLab Merge Request，查看 CI 状态
+- Gitflow 工作流、Git LFS 跟踪管理、SSH 密钥与凭据助手管理
+- 内置终端、自定义命令流水线与执行命令日志
+- AI 提交信息助手
 - 深色/浅色主题和全局快捷键面板
 - 在同一仓库切换器中快速进入 Worktree 与 Submodule
 - 900px 以上桌面窗口响应式布局
@@ -165,8 +198,10 @@ pnpm desktop:build
 
 构建日志会列出生成的安装包与 `.sig` 文件。自动更新只能在打包后的桌面应用中验证；浏览器预览会明确提示更新器不可用。
 
-## 界面语言
+## 文档索引
 
-- 默认简体中文，可在左侧栏底部切换 English / 中文，选择写入 `localStorage` 的 `branchline.language`。
-- 文案集中在 `apps/frontend/src/i18n/index.ts`，使用 `{{param}}` 占位符插值，并同步更新 `<html lang>`。
-- 当前已覆盖应用外壳（侧栏导航、内容标签页、通用按钮）与「版本与更新」面板；各功能面板的文案仍为中文，按模块逐步迁移，新增文案时请同时补齐 `zh` 与 `en` 两个字典。
+- [docs/shortcuts.md](docs/shortcuts.md)：全局 / Diff / 原生菜单快捷键与审查评论操作说明。
+- [docs/git-commit.md](docs/git-commit.md)：Commit message 规范（type / scope / subject / body / footer）。
+- [docs/git-emoji.md](docs/git-emoji.md)：Git emoji 提交参考。
+- [docs/git-flow.md](docs/git-flow.md)：分支模型与常见工作流（Trunk-Based / Git-Flow / Aone-Flow）。
+- `docs/superpowers/specs/`：设计定稿文档（桌面端打磨、Gerrit 式代码审查等）。
