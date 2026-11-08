@@ -113,6 +113,22 @@
 .repository-add-dialog .branch-dialog-heading > .button { margin-left: auto; }
 .repository-add-dialog form { display: flex; flex-direction: column; gap: 12px; }
 .repository-add-dialog form > label { display: flex; flex-direction: column; gap: 5px; color: var(--text-secondary); font-size: 12px; }
+
+/* 扫描仓库对话框：结果列表复用 add-dialog 的宽度与输入样式 */
+.repository-scan-dialog > label { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; color: var(--text-secondary); font-size: 12px; }
+.repository-scan-dialog > label input { width: 100%; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); background: var(--surface-base); font: 12px var(--font-code); }
+.repository-scan-dialog > label input:focus { outline: 1px solid var(--accent); }
+.repository-scan-spacer { flex: 1; }
+.repository-scan-results { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.repository-scan-summary { color: var(--text-tertiary); font-size: 12px; padding: 2px 0; }
+.repository-scan-empty { color: var(--text-tertiary); font-size: 12px; text-align: center; padding: 18px 0; }
+.repository-scan-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.repository-scan-row:hover { background: var(--surface-hover); }
+.repository-scan-row input[type='checkbox'] { flex-shrink: 0; }
+.repository-scan-row-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.repository-scan-row-text strong { color: var(--text-primary); }
+.repository-scan-row-text code { color: var(--text-tertiary); font: 11px var(--font-code); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repository-scan-badge { flex-shrink: 0; font-size: 10px; color: var(--text-tertiary); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 0 5px; }
 .repository-add-dialog input { width: 100%; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-primary); background: var(--surface-base); font: 12px var(--font-code); }
 .repository-add-dialog input:focus { outline: 1px solid var(--accent); }
 .repository-directory-input { display: flex; align-items: center; gap: 6px; }

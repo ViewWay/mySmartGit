@@ -109,6 +109,13 @@ export async function openRepositoryInVscode(repositoryPath: string) {
   return invoke<void>('open_repository_in_vscode', { repositoryPath })
 }
 
+/** 扫描文件夹里的本地 Git 仓库；缺省深度由后端定（3 层），超上限由后端报错。 */
+export type ScannedRepository = { name: string; path: string }
+
+export async function scanGitRepositories(root: string, maxDepth?: number) {
+  return invoke<ScannedRepository[]>('scan_git_repositories', { root, maxDepth: maxDepth ?? null })
+}
+
 export async function loadRepositoryHistory(path: string, commitLimit: number) {
   return invoke<RepositorySnapshot>('load_repository_history', { path, commitLimit })
 }

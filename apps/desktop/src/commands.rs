@@ -29,6 +29,15 @@ pub async fn create_repository(destination: String, source: Option<String>) -> R
         .await.map_err(|error| task_error("创建仓库", error))?
 }
 
+/// 扫描文件夹里的 Git 仓库；默认深度 3，超 200 条由后端报错提示收敛范围。
+#[tauri::command]
+pub async fn scan_git_repositories(root: String, max_depth: Option<u32>) -> Result<Vec<crate::repository_management::ScannedRepository>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::repository_management::scan_git_repositories(&root, max_depth.unwrap_or(crate::repository_management::SCAN_DEFAULT_DEPTH))
+    })
+    .await.map_err(|error| task_error("扫描仓库", error))?
+}
+
 #[tauri::command]
 pub async fn open_repository_in_vscode(repository_path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || crate::repository_management::open_repository_in_vscode(&repository_path))

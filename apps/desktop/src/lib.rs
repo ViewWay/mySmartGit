@@ -45,6 +45,7 @@ pub fn run() {
             commands::load_repository_details,
             commands::load_repository_readme,
             commands::create_repository,
+            commands::scan_git_repositories,
             commands::open_repository_in_vscode,
             commands::load_git_user_config,
             commands::update_git_user_config,

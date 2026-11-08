@@ -364,6 +364,103 @@ pub fn open_repository_in_vscode(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 仓库管理 · 主动扫描本地 Git 仓库
+// ---------------------------------------------------------------------------
+
+/// 扫描默认深度与结果上限：3 层覆盖 `~/code/团队/仓库` 这类常见布局，
+/// 200 条防止误选家目录时卡死 UI（超限时返回错误提示换更具体的文件夹）。
+pub const SCAN_DEFAULT_DEPTH: u32 = 3;
+pub const SCAN_MAX_RESULTS: usize = 200;
+
+/// node_modules/target/dist 这类重目录整棵剪掉；隐藏目录（`.foo`）同理。
+fn scan_skipped_directory(name: &str) -> bool {
+    matches!(
+        name,
+        "node_modules" | "target" | "dist" | "build" | "vendor" | ".venv" | "venv"
+    ) || name.starts_with('.')
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannedRepository {
+    /// 仓库目录名（最短展示名）。
+    pub name: String,
+    /// 仓库根的展示路径（与 `git::display_path` 同一规范化口径）。
+    pub path: String,
+}
+
+/// 在 root 下递归找「目录含 `.git` 条目」的 Git 仓库（`.git` 是文件也命中，
+/// 覆盖 worktree）。手写 `fs::read_dir` 递归不引 walkdir：深度与上限双重约束
+/// 目录数，命中即不再下钻（仓库内部的嵌套 .git 不重复报）。
+pub fn scan_git_repositories(root: &str, max_depth: u32) -> Result<Vec<ScannedRepository>, String> {
+    let start = PathBuf::from(root.trim());
+    if !start.is_dir() {
+        return Err("请选择一个已存在的文件夹".into());
+    }
+    let mut found = Vec::new();
+    scan_directory(&start, max_depth, &mut found);
+    found.sort_by(|left, right| left.path.cmp(&right.path));
+    if found.len() > SCAN_MAX_RESULTS {
+        // 排序后统一检查：超限不截断而是报错，提示用户收敛扫描范围。
+        return Err(format!(
+            "扫描结果超过 {} 条，请选择更具体的文件夹",
+            SCAN_MAX_RESULTS
+        ));
+    }
+    Ok(found)
+}
+
+/// 深度优先下钻：当前目录命中即记入并停止下钻；未命中则继续往子目录走。
+/// 达到上限即提前停止遍历（顶层统一报超限错误）。
+fn scan_directory(directory: &std::path::Path, remaining_depth: u32, found: &mut Vec<ScannedRepository>) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        // 无权限/已被删的目录静默跳过：扫描尽力而为，不因单个目录中断。
+        Err(_) => return,
+    };
+    if has_git_entry(entries) {
+        found.push(ScannedRepository {
+            name: directory
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            path: crate::git::display_path(directory),
+        });
+        return;
+    }
+    if remaining_depth == 0 {
+        return;
+    }
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if scan_skipped_directory(&name) {
+            continue;
+        }
+        scan_directory(&path, remaining_depth - 1, found);
+        if found.len() >= SCAN_MAX_RESULTS {
+            return;
+        }
+    }
+}
+
+/// 目录的直接条目里是否有 `.git`（文件或目录均可，worktree 的 .git 是文件）。
+fn has_git_entry(mut entries: fs::ReadDir) -> bool {
+    entries.any(|entry| {
+        entry
+            .map(|entry| entry.file_name() == ".git")
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +496,75 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn scan_finds_nested_repositories_and_dedups_by_hit() {
+        let sandbox = Sandbox::new();
+        let workspace = sandbox.0.join("workspace");
+        // 两层嵌套布局：workspace/alpha（浅）与 workspace/team/beta（深一层）。
+        for repo in ["alpha", "team/beta"] {
+            let path = workspace.join(repo);
+            fs::create_dir_all(&path).unwrap();
+            git_at(&path, &["init", "-q"]);
+        }
+        // 干扰项：空目录、重目录下的"伪仓库"应整棵剪掉、隐藏目录同理。
+        fs::create_dir_all(workspace.join("empty")).unwrap();
+        let vendor = workspace.join("node_modules/lib");
+        fs::create_dir_all(&vendor).unwrap();
+        git_at(&vendor, &["init", "-q"]);
+        let hidden = workspace.join(".secrets");
+        fs::create_dir_all(&hidden).unwrap();
+        git_at(&hidden, &["init", "-q"]);
+
+        let found = super::scan_git_repositories(
+            workspace.to_str().unwrap(),
+            super::SCAN_DEFAULT_DEPTH,
+        )
+        .unwrap();
+        let paths: Vec<&str> = found.iter().map(|repo| repo.path.as_str()).collect();
+        assert_eq!(found.len(), 2, "只应命中 alpha 与 team/beta：{paths:?}");
+        assert!(paths.iter().any(|path| path.ends_with("alpha")));
+        assert!(paths.iter().any(|path| path.ends_with("team/beta")));
+        // name 是目录名
+        assert_eq!(found[0].name, "alpha");
+    }
+
+    #[test]
+    fn scan_respects_depth_limit_and_reports_missing_root() {
+        let sandbox = Sandbox::new();
+        let workspace = sandbox.0.join("workspace");
+        // deep/g1（第 2 层）与 deep/other/g2（第 3 层）：深度不足时深层够不到。
+        // 不把 g2 放进 g1 内部——命中仓库即停止下钻，仓库里的嵌套 .git 本来就不报。
+        for repo in ["deep/g1", "deep/other/g2"] {
+            let path = workspace.join(repo);
+            fs::create_dir_all(&path).unwrap();
+            git_at(&path, &["init", "-q"]);
+        }
+        let shallow_only = super::scan_git_repositories(workspace.to_str().unwrap(), 2).unwrap();
+        assert_eq!(shallow_only.len(), 1, "深度 2 只命中第 2 层的 deep/g1");
+        assert!(shallow_only[0].path.ends_with("g1"));
+
+        let both = super::scan_git_repositories(workspace.to_str().unwrap(), 3).unwrap();
+        assert_eq!(both.len(), 2, "深度 3 命中两层仓库");
+
+        let error = super::scan_git_repositories(
+            sandbox.0.join("missing").to_str().unwrap(),
+            3,
+        )
+        .unwrap_err();
+        assert!(error.contains("已存在的文件夹"), "{error}");
+    }
+
+    #[test]
+    fn scan_hits_worktree_where_git_is_a_file() {
+        let sandbox = Sandbox::new();
+        let repo = sandbox.0.join("worktree-checkout");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join(".git"), "gitdir: /nonexistent/real.git\n").unwrap();
+        let found = super::scan_git_repositories(repo.to_str().unwrap(), 1).unwrap();
+        assert_eq!(found.len(), 1, "worktree 的 .git 文件也要命中");
+        assert_eq!(found[0].name, "worktree-checkout");
     }
 
     #[test]

@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
-import { ArrowLeft, ChevronRight, Clock3, CloudDownload, Code2, FolderGit2, FolderOpen, GitBranch, Moon, Plus, RefreshCw, Search, Star, Sun, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, Clock3, CloudDownload, Code2, FolderGit2, FolderOpen, FolderSearch, GitBranch, Moon, Plus, RefreshCw, Search, Star, Sun, Trash2, X } from 'lucide-react'
 import { Button } from '../../components/Button'
 import { loadRepositoryDetails, openRepositoryInVscode, pickRepositoryDirectory, type RepositoryDetails } from '../../repository'
 import { useI18n } from '../../i18n'
 import { AddRepositoryDialog } from './AddRepositoryDialog'
 import { RepositoryDetailsPanel } from './RepositoryDetailsPanel'
+import { ScanRepositoriesDialog } from './ScanRepositoriesDialog'
 import { repositoryCatalog } from './repositoryCatalog'
 import { repositoryCacheKey, sameRepositoryPath } from './repositoryPaths'
 import type { RecentRepository } from './repositoryPersistence'
@@ -28,8 +29,9 @@ export function RepositoryManagerPage({ recent, favorites, current, opening, the
   const [query, setQuery] = useState('')
   const [selectedPath, setSelectedPath] = useState(current?.path ?? recent[0]?.path ?? favorites[0]?.path ?? '')
   const [adding, setAdding] = useState(false)
-  const [dialog, setDialog] = useState<'clone' | 'init' | null>(null)
+  const [dialog, setDialog] = useState<'clone' | 'init' | 'scan' | null>(null)
   const catalog = useMemo(() => repositoryCatalog(recent, favorites, current), [recent, favorites, current])
+  const registeredKeys = useMemo(() => new Set(catalog.map((item) => repositoryCacheKey(item.path))), [catalog])
   const filtered = catalog.filter((item) => `${item.name}\n${item.path}`.replace(/\\/g, '/').toLocaleLowerCase().includes(query.trim().replace(/\\/g, '/').toLocaleLowerCase()))
   const selected = filtered.find((item) => sameRepositoryPath(item.path, selectedPath)) ?? filtered[0]
   const groups = [
@@ -62,7 +64,7 @@ export function RepositoryManagerPage({ recent, favorites, current, opening, the
   return <section className="repository-manager" aria-label={t('nav.repositories')}>
     {hasRepositories && <header className="repository-manager-heading">
       <div className="repository-manager-title">{current && <Button variant="icon" title={t('repository.manager.backToWorkspace')} onClick={onBack}><ArrowLeft size={18}/></Button>}<FolderGit2 size={23}/><div><h1>{t('nav.repositories')}</h1><p>{t('repository.manager.subtitle')}</p></div></div>
-      <div className="repository-manager-toolbar">{hasRepositories && <><Button variant="primary" onClick={() => void browse()} disabled={adding || opening}>{adding ? <RefreshCw size={15} className="spin"/> : <FolderOpen size={15}/>}{t('repository.manager.pickLocal')}</Button><Button onClick={() => setDialog('clone')} disabled={adding || opening}><CloudDownload size={15}/>{t('repository.add.clone')}</Button><Button onClick={() => setDialog('init')} disabled={adding || opening}><Plus size={15}/>{t('repository.add.initTitle')}</Button></>}<Button variant="icon" title={theme === 'dark' ? t('shell.themeToLight') : t('shell.themeToDark')} onClick={onToggleTheme}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</Button></div>
+      <div className="repository-manager-toolbar">{hasRepositories && <><Button variant="primary" onClick={() => void browse()} disabled={adding || opening}>{adding ? <RefreshCw size={15} className="spin"/> : <FolderOpen size={15}/>}{t('repository.manager.pickLocal')}</Button><Button onClick={() => setDialog('scan')} disabled={adding || opening}><FolderSearch size={15}/>{t('repository.manager.scan')}</Button><Button onClick={() => setDialog('clone')} disabled={adding || opening}><CloudDownload size={15}/>{t('repository.add.clone')}</Button><Button onClick={() => setDialog('init')} disabled={adding || opening}><Plus size={15}/>{t('repository.add.initTitle')}</Button></>}<Button variant="icon" title={theme === 'dark' ? t('shell.themeToLight') : t('shell.themeToDark')} onClick={onToggleTheme}>{theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}</Button></div>
     </header>}
     {hasRepositories ? <div className="repository-manager-body">
       <div className="repository-catalog">
@@ -92,12 +94,16 @@ export function RepositoryManagerPage({ recent, favorites, current, opening, the
         <button className="repository-start-action" onClick={() => setDialog('clone')} disabled={adding || opening}>
           <span className="repository-start-icon"><CloudDownload size={20}/></span><span><strong>{t('repository.manager.cloneRemote')}</strong><small>{t('repository.manager.cloneRemoteHint')}</small></span><ChevronRight size={17}/>
         </button>
+        <button className="repository-start-action" onClick={() => setDialog('scan')} disabled={adding || opening}>
+          <span className="repository-start-icon"><FolderSearch size={20}/></span><span><strong>{t('repository.manager.scan')}</strong><small>{t('repository.manager.scanHint')}</small></span><ChevronRight size={17}/>
+        </button>
         <button className="repository-start-action" onClick={() => setDialog('init')} disabled={adding || opening}>
           <span className="repository-start-icon"><Plus size={20}/></span><span><strong>{t('repository.manager.initNew')}</strong><small>{t('repository.manager.initNewHint')}</small></span><ChevronRight size={17}/>
         </button>
       </div>
       <div className="repository-welcome-hint"><span>{t('repository.manager.favoriteHint')}</span><kbd>Ctrl P</kbd><span>{t('repository.manager.searchRepositories')}</span></div>
     </div>}
-    {dialog && <AddRepositoryDialog mode={dialog} initialParent={initialParent} onClose={() => setDialog(null)} onCreated={register}/>}
+    {(dialog === 'clone' || dialog === 'init') && <AddRepositoryDialog mode={dialog} initialParent={initialParent} onClose={() => setDialog(null)} onCreated={register}/>}
+    {dialog === 'scan' && <ScanRepositoriesDialog registeredKeys={registeredKeys} onClose={() => setDialog(null)} onRegister={register} onNotice={onNotice}/>}
   </section>
 }
