@@ -7,6 +7,7 @@ import type { RevisionFilePreview } from '../../repository'
 import { formatByteSize } from '../diff/imageDiffModel'
 import { ImageDiffViewer } from '../diff/ImageDiffViewer'
 import { computeTreeWindow, isPreviewableRow, navigateTreeRows, type CommitTreeRow, type TreeNavigationKey } from './commitTreeModel'
+import { usePreferences } from '../../preferences'
 import { fileIconClass } from './fileIcon'
 import { TreeCodePreview, type TreeCodePreviewHandle } from './TreeCodePreview'
 import { ReviewFloatCard } from '../review/ReviewFloatCard'
@@ -204,6 +205,7 @@ export type CommitTreePreviewProps = {
  */
 export function CommitTreePreview({ selected, kind, preview, loading, error, onOpenExternally, review }: CommitTreePreviewProps) {
   const { t } = useI18n()
+  const { wordWrap } = usePreferences()
   const previewRef = useRef<TreeCodePreviewHandle>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const [selectionMenu, setSelectionMenu] = useState<{ start: number; end: number; x: number; y: number } | null>(null)
@@ -268,7 +270,8 @@ export function CommitTreePreview({ selected, kind, preview, loading, error, onO
         filePath={preview.path}
         threadLines={review?.lines}
         onLineNumberClick={review?.onLineClick}
-        onSelectionContext={review ? (event, start, end) => setSelectionMenu({ start, end, x: event.clientX, y: event.clientY }) : undefined}/>}
+        onSelectionContext={review ? (event, start, end) => setSelectionMenu({ start, end, x: event.clientX, y: event.clientY }) : undefined}
+        wordWrap={wordWrap}/>}
       {selected && !loading && !note && review && activeRange != null && <ReviewFloatCard
         anchorRect={anchorRect}
         threads={review.threads}

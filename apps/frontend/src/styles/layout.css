@@ -131,7 +131,9 @@
 
 .workspace-grid.diff-wide .inspector-resizer, .workspace-grid.inspector-collapsed .inspector-resizer { pointer-events: none; }
 
-.history-pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+/* flex 纵列 + clip：面板内容不再产生“可滚动溢出”，scrollIntoView 也无法把裁剪容器滚走
+ * （overflow:hidden 的盒子仍可被编程滚动，曾导致 diff 覆盖层上移、底部露出提交图谱）。 */
+.history-pane { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; overflow: clip; }
 
 .panel-resizer { position: relative; display: block; border: 0; background: transparent; cursor: col-resize; touch-action: none; z-index: 6; }
 
@@ -157,7 +159,7 @@
 
 .inspector-vertical-resizer:hover::before, .inspector-vertical-resizer.active::before { width: 100%; }
 
-.inspector-pane { grid-column: 3; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 8px minmax(0, 1fr); background: var(--panel); overflow: hidden; opacity: 1; transform: translateX(0); transition: opacity .16s ease, transform .22s ease; }
+.inspector-pane { grid-column: 3; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 8px minmax(0, 1fr); background: var(--panel); overflow: hidden; overflow: clip; opacity: 1; transform: translateX(0); transition: opacity .16s ease, transform .22s ease; }
 
 .inspector-pane .commit-details { border-bottom: 0; display: flex; flex-direction: column; }
 

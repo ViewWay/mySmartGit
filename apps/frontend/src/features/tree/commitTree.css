@@ -105,6 +105,8 @@
 }
 
 .commit-tree-row .commit-tree-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -113,6 +115,11 @@
   margin-left: auto;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+/* 悬停时收起大小徽章，把整行宽度让给文件名；完整路径仍有 title 提示。 */
+.commit-tree-row:hover .commit-tree-size {
+  display: none;
 }
 
 .commit-tree-row .commit-tree-state {

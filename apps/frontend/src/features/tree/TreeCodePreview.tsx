@@ -8,20 +8,45 @@ import { tags } from '@lezer/highlight'
 import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import { matchLanguage } from '../../syntax/languages'
 
+// 全量标签集：覆盖通用代码、配置文件（JSON/YAML 的 propertyName）、
+// HTML（tagName/attributeName/attributeValue）与 Markdown 结构标记
+// （heading/strong/emphasis/link/quote/monospace/processingInstruction）。
+// 色值全部复用 tokens.css 的 --syntax-* 调色板，与 diff 面板一致。
 const previewHighlightStyle = HighlightStyle.define([
-  { tag: tags.comment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
+  { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--syntax-comment)', fontStyle: 'italic' },
   { tag: tags.keyword, color: 'var(--syntax-keyword)' },
   { tag: [tags.string, tags.special(tags.string)], color: 'var(--syntax-string)' },
-  { tag: [tags.number, tags.bool, tags.null], color: 'var(--syntax-number)' },
-  { tag: [tags.typeName, tags.className, tags.definition(tags.typeName)], color: 'var(--syntax-type)' },
+  { tag: [tags.number, tags.bool, tags.null, tags.atom, tags.unit], color: 'var(--syntax-number)' },
+  { tag: [tags.typeName, tags.className, tags.namespace, tags.macroName, tags.definition(tags.typeName)], color: 'var(--syntax-type)' },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.definition(tags.variableName), tags.definition(tags.function(tags.variableName))], color: 'var(--syntax-function)' },
+  { tag: [tags.propertyName, tags.definition(tags.propertyName)], color: 'var(--syntax-property)' },
+  { tag: [tags.variableName, tags.special(tags.variableName)], color: 'var(--text)' },
+  { tag: tags.labelName, color: 'var(--syntax-property)' },
+  { tag: tags.tagName, color: 'var(--syntax-tag)' },
+  { tag: tags.attributeName, color: 'var(--syntax-attribute)' },
+  { tag: [tags.attributeValue, tags.character], color: 'var(--syntax-string)' },
+  { tag: [tags.regexp, tags.escape], color: 'var(--syntax-regexp)' },
+  { tag: [tags.meta, tags.documentMeta], color: 'var(--syntax-meta)' },
+  { tag: tags.heading, fontWeight: 600 },
+  { tag: tags.strong, fontWeight: 600 },
+  { tag: tags.emphasis, fontStyle: 'italic' },
+  { tag: [tags.link, tags.url, tags.monospace], color: 'var(--syntax-string)' },
+  { tag: tags.quote, color: 'var(--syntax-comment)', fontStyle: 'italic' },
+  { tag: tags.strikethrough, textDecoration: 'line-through' },
+  { tag: [tags.contentSeparator, tags.processingInstruction], color: 'var(--syntax-punctuation)' },
   { tag: [tags.operatorKeyword, tags.operator], color: 'var(--text)' },
-  { tag: [tags.punctuation, tags.bracket], color: 'var(--muted)' },
+  { tag: [tags.punctuation, tags.bracket, tags.angleBracket], color: 'var(--muted)' },
+  { tag: tags.inserted, color: 'var(--syntax-inserted)' },
+  { tag: tags.deleted, color: 'var(--syntax-deleted)' },
+  { tag: tags.invalid, color: 'var(--syntax-invalid)' },
 ])
 
 const previewTheme = EditorView.theme({
   '&': { height: '100%', backgroundColor: 'transparent', color: 'var(--text-primary)' },
   '.cm-scroller': { fontFamily: 'var(--font-code)', fontSize: '12px', lineHeight: '1.55' },
-  '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--text-tertiary)', border: 'none' },
+  // gutter 必须不透明：CM6 的 gutter 容器在横向滚动时 position: sticky 吸附左侧，
+  // 透明背景会让代码从行号下方滑过，出现行号叠在代码上的观感。
+  '.cm-gutters': { backgroundColor: 'var(--surface-base)', color: 'var(--text-tertiary)', border: 'none' },
   '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 8%, transparent)' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--text-secondary)' },
   '.cm-selectionBackground': { backgroundColor: 'color-mix(in srgb, var(--accent) 24%, transparent) !important' },
@@ -88,6 +113,8 @@ export type TreeCodePreviewProps = {
   onLineNumberClick?: (line: number) => void
   /** 选区非空时右键回调（带 1 起起止行号）；不传则右键走浏览器默认。 */
   onSelectionContext?: (event: MouseEvent, startLine: number, endLine: number) => void
+  /** 偏好「自动换行」：true 时挂 EditorView.lineWrapping，长行折行而不是横向滚动。 */
+  wordWrap?: boolean
 }
 
 /** 暴露给宿主用于浮动评论卡锚定的行矩形查询。 */
@@ -95,10 +122,11 @@ export type TreeCodePreviewHandle = {
   getLineRect(line: number): DOMRect | null
 }
 
-export const TreeCodePreview = forwardRef<TreeCodePreviewHandle, TreeCodePreviewProps>(function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick, onSelectionContext }: TreeCodePreviewProps, ref) {
+export const TreeCodePreview = forwardRef<TreeCodePreviewHandle, TreeCodePreviewProps>(function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick, onSelectionContext, wordWrap }: TreeCodePreviewProps, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const languageCompartment = useRef(new Compartment())
+  const wrapCompartment = useRef(new Compartment())
   // 回调经 ref 转发：挂载 effect 只跑一次，仍能用到最新回调。
   const lineClickRef = useRef(onLineNumberClick)
   lineClickRef.current = onLineNumberClick
@@ -150,6 +178,8 @@ export const TreeCodePreview = forwardRef<TreeCodePreviewHandle, TreeCodePreview
             },
           }),
           languageCompartment.current.of([]),
+          // 初始值由下方 effect 同步（挂载时 effect 必跑一次）。
+          wrapCompartment.current.of([]),
         ],
       }),
       parent: host,
@@ -172,6 +202,11 @@ export const TreeCodePreview = forwardRef<TreeCodePreviewHandle, TreeCodePreview
       effects: EditorView.scrollIntoView(0, { y: 'start' }),
     })
   }, [text])
+
+  // 「自动换行」偏好变化时热切换 lineWrapping。
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: wrapCompartment.current.reconfigure(wordWrap ? EditorView.lineWrapping : []) })
+  }, [wordWrap])
 
   // 线程行号集合变化时热替换 gutter 数据。
   useEffect(() => {

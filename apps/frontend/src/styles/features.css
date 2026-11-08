@@ -23,7 +23,7 @@
 
 .structure-tags-section { padding-top: 6px; }
 
-.commit-table { min-width: 0; height: 100%; display: grid; grid-template-rows: 35px 1fr; }
+.commit-table { min-width: 0; min-height: 0; flex: 1; display: grid; grid-template-rows: 35px minmax(0, 1fr); }
 
 .commit-columns-header { position: relative; min-width: 0; display: grid; align-items: center; border-bottom: 1px solid var(--border); color: var(--text-tertiary); background: var(--surface-raised); letter-spacing: .08em; text-transform: uppercase; }
 
@@ -408,6 +408,16 @@
 .tok-operator { color: var(--syntax-operator); }
 .tok-punctuation { color: var(--syntax-punctuation); }
 .tok-invalid { color: var(--syntax-invalid); }
+.tok-heading { color: var(--text-primary); font-weight: 600; }
+.tok-strong { font-weight: 600; }
+.tok-emphasis { font-style: italic; }
+.tok-link, .tok-monospace { color: var(--syntax-string); }
+.tok-quote { color: var(--syntax-comment); font-style: italic; }
+.tok-processingInstruction { color: var(--syntax-punctuation); }
+.tok-strikethrough { text-decoration: line-through; }
+.tok-inserted { color: var(--syntax-inserted); }
+.tok-deleted { color: var(--syntax-deleted); }
+.tok-labelName { color: var(--syntax-property); }
 
 .staging-page, .stash-page { padding: 10px 12px 12px; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 
