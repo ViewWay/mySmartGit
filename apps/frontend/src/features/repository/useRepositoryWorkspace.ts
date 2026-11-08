@@ -4,8 +4,10 @@ import {
   fetchRepository,
   loadRepository,
   loadRepositoryStateToken,
+  onRepositoryAutoFetched,
   onRepositoryChanged,
   pickAndLoadRepository,
+  setRepositoryAutoFetchConfig,
   type RepositorySnapshot,
 } from '../../repository'
 import { selectStartupRepository, type RecentRepository } from './repositoryPersistence'
@@ -340,11 +342,35 @@ export function useRepositoryWorkspace() {
     }
   }, [applyRefreshedSnapshot, repository, setRepositoryNotice])
 
+  // 定时 Fetch 由 Rust service 执行（覆盖全部已开仓库、单飞、失败退避）：
+  // 前端只下发开关与间隔，配置变更即时生效；Web 模式 invoke 不可用，静默跳过。
   useEffect(() => {
-    if (!repository || !autoFetchSettings.enabled) return
-    const timer = window.setInterval(() => void fetchNow(true), autoFetchSettings.intervalMinutes * 60 * 1000)
-    return () => window.clearInterval(timer)
-  }, [autoFetchSettings.enabled, autoFetchSettings.intervalMinutes, fetchNow, repository?.path])
+    void setRepositoryAutoFetchConfig(autoFetchSettings.enabled, autoFetchSettings.intervalMinutes)
+      .catch(() => undefined)
+  }, [autoFetchSettings.enabled, autoFetchSettings.intervalMinutes])
+
+  // 后台定时 Fetch 完成事件：命中当前仓库即回填「上次获取」时间戳。快照刷新
+  // 不在这里做——fetch 的 refs 变化会经 repository-changed 推送走既有同步链路。
+  const currentRepositoryPathRef = useRef<string | null>(null)
+  useEffect(() => {
+    currentRepositoryPathRef.current = repository?.path ?? null
+  }, [repository?.path])
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    let subscriptionDisposed = false
+    void onRepositoryAutoFetched((event) => {
+      const current = currentRepositoryPathRef.current
+      if (!current || repositoryCacheKey(event.repositoryPath) !== repositoryCacheKey(current)) return
+      setLastFetchAt(Date.now())
+    }).then((stop) => {
+      if (subscriptionDisposed) stop()
+      else unlisten = stop
+    })
+    return () => {
+      subscriptionDisposed = true
+      unlisten?.()
+    }
+  }, [])
 
   useEffect(() => {
     const repositoryPath = repository?.path

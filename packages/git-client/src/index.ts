@@ -138,6 +138,26 @@ export async function onRepositoryChanged(
   })
 }
 
+// 定时 Fetch 已移到 Rust service（覆盖全部已开仓库、单飞、失败退避）；前端设置
+// 面板只负责下发开关与间隔，快照刷新仍走 repository-changed 推送。
+export async function setRepositoryAutoFetchConfig(enabled: boolean, intervalMinutes: number) {
+  return invoke<void>('set_repository_auto_fetch_config', { enabled, intervalMinutes })
+}
+
+/** 订阅后台定时 Fetch 完成事件；返回取消订阅函数。 */
+export async function onRepositoryAutoFetched(
+  handler: (event: { repositoryPath: string; ok: boolean }) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<{ repository_path: string; ok: boolean }>('repository-auto-fetched', (event) => {
+    handler({
+      repositoryPath: event.payload.repository_path,
+      ok: event.payload.ok,
+    })
+  })
+}
+
 export async function pickAndLoadRepository(): Promise<RepositorySnapshot | null> {
   if (!isTauriRuntime()) {
     throw new Error('打开本地仓库需要桌面版。请运行 pnpm desktop:dev。')
