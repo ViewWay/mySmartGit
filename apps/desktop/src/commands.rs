@@ -1,5 +1,5 @@
 use crate::{
-    git,
+    git, git_gix,
     models::{
         BlameLine, DiffLine, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot,
         RepositoryCommitStats, RepositoryComparison, RepositoryFile, RepositorySnapshot,
@@ -197,10 +197,14 @@ pub async fn load_repository_state_token(
     }
     let generation = service.begin_read(&repository_path);
     let git_path = repository_path.clone();
-    let computed =
-        tauri::async_runtime::spawn_blocking(move || git::repository_state_token(&git_path))
-            .await
-            .map_err(|error| task_error("检查仓库状态", error))?;
+    let computed = tauri::async_runtime::spawn_blocking(move || {
+        // gix 快路径（Phase 2）：进程内直读免子进程；非标准仓库布局等
+        // 错误时回退 Git CLI，灵敏度已由测试对齐（git_gix.rs）。
+        git_gix::repository_state_token(&git_path)
+            .or_else(|_| git::repository_state_token(&git_path))
+    })
+    .await
+    .map_err(|error| task_error("检查仓库状态", error))?;
     let token = computed?;
     service.finish_token(&repository_path, generation, token.clone());
     Ok(token)

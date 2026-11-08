@@ -4,6 +4,7 @@ mod git;
 mod git_ai;
 mod git_credentials;
 mod git_flow;
+mod git_gix;
 mod git_hosting;
 mod git_lfs;
 mod git_terminal;
