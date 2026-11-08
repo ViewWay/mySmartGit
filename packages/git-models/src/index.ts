@@ -1109,8 +1109,10 @@ export type ReviewThread = {
   filePath: string
   /** 锚定的 ref：提交 hash / 分支 / 标签。 */
   reference: string
-  /** 1 起的行号。 */
+  /** 1 起的行号；范围评论时为起始行。 */
   line: number
+  /** 范围评论的结束行（含）；单行评论缺省。与 git_review.rs end_line 对齐。 */
+  endLine?: number
   side: ReviewThreadSide
   resolved: boolean
   createdAt: string

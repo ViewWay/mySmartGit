@@ -7,6 +7,7 @@ import {
   groupThreadsByLine,
   reviewAnchorKey,
   threadAnchorKey,
+  threadCovers,
   threadLineSet,
   threadsForFile,
   buildThread,
@@ -76,6 +77,37 @@ describe('reviewModel 锚点与归组', () => {
     expect(draft.side).toBe('new')
     expect(draft.comments).toHaveLength(1)
     expect(draft.comments[0].body).toBe('fix this')
+    expect(draft.endLine).toBeUndefined()
+  })
+
+  it('buildThread 保留合法范围 endLine', () => {
+    const draft = buildThread({ filePath: 'a.ts', line: 4, endLine: 9, author: 'dev', body: 'range', now: '2026-11-07T01:00:00Z' })
+    expect(draft.line).toBe(4)
+    expect(draft.endLine).toBe(9)
+  })
+
+  it('buildThread 把 end<=line 归一为单行', () => {
+    const equal = buildThread({ filePath: 'a.ts', line: 4, endLine: 4, author: 'dev', body: 'x', now: '2026-11-07T01:00:00Z' })
+    expect(equal.endLine).toBeUndefined()
+    const before = buildThread({ filePath: 'a.ts', line: 4, endLine: 2, author: 'dev', body: 'x', now: '2026-11-07T01:00:00Z' })
+    expect(before.endLine).toBeUndefined()
+  })
+
+  it('threadLineSet 展开范围评论铺满整段', () => {
+    const set = threadLineSet([thread({ id: 'r', line: 3, endLine: 6 }), thread({ id: 's', line: 9 })])
+    expect([...set].sort((a, b) => a - b)).toEqual([3, 4, 5, 6, 9])
+  })
+
+  it('threadCovers 单行只命中本行，范围命中整段', () => {
+    const single = thread({ id: 's', line: 5 })
+    expect(threadCovers(single, 5)).toBe(true)
+    expect(threadCovers(single, 4)).toBe(false)
+    expect(threadCovers(single, 6)).toBe(false)
+    const range = thread({ id: 'r', line: 3, endLine: 6 })
+    expect(threadCovers(range, 2)).toBe(false)
+    expect(threadCovers(range, 3)).toBe(true)
+    expect(threadCovers(range, 6)).toBe(true)
+    expect(threadCovers(range, 7)).toBe(false)
   })
 })
 

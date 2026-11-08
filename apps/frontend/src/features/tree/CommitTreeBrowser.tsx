@@ -7,7 +7,7 @@ import { loadCommitTree, loadCommitTreeChildren, loadRevisionFilePreview, cancel
 import { isBooleanRecord, usePersistentState } from '../../persistentState'
 import { createMediaRequestId, isStaleRequest } from '../diff/imageDiffModel'
 import { useReviewThreads } from '../review/useReviewThreads'
-import { threadLineSet, threadsForFile } from '../review/reviewModel'
+import { threadCovers, threadLineSet, threadsForFile } from '../review/reviewModel'
 import { CommitTreePreview, CommitTreeRowList, CommitTreeSummary, TREE_ROW_HEIGHT } from './CommitTreeView'
 import {
   ancestorPaths,
@@ -67,7 +67,8 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
 
   // B2 审查评论：按仓库加载线程；作者名取 git config user.name（取不到则留空）。
   const review = useReviewThreads({ repositoryPath })
-  const [reviewLine, setReviewLine] = useState<number | null>(null)
+  // 评论卡锚定的行范围：点行号为单行（start===end），划选右键为多行。
+  const [reviewRange, setReviewRange] = useState<{ start: number; end: number } | null>(null)
   const authorRef = useRef('')
   useEffect(() => {
     let cancelled = false
@@ -77,32 +78,33 @@ export function CommitTreeBrowser({ repositoryPath, reference, onOpenExternally,
     return () => { cancelled = true }
   }, [])
   // 换文件或换 ref 时收起评论区，避免把上一行的面板留在屏幕上。
-  useEffect(() => { setReviewLine(null) }, [selected, reference])
+  useEffect(() => { setReviewRange(null) }, [selected, reference])
 
   const previewThreadLines = useMemo(
     () => (selected && preview?.kind === 'text' ? threadLineSet(threadsForFile(review.threads, reference, selected)) : new Set<number>()),
     [preview?.kind, reference, review.threads, selected],
   )
   const activeThreads = useMemo(
-    () => (reviewLine == null || !selected ? [] : threadsForFile(review.threads, reference, selected).filter((thread) => thread.line === reviewLine)),
-    [reference, review.threads, reviewLine, selected],
+    () => (reviewRange == null || !selected ? [] : threadsForFile(review.threads, reference, selected).filter((thread) => threadCovers(thread, reviewRange.start))),
+    [reference, review.threads, reviewRange, selected],
   )
   const reviewWiring = useMemo(() => ({
     lines: previewThreadLines,
-    activeLine: reviewLine,
+    activeRange: reviewRange,
     threads: activeThreads,
     busy: review.status === 'loading',
     error: review.error,
-    onLineClick: (line: number) => setReviewLine((current) => (current === line ? null : line)),
+    onLineClick: (line: number) => setReviewRange((current) => (current && current.start === line && current.end === line ? null : { start: line, end: line })),
+    onRangeComment: (start: number, end: number) => setReviewRange({ start, end }),
     onCreate: (body: string) => {
-      if (reviewLine == null || !selected) return
-      review.actions.addThread({ filePath: selected, line: reviewLine, body, author: authorRef.current })
+      if (reviewRange == null || !selected) return
+      review.actions.addThread({ filePath: selected, line: reviewRange.start, endLine: reviewRange.end > reviewRange.start ? reviewRange.end : undefined, body, author: authorRef.current })
     },
     onReply: (threadId: string, body: string) => review.actions.reply(threadId, body, authorRef.current),
     onResolve: (threadId: string, resolved: boolean) => review.actions.setResolved(threadId, resolved),
     onDelete: (threadId: string) => review.actions.remove(threadId),
-    onClose: () => setReviewLine(null),
-  }), [activeThreads, previewThreadLines, review, reviewLine, selected])
+    onClose: () => setReviewRange(null),
+  }), [activeThreads, previewThreadLines, review, reviewRange, selected])
 
   const loadTree = useCallback((mode: 'initial' | 'reload') => {
     let cancelled = false

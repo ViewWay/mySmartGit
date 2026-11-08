@@ -22,9 +22,19 @@ export function threadsForFile(threads: ReviewThread[], reference: string, fileP
   return matched
 }
 
-/** 有线程的行号集合（喂给 CodeMirror gutter）。 */
+/** 有线程的行号集合（喂给 CodeMirror gutter）；范围评论铺满 line..endLine 整段。 */
 export function threadLineSet(threads: ReviewThread[]): Set<number> {
-  return new Set(threads.map((thread) => thread.line))
+  const lines = new Set<number>()
+  for (const thread of threads) {
+    const end = thread.endLine ?? thread.line
+    for (let line = thread.line; line <= end; line += 1) lines.add(line)
+  }
+  return lines
+}
+
+/** 线程是否覆盖某行（含范围评论的整段）；用于按行过滤活跃线程。 */
+export function threadCovers(thread: Pick<ReviewThread, 'line' | 'endLine'>, line: number): boolean {
+  return line >= thread.line && line <= (thread.endLine ?? thread.line)
 }
 
 /** 按 (行, 创建时间) 升序，把线程归组到行号。 */
@@ -66,17 +76,21 @@ export function buildComment(author: string, body: string, now: string): ReviewC
 export function buildThread(input: {
   filePath: string
   line: number
+  endLine?: number
   side?: ReviewThreadSide
   author: string
   body: string
   now: string
 }): ReviewThread {
   const comment = buildComment(input.author, input.body, input.now)
+  // end<=line 归一为单行（undefined），与后端「endLine 必须 >= line」校验一致。
+  const endLine = input.endLine != null && input.endLine > input.line ? input.endLine : undefined
   return {
     id: createReviewId(),
     filePath: input.filePath,
     reference: '',
     line: input.line,
+    ...(endLine != null ? { endLine } : {}),
     side: input.side ?? 'new',
     resolved: false,
     createdAt: input.now,

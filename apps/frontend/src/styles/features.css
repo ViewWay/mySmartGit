@@ -2186,7 +2186,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * B3 Diff 审查评论：行号标记与底部评论坞
+ * B3 Diff 审查评论：行号标记与浮动评论卡
  * ------------------------------------------------------------------------- */
 
 .diff-panel .line-no.review-clickable {
@@ -2204,10 +2204,23 @@
   vertical-align: middle;
 }
 
-.diff-review-dock {
-  flex-shrink: 0;
+.review-float-card {
+  position: fixed;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 12px 38px rgba(0, 0, 0, .34);
+  animation: popIn .12s ease-out;
 }
 
-.diff-review-dock .review-thread-panel {
-  max-height: 38%;
+.review-float-card .review-thread-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  border-top: none;
+  background: transparent;
 }

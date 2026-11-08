@@ -16,6 +16,11 @@ export const review = {
   'review.confirmDelete': 'Confirm delete?',
   'review.composePlaceholder': 'Write the first comment on line {{line}}…',
   'review.create': 'Add comment',
-  'review.emptyHint': 'Click a line number to open the comment panel below the preview',
+  'review.emptyHint': 'Click a line number to open the comment card',
   'review.diffClickHint': 'Click the line number to view or add comments',
+  'review.contextComment': 'Comment on this line',
+  'review.contextCommentRange': 'Comment on selection ({{start}}–{{end}})',
+  'review.rangeBadge': 'Lines {{start}}–{{end}}',
+  'review.panelTitleAtRange': 'Lines {{start}}–{{end}} · Review comments',
+  'review.composeRangePlaceholder': 'Write the first comment on lines {{start}}–{{end}}…',
 } satisfies Record<keyof typeof import('../zh/review').review, string>

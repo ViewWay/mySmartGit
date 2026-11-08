@@ -65,8 +65,11 @@ pub struct ReviewThread {
     pub file_path: String,
     /// 锚定的 ref：提交 hash / 分支 / 标签。
     pub reference: String,
-    /// 1 起；side=new 时为该版本文件行号或 diff 新侧行号。
+    /// 1 起；side=new 时为该版本文件行号或 diff 新侧行号；范围评论的起始行。
     pub line: u32,
+    /// 范围评论的结束行（含）；单行评论为 None。旧 JSON 无此字段照读。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
     /// "new" | "old"（树预览恒为 "new"）。
     pub side: String,
     pub resolved: bool,
@@ -360,6 +363,14 @@ fn validate_thread(thread: &ReviewThread) -> Result<(), CommandError> {
     if thread.line == 0 {
         return Err(invalid_thread("line", "行号从 1 开始"));
     }
+    if let Some(end_line) = thread.end_line {
+        if end_line < thread.line {
+            return Err(invalid_thread(
+                "endLine",
+                format!("结束行 {end_line} 不能小于起始行 {}", thread.line),
+            ));
+        }
+    }
     if thread.side != "new" && thread.side != "old" {
         return Err(invalid_thread("side", "side 只能是 new 或 old"));
     }
@@ -642,6 +653,7 @@ mod tests {
                 created_at: "2026-11-07T02:00:00Z".to_string(),
             }],
             remote: None,
+            end_line: None,
         }
     }
 
@@ -706,6 +718,56 @@ mod tests {
         let base = test_directory("missing-store");
         let threads = list_threads_at(&base.0, "/repos/alpha").expect("list");
         assert!(threads.is_empty());
+    }
+
+    #[test]
+    fn validate_accepts_range_end_line() {
+        let mut thread = sample_thread("t-range");
+        thread.line = 7;
+        thread.end_line = Some(9);
+        assert!(validate_thread(&thread).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_end_line_before_start() {
+        let mut thread = sample_thread("t-range-bad");
+        thread.end_line = Some(3);
+        thread.line = 7;
+        let error = validate_thread(&thread).expect_err("endLine < line must fail");
+        assert!(error.to_string().contains("结束行"), "{error}");
+    }
+
+    #[test]
+    fn store_json_without_end_line_reads_back() {
+        let base = test_directory("no-end-line");
+        // 旧版本写入的 JSON 没有 endLine 字段：serde(default) 保证照读。
+        let legacy = serde_json::json!({
+            "schemaVersion": 1,
+            "threads": [{
+                "id": "t1",
+                "filePath": "src/main.rs",
+                "reference": "feature-branch",
+                "line": 42,
+                "side": "new",
+                "resolved": false,
+                "createdAt": "2026-11-07T02:00:00Z",
+                "updatedAt": "2026-11-07T02:00:00Z",
+                "comments": [{
+                    "id": "t1-c1",
+                    "author": "dev",
+                    "body": "这里建议提取成函数",
+                    "createdAt": "2026-11-07T02:00:00Z"
+                }]
+            }]
+        });
+        std::fs::write(
+            store_path_at(&base.0, "/repos/alpha"),
+            serde_json::to_vec(&legacy).expect("serialize legacy"),
+        )
+        .expect("write legacy json");
+        let threads = list_threads_at(&base.0, "/repos/alpha").expect("list");
+        assert_eq!(threads.len(), 1);
+        assert!(threads[0].end_line.is_none());
     }
 
     #[test]

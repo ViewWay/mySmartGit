@@ -1917,6 +1917,7 @@ mod review_comment_tests {
             file_path: "src/a.ts".to_string(),
             reference: "feature".to_string(),
             line,
+            end_line: None,
             side: side.to_string(),
             resolved: false,
             created_at: "2026-11-07T00:00:00Z".to_string(),

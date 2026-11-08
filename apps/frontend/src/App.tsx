@@ -872,7 +872,7 @@ export default function App() {
     threads: commitReview.threads,
     busy: commitReview.status === 'loading',
     error: commitReview.error,
-    onCreate: (input: { filePath: string; line: number; side: 'old' | 'new'; body: string }) =>
+    onCreate: (input: { filePath: string; line: number; endLine?: number; side: 'old' | 'new'; body: string }) =>
       commitReview.actions.addThread({ ...input, author: reviewAuthorRef.current }),
     onReply: (threadId: string, body: string) => commitReview.actions.reply(threadId, body, reviewAuthorRef.current),
     onResolve: (threadId: string, resolved: boolean) => commitReview.actions.setResolved(threadId, resolved),

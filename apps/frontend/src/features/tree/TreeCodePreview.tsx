@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { foldGutter, foldKeymap, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { defaultKeymap } from '@codemirror/commands'
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search'
@@ -86,18 +86,37 @@ export type TreeCodePreviewProps = {
   threadLines?: Set<number>
   /** 点击行号/圆点回调；不传则行号区无点击行为。 */
   onLineNumberClick?: (line: number) => void
+  /** 选区非空时右键回调（带 1 起起止行号）；不传则右键走浏览器默认。 */
+  onSelectionContext?: (event: MouseEvent, startLine: number, endLine: number) => void
 }
 
-export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick }: TreeCodePreviewProps) {
+/** 暴露给宿主用于浮动评论卡锚定的行矩形查询。 */
+export type TreeCodePreviewHandle = {
+  getLineRect(line: number): DOMRect | null
+}
+
+export const TreeCodePreview = forwardRef<TreeCodePreviewHandle, TreeCodePreviewProps>(function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick, onSelectionContext }: TreeCodePreviewProps, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const languageCompartment = useRef(new Compartment())
   // 回调经 ref 转发：挂载 effect 只跑一次，仍能用到最新回调。
   const lineClickRef = useRef(onLineNumberClick)
   lineClickRef.current = onLineNumberClick
+  const selectionContextRef = useRef(onSelectionContext)
+  selectionContextRef.current = onSelectionContext
   const [initialText] = useMemo(() => [text], [])
   // 语言跟随当前文件：切文件（跨扩展名）时热切换语法，而不是冻结在首次挂载的文件。
   const languageDescription = useMemo(() => matchLanguage(filePath), [filePath])
+
+  useImperativeHandle(ref, () => ({
+    getLineRect(line: number): DOMRect | null {
+      const view = viewRef.current
+      if (!view || line < 1 || line > view.state.doc.lines) return null
+      const rect = view.coordsAtPos(view.state.doc.line(line).from)
+      if (!rect) return null
+      return new DOMRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    },
+  }), [])
 
   useEffect(() => {
     const host = hostRef.current
@@ -118,6 +137,18 @@ export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick
           previewTheme,
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
+          // 选区非空时右键拦截，交给宿主弹出范围评论菜单；空选区放行浏览器默认。
+          EditorView.domEventHandlers({
+            contextmenu: (event, view) => {
+              const handler = selectionContextRef.current
+              if (!handler) return false
+              const { from, to } = view.state.selection.main
+              if (from === to) return false
+              event.preventDefault()
+              handler(event, view.state.doc.lineAt(from).number, view.state.doc.lineAt(to).number)
+              return true
+            },
+          }),
           languageCompartment.current.of([]),
         ],
       }),
@@ -164,4 +195,4 @@ export function TreeCodePreview({ text, filePath, threadLines, onLineNumberClick
   }, [languageDescription])
 
   return <div ref={hostRef} className="tree-code-preview" data-path={filePath}/>
-}
+})

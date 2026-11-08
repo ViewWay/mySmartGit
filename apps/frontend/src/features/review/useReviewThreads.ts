@@ -85,7 +85,7 @@ export function createReviewController(options: {
     },
     load,
     refresh: () => { if (repositoryPath) load(repositoryPath) },
-    addThread(input: { filePath: string; line: number; side?: ReviewThreadSide; body: string; author: string }) {
+    addThread(input: { filePath: string; line: number; endLine?: number; side?: ReviewThreadSide; body: string; author: string }) {
       const draft = model.buildThread({ ...input, now: now() })
       runOptimistic(
         (threads) => model.withUpsertedThread(threads, draft),
@@ -145,7 +145,7 @@ export function useReviewThreads(options: { repositoryPath: string | null; backe
   const actions = useMemo(
     () => ({
       refresh: () => controller.refresh(),
-      addThread: (input: { filePath: string; line: number; side?: ReviewThreadSide; body: string; author: string }) => controller.addThread(input),
+      addThread: (input: { filePath: string; line: number; endLine?: number; side?: ReviewThreadSide; body: string; author: string }) => controller.addThread(input),
       reply: (threadId: string, body: string, author: string) => controller.reply(threadId, body, author),
       setResolved: (threadId: string, resolved: boolean) => controller.setResolved(threadId, resolved),
       remove: (threadId: string) => controller.remove(threadId),

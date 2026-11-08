@@ -18,4 +18,9 @@ export const review = {
   'review.create': '添加评论',
   'review.emptyHint': '点击行号打开此处的评论区',
   'review.diffClickHint': '点击行号查看或添加行评论',
+  'review.contextComment': '评论此行',
+  'review.contextCommentRange': '评论选中行（{{start}}–{{end}}）',
+  'review.rangeBadge': '第 {{start}}–{{end}} 行',
+  'review.panelTitleAtRange': '第 {{start}}–{{end}} 行 · 审查评论',
+  'review.composeRangePlaceholder': '对第 {{start}}–{{end}} 行写下第一条评论…',
 } as const

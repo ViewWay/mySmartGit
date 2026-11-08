@@ -1,16 +1,20 @@
 import { useI18n } from '../../i18n'
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Box, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Folder, Link2 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { Box, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Folder, Link2, MessageSquare } from 'lucide-react'
 import { Button } from '../../components/Button'
+import { ContextMenu } from '../../components/ContextMenu'
 import type { RevisionFilePreview } from '../../repository'
 import { formatByteSize } from '../diff/imageDiffModel'
 import { ImageDiffViewer } from '../diff/ImageDiffViewer'
 import { computeTreeWindow, isPreviewableRow, navigateTreeRows, type CommitTreeRow, type TreeNavigationKey } from './commitTreeModel'
 import { fileIconClass } from './fileIcon'
-import { TreeCodePreview } from './TreeCodePreview'
-import { ReviewThreadPanel } from '../review/ReviewThreadPanel'
+import { TreeCodePreview, type TreeCodePreviewHandle } from './TreeCodePreview'
+import { ReviewFloatCard } from '../review/ReviewFloatCard'
 import type { ReviewThread } from '@branchline/git-models'
 import type { ImageFileDiff } from '../../repository'
+
+// 静态渲染（测试/SSR）没有 document：退回 useEffect，避免 useLayoutEffect 的服务端告警。
+const useBrowserLayoutEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect
 
 /** 固定行高，与 commitTree.css 的 .commit-tree-row 保持一致；窗口化依赖它。 */
 export const TREE_ROW_HEIGHT = 22
@@ -164,14 +168,17 @@ export function CommitTreeRowList({ rows, selected, error, loading, hasIndex, qu
 
 /** B2 审查评论接线包：调用方（CommitTreeBrowser）组装后整包传入。 */
 export type TreeReviewWiring = {
-  /** 当前预览文件中有线程的行号集合。 */
+  /** 当前预览文件中有线程的行号集合（范围线程已展开）。 */
   lines: Set<number>
-  activeLine: number | null
-  /** 活动行上的线程（已按文件/ref 过滤排序）。 */
+  /** 当前打开评论卡的行范围；点行号为单行 {start,end} 相等，划选右键为多行。 */
+  activeRange: { start: number; end: number } | null
+  /** 活动范围覆盖到的线程（已按文件/ref 过滤排序）。 */
   threads: ReviewThread[]
   busy: boolean
   error: string | null
   onLineClick: (line: number) => void
+  /** 选区右键「评论选中行」：把起止行交给容器打开范围评论卡。 */
+  onRangeComment: (start: number, end: number) => void
   onCreate: (body: string) => void
   onReply: (threadId: string, body: string) => void
   onResolve: (threadId: string, resolved: boolean) => void
@@ -197,6 +204,39 @@ export type CommitTreePreviewProps = {
  */
 export function CommitTreePreview({ selected, kind, preview, loading, error, onOpenExternally, review }: CommitTreePreviewProps) {
   const { t } = useI18n()
+  const previewRef = useRef<TreeCodePreviewHandle>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [selectionMenu, setSelectionMenu] = useState<{ start: number; end: number; x: number; y: number } | null>(null)
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null)
+  const activeRange = review?.activeRange ?? null
+
+  // 锚定评论卡到活动范围起始行；行滚出 CodeMirror 视口（coordsAtPos 返回 null 或越界）即收起。
+  const measureAnchor = useCallback(() => {
+    if (!activeRange) { setAnchorRect(null); return }
+    const rect = previewRef.current?.getLineRect(activeRange.start) ?? null
+    if (!rect) { setAnchorRect(null); return }
+    const scroller = bodyRef.current?.querySelector('.cm-scroller')
+    if (scroller) {
+      const bounds = scroller.getBoundingClientRect()
+      if (rect.bottom < bounds.top || rect.top > bounds.bottom) { setAnchorRect(null); return }
+    }
+    setAnchorRect(rect)
+  }, [activeRange])
+
+  useBrowserLayoutEffect(() => { measureAnchor() }, [measureAnchor, preview?.text, selected])
+
+  // 监听 CodeMirror 滚动：卡片跟随锚行，滚走即收。换文件时重新挂监听。
+  useEffect(() => {
+    const scroller = bodyRef.current?.querySelector('.cm-scroller')
+    if (!scroller) return
+    const onScroll = () => measureAnchor()
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => scroller.removeEventListener('scroll', onScroll)
+  }, [measureAnchor, selected, preview?.text])
+
+  // 换文件/换内容时收起选区右键菜单，避免把上一文件的菜单留在屏幕上。
+  useEffect(() => { setSelectionMenu(null) }, [selected, preview?.path])
+
   const imagePair: ImageFileDiff | null = preview?.media
     ? { path: preview.path, fromReference: '', toReference: preview.reference, before: null, after: preview.media, identical: false, error: null }
     : null
@@ -218,18 +258,22 @@ export function CommitTreePreview({ selected, kind, preview, loading, error, onO
       {selected && onOpenExternally && isPreviewableRow({ kind: kind ?? '' }) && <Button size="compact" onClick={() => onOpenExternally(selected)} title={t('repository.tree.openExternally')}><ExternalLink size={13}/><span>{t('repository.tree.externalOpen')}</span></Button>}
       {preview?.kind === 'text' && <Button size="compact" onClick={() => navigator.clipboard?.writeText(preview.text ?? '').catch(() => undefined)} title={t('repository.tree.copyContent')} aria-label={t('repository.tree.copyContent')}><Copy size={13}/></Button>}
     </div>
-    <div className="commit-tree-preview-body">
+    <div className="commit-tree-preview-body" ref={bodyRef}>
       {note && <div className="commit-tree-preview-note">{note}</div>}
       {selected && loading && <div className="commit-tree-preview-note">{t('repository.tree.loadingContent')}</div>}
       {selected && !loading && error && <div className="commit-tree-error">{error}</div>}
       {selected && !loading && !note && preview?.kind === 'text' && <TreeCodePreview
+        ref={previewRef}
         text={preview.text ?? ''}
         filePath={preview.path}
         threadLines={review?.lines}
-        onLineNumberClick={review?.onLineClick}/>}
-      {selected && !loading && !note && review && review.activeLine != null && <ReviewThreadPanel
+        onLineNumberClick={review?.onLineClick}
+        onSelectionContext={review ? (event, start, end) => setSelectionMenu({ start, end, x: event.clientX, y: event.clientY }) : undefined}/>}
+      {selected && !loading && !note && review && activeRange != null && <ReviewFloatCard
+        anchorRect={anchorRect}
         threads={review.threads}
-        composeLine={review.activeLine}
+        composeLine={activeRange.start}
+        composeRange={activeRange.end > activeRange.start ? { start: activeRange.start, end: activeRange.end } : null}
         busy={review.busy}
         error={review.error}
         onCreate={review.onCreate}
@@ -252,5 +296,13 @@ export function CommitTreePreview({ selected, kind, preview, loading, error, onO
         error={null}
         onOpenExternally={onOpenExternally ? () => onOpenExternally(preview.path) : undefined}/>}
     </div>
+    {selectionMenu && review && <ContextMenu x={selectionMenu.x} y={selectionMenu.y} onClose={() => setSelectionMenu(null)}>
+      <button onClick={() => { review.onRangeComment(selectionMenu.start, selectionMenu.end); setSelectionMenu(null) }}>
+        <MessageSquare size={14}/>
+        <span>{selectionMenu.end > selectionMenu.start
+          ? t('review.contextCommentRange', { start: selectionMenu.start, end: selectionMenu.end })
+          : t('review.contextComment')}</span>
+      </button>
+    </ContextMenu>}
   </div>
 }

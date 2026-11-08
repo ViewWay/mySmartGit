@@ -10,6 +10,8 @@ export type ReviewThreadPanelProps = {
   threads: ReviewThread[]
   /** 无线程时显示的新建锚点行号；null 表示纯浏览模式。 */
   composeLine: number | null
+  /** 范围评论的起止行（end>start 时头部/占位显示范围）；单行传 null。 */
+  composeRange?: { start: number; end: number } | null
   busy?: boolean
   error?: string | null
   onCreate: (body: string) => void
@@ -55,6 +57,7 @@ function ReviewComposer({
 export function ReviewThreadPanel({
   threads,
   composeLine,
+  composeRange,
   busy,
   error,
   onCreate,
@@ -67,12 +70,17 @@ export function ReviewThreadPanel({
   const headingId = useId()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  const isRange = composeRange != null && composeRange.end > composeRange.start
   const count = threads.reduce((sum, thread) => sum + thread.comments.length, 0)
   return <section className="review-thread-panel" aria-labelledby={headingId}>
     <div className="review-panel-header">
       <MessageSquare size={13}/>
       <span id={headingId}>
-        {composeLine != null ? t('review.panelTitleAtLine', { line: composeLine }) : t('review.panelTitle')}
+        {composeLine == null
+          ? t('review.panelTitle')
+          : isRange
+            ? t('review.panelTitleAtRange', { start: composeRange!.start, end: composeRange!.end })
+            : t('review.panelTitleAtLine', { line: composeLine })}
       </span>
       {count > 0 && <span className="review-count">{count}</span>}
       <span className="review-spacer"/>
@@ -86,7 +94,7 @@ export function ReviewThreadPanel({
         {thread.comments.map((comment, index) => <div key={comment.id} className="review-comment">
           <div className="review-comment-meta">
             <span className="review-author">{comment.author || t('review.anonymous')}</span>
-            {index === 0 && <span className="review-line-badge">{t('review.lineBadge', { line: thread.line })}</span>}
+            {index === 0 && <span className="review-line-badge">{thread.endLine != null && thread.endLine > thread.line ? t('review.rangeBadge', { start: thread.line, end: thread.endLine }) : t('review.lineBadge', { line: thread.line })}</span>}
             {thread.remote && <span className="review-remote-badge" title={t('review.remoteHint')}>{t('review.remotePublished')}</span>}
           </div>
           <p className="review-comment-body">{comment.body}</p>
@@ -123,7 +131,7 @@ export function ReviewThreadPanel({
         </div>
       </div>)}
       {composeLine != null && threads.length === 0 && <ReviewComposer
-        placeholder={t('review.composePlaceholder', { line: composeLine })}
+        placeholder={isRange ? t('review.composeRangePlaceholder', { start: composeRange!.start, end: composeRange!.end }) : t('review.composePlaceholder', { line: composeLine })}
         busy={Boolean(busy)}
         submitLabel={t('review.create')}
         onSubmit={onCreate}
