@@ -66,6 +66,7 @@ pub fn run() {
             commands::load_commit_stats,
             commands::load_commit_files,
             commands::fetch_repository,
+            commands::set_repository_auto_fetch_config,
             commands::stage_files,
             commands::stage_patch,
             commands::unstage_patch,

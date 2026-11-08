@@ -12,11 +12,11 @@
 //! 前进），结果直接丢弃并保留 dirty 标记，下一次轮询重新计算——不会把监听事件
 //! 之前的旧数据缓存成新数据。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify_debouncer_full::{
     new_debouncer, notify::RecursiveMode, DebounceEventResult, Debouncer, RecommendedCache,
@@ -36,6 +36,39 @@ pub const DIFF_CACHE_MAX_ENTRIES: usize = 64;
 pub const DIFF_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// 文件监听防抖窗口。
 pub const WATCH_DEBOUNCE_MS: u64 = 300;
+/// 定时 Fetch 默认间隔与允许范围（分钟）：前端提供 1/5/10/15/30 档，上限放宽到 60。
+pub const AUTO_FETCH_DEFAULT_MINUTES: u64 = 5;
+pub const AUTO_FETCH_MIN_MINUTES: u64 = 1;
+pub const AUTO_FETCH_MAX_MINUTES: u64 = 60;
+/// 失败退避封顶档：interval × 2^2 = 4 倍间隔（连续失败时最长等待可控）。
+pub const AUTO_FETCH_BACKOFF_MAX_STEP: u32 = 2;
+/// 定时线程的兜底唤醒周期：即使漏掉一次事件唤醒，调度最多延迟这么久。
+const FETCH_TICK_MAX: Duration = Duration::from_secs(30);
+
+/// `repository-auto-fetched` 事件载荷：后台定时 Fetch 完成（含结果）。
+/// 前端据此更新「上次获取」时间戳；快照刷新仍走 repository-changed 推送。
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryAutoFetchedEvent {
+    repository_path: String,
+    ok: bool,
+}
+
+/// 定时 Fetch 配置：默认开启、5 分钟——与历史前端行为一致。
+#[derive(Clone, Copy)]
+struct AutoFetchConfig {
+    enabled: bool,
+    interval: Duration,
+}
+
+impl Default for AutoFetchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60),
+        }
+    }
+}
 
 /// `repository-changed` 事件载荷。`repository_path` 是前端持有的展示路径
 /// （与 `RepositorySnapshot.path` 同口径），前端用 repositoryCacheKey 归一后匹配。
@@ -174,18 +207,29 @@ struct OpenedRepository {
     diff_cache: DiffCache,
     /// LRU 时钟。
     last_used: u64,
+    /// 定时 Fetch 到期时刻（驻留时置 now+interval；完成时按结果重排；None=不排程）。
+    next_fetch_due: Option<Instant>,
+    /// 连续失败退避档（0 = 正常间隔；每失败 +1 封顶，成功清零）。
+    fetch_backoff_step: u32,
 }
 
 /// 仓库层服务，由 Tauri `manage` 托管（lib.rs setup）。
 pub struct RepositoryServiceState {
     app: Option<AppHandle>,
     inner: Mutex<RepositoryServiceInner>,
+    /// 定时线程与 Fetch 完成回调的唤醒通道（发端失败仅表示接收端已不在，可忽略）。
+    fetch_wake: mpsc::Sender<()>,
 }
 
 #[derive(Default)]
 struct RepositoryServiceInner {
     opened: HashMap<String, OpenedRepository>,
     use_counter: u64,
+    /// 定时 Fetch 配置（默认开、5 分钟）。
+    fetch_config: AutoFetchConfig,
+    /// 单飞集合：键 = service_key。定时线程与手动 `fetch_repository` 命令共用，
+    /// 同一仓库任意时刻至多一个网络任务（README 性能边界）。
+    fetch_in_flight: HashSet<String>,
 }
 
 impl RepositoryServiceInner {
@@ -193,6 +237,12 @@ impl RepositoryServiceInner {
     fn begin_read(&mut self, path: &str, app: Option<AppHandle>) -> u64 {
         let key = service_key(path);
         if !self.opened.contains_key(&key) {
+            // 首次驻留即入队定时 Fetch：到期 = now + 当前间隔（成功时完成回调
+            // 会按同间隔重排；禁用时 due = None）。
+            let fetch_due = self
+                .fetch_config
+                .enabled
+                .then(|| Instant::now() + self.fetch_config.interval);
             self.opened.insert(
                 key.clone(),
                 OpenedRepository {
@@ -205,6 +255,8 @@ impl RepositoryServiceInner {
                     snapshot_dirty: false,
                     diff_cache: DiffCache::default(),
                     last_used: 0,
+                    next_fetch_due: fetch_due,
+                    fetch_backoff_step: 0,
                 },
             );
         }
@@ -256,18 +308,42 @@ impl RepositoryServiceInner {
 
 impl RepositoryServiceState {
     pub fn new(app: AppHandle) -> Self {
-        Self {
-            app: Some(app),
+        let (wake, wake_receiver) = mpsc::channel::<()>();
+        let state = Self {
+            app: Some(app.clone()),
             inner: Mutex::new(RepositoryServiceInner::default()),
-        }
+            fetch_wake: wake,
+        };
+        // 定时线程：阻塞等待「到期唤醒 / 配置变更 / Fetch 完成回调」，醒来后
+        // 到期任务收割并计算下一次唤醒。try_state 在 manage 之前的极短窗口内为
+        // None，退避 100ms 重试即可。
+        std::thread::Builder::new()
+            .name("repository-auto-fetch".into())
+            .spawn(move || loop {
+                let timeout = {
+                    let Some(state) = app.try_state::<RepositoryServiceState>() else {
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
+                    };
+                    state.collect_due_fetches()
+                };
+                match wake_receiver.recv_timeout(timeout) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            })
+            .expect("spawn repository auto-fetch thread");
+        state
     }
 
-    /// 测试与无 Tauri 环境用的裸实例（不推送事件、不起监听回调）。
+    /// 测试与无 Tauri 环境用的裸实例（不推送事件、不起监听回调、不起定时线程）。
     #[cfg(test)]
     fn detached() -> Self {
+        let (wake, _receiver) = mpsc::channel::<()>();
         Self {
             app: None,
             inner: Mutex::new(RepositoryServiceInner::default()),
+            fetch_wake: wake,
         }
     }
 
@@ -395,6 +471,122 @@ impl RepositoryServiceState {
         changed
     }
 
+    /// 更新定时 Fetch 配置（前端设置面板下发）。重排全部驻留仓库的到期时刻，
+    /// 唤醒定时线程立即生效。
+    pub fn set_auto_fetch_config(
+        &self,
+        enabled: bool,
+        interval_minutes: u64,
+    ) -> Result<(), String> {
+        let minutes = interval_minutes.clamp(AUTO_FETCH_MIN_MINUTES, AUTO_FETCH_MAX_MINUTES);
+        let interval = Duration::from_secs(minutes * 60);
+        let mut inner = self.inner.lock().map_err(|_| "repository service lock")?;
+        inner.fetch_config = AutoFetchConfig { enabled, interval };
+        let now = Instant::now();
+        for entry in inner.opened.values_mut() {
+            entry.next_fetch_due = enabled.then(|| now + interval);
+            entry.fetch_backoff_step = 0;
+        }
+        let _ = self.fetch_wake.send(());
+        Ok(())
+    }
+
+    /// 声明网络任务单飞键。返回 false 表示同仓库已有网络任务在跑（定时或手动），
+    /// 调用方应跳过发起。手动路径紧随其后 begin_read 确保驻留。
+    pub fn try_claim_fetch(&self, path: &str) -> bool {
+        let mut inner = self.inner.lock().expect("repository service lock");
+        inner.fetch_in_flight.insert(service_key(path))
+    }
+
+    /// 收割到期任务：单飞领取、置空 due（完成回调重排）、后台线程执行。
+    /// 返回下一次应唤醒的等待时长（已封顶到兜底周期）。
+    fn collect_due_fetches(&self) -> Duration {
+        let mut tasks: Vec<(String, u64)> = Vec::new();
+        let mut earliest: Option<Duration> = None;
+        {
+            let mut inner = self.inner.lock().expect("repository service lock");
+            let now = Instant::now();
+            // 第一遍只读扫描：收集到期项与最近唤醒时刻（避免 iter_mut 与单飞集合
+            // 的借用冲突）。
+            let due: Vec<(String, String, u64)> = if inner.fetch_config.enabled {
+                inner
+                    .opened
+                    .iter()
+                    .filter_map(|(key, entry)| {
+                        let Some(due) = entry.next_fetch_due else {
+                            return None;
+                        };
+                        if due <= now {
+                            Some((key.clone(), entry.display.clone(), entry.generation))
+                        } else {
+                            let wait = due - now;
+                            earliest =
+                                Some(earliest.map_or(wait, |current: Duration| current.min(wait)));
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            // 第二遍领取：单飞失败（手动任务在跑）同样置空 due——完成回调会按
+            // 结果重排，避免本周期重复收割。
+            for (key, display, generation) in due {
+                if inner.fetch_in_flight.insert(key.clone()) {
+                    if let Some(entry) = inner.opened.get_mut(&key) {
+                        entry.next_fetch_due = None;
+                        tasks.push((display, generation));
+                    }
+                } else if let Some(entry) = inner.opened.get_mut(&key) {
+                    entry.next_fetch_due = None;
+                }
+            }
+        }
+        for (display, generation) in tasks {
+            let app = self.app.clone();
+            let wake = self.fetch_wake.clone();
+            // 低优先级：后台独立线程执行；CLI 子进程本就不占 UI 线程。
+            std::thread::spawn(move || run_fetch_task(app, wake, display, generation, true));
+        }
+        earliest.unwrap_or(FETCH_TICK_MAX)
+    }
+
+    /// 网络任务收尾：释放单飞、按结果重排到期（成功 = 间隔；失败 = 退避倍增）、
+    /// 推送 repository-auto-fetched 事件（仅定时任务，手动路径前端已知结果）。
+    pub fn complete_fetch(&self, path: &str, ok: bool, auto: bool, _elapsed: Duration) {
+        let key = service_key(path);
+        let mut inner = self.inner.lock().expect("repository service lock");
+        inner.fetch_in_flight.remove(&key);
+        let interval = inner.fetch_config.interval;
+        let backoff = if ok {
+            0
+        } else {
+            inner
+                .opened
+                .get(&key)
+                .map(|entry| (entry.fetch_backoff_step + 1).min(AUTO_FETCH_BACKOFF_MAX_STEP))
+                .unwrap_or(0)
+        };
+        let delay = interval * 2u32.saturating_pow(backoff);
+        let next_due = inner.fetch_config.enabled.then(|| Instant::now() + delay);
+        if let Some(entry) = inner.opened.get_mut(&key) {
+            entry.fetch_backoff_step = backoff;
+            entry.next_fetch_due = next_due;
+        }
+        if auto {
+            if let Some(app) = &self.app {
+                let _ = app.emit(
+                    "repository-auto-fetched",
+                    RepositoryAutoFetchedEvent {
+                        repository_path: path.to_string(),
+                        ok,
+                    },
+                );
+            }
+        }
+        let _ = self.fetch_wake.send(());
+    }
+
     /// 仓库发现并入服务：DFS 引擎复用 repository_management，不重复实现。
     /// 扫描是无状态发现（不驻留、不挂监听），做成关联函数以便命令侧在
     /// spawn_blocking 里调用。
@@ -407,6 +599,30 @@ impl RepositoryServiceState {
             max_depth.unwrap_or(crate::repository_management::SCAN_DEFAULT_DEPTH),
         )
     }
+}
+
+/// 定时 Fetch 任务体：fetch + 重读快照 → 按 generation 协议落缓存 → 收尾。
+/// 单飞领取已在 collect_due_fetches（定时）或命令侧 try_claim_fetch（手动）完成。
+fn run_fetch_task(
+    app: Option<AppHandle>,
+    wake: mpsc::Sender<()>,
+    display: String,
+    generation: u64,
+    auto: bool,
+) {
+    let started = Instant::now();
+    let outcome = git::fetch_repository(&display).and_then(|()| git::read_repository(&display));
+    let elapsed = started.elapsed();
+    if let Some(state) = app
+        .as_ref()
+        .and_then(|app| app.try_state::<RepositoryServiceState>())
+    {
+        if let Ok(snapshot) = &outcome {
+            state.finish_snapshot(&display, generation, snapshot);
+        }
+        state.complete_fetch(&display, outcome.is_ok(), auto, elapsed);
+    }
+    let _ = wake.send(());
 }
 
 /// 快照缓存权重：直接量一次序列化字节数（fresh read 本就以百毫秒计，开销可忽略）。
@@ -684,5 +900,143 @@ mod tests {
             "应命中 demo-repo：{:?}",
             found
         );
+    }
+
+    /// 定时 Fetch 排程与退避：驻留即入队；单飞领取互斥；手动完成按结果重排
+    /// （成功清退避，失败退避倍增）；配置下发重排全部到期并清退避。
+    #[test]
+    fn auto_fetch_schedules_claims_and_backs_off() {
+        let service = RepositoryServiceState::detached();
+        let path = "/tmp/branchline-fetch-schedule-demo";
+        let interval = Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60);
+
+        // 驻留即入队：due ≈ now + 默认间隔。
+        let _generation = service.begin_read(path);
+        let key = service_key(path);
+        let due = {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).expect("驻留条目");
+            let due = entry.next_fetch_due.expect("默认配置应排程");
+            let wait = due - Instant::now();
+            assert!(wait <= interval, "due 应在默认间隔内：{wait:?}");
+            entry.fetch_backoff_step
+        };
+        assert_eq!(due, 0, "初始退避档为 0");
+
+        // 单飞互斥：首次领取成功，重复领取被拒。
+        assert!(service.try_claim_fetch(path), "首次领取应成功");
+        assert!(!service.try_claim_fetch(path), "重复领取应被拒");
+
+        // 手动任务失败收尾：退避升档，due ≈ now + 2×间隔。
+        service.complete_fetch(path, false, false, Duration::ZERO);
+        {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).expect("驻留条目");
+            assert_eq!(entry.fetch_backoff_step, 1, "失败后退避升到 1");
+            let wait = entry.next_fetch_due.expect("失败后仍排程") - Instant::now();
+            assert!(wait > interval, "退避后等待应超过单倍间隔：{wait:?}");
+        }
+
+        // 再失败一次到封顶档 2（×4），随后成功清零退避。
+        assert!(service.try_claim_fetch(path));
+        service.complete_fetch(path, false, false, Duration::ZERO);
+        {
+            let inner = service.inner.lock().unwrap();
+            assert_eq!(
+                inner.opened.get(&key).unwrap().fetch_backoff_step,
+                AUTO_FETCH_BACKOFF_MAX_STEP,
+                "退避封顶档"
+            );
+        }
+        assert!(service.try_claim_fetch(path));
+        service.complete_fetch(path, true, false, Duration::ZERO);
+        {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).unwrap();
+            assert_eq!(entry.fetch_backoff_step, 0, "成功清零退避");
+            let wait = entry.next_fetch_due.unwrap() - Instant::now();
+            assert!(wait <= interval, "成功后回到单倍间隔：{wait:?}");
+        }
+
+        // 配置下发：禁用清空排程；改间隔重排并清退避；超范围夹取到 60 分钟。
+        service.set_auto_fetch_config(false, 5).expect("禁用配置");
+        {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).unwrap();
+            assert!(entry.next_fetch_due.is_none(), "禁用后不排程");
+        }
+        service.set_auto_fetch_config(true, 3).expect("改 3 分钟");
+        {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).unwrap();
+            let wait = entry.next_fetch_due.unwrap() - Instant::now();
+            assert!(
+                wait <= Duration::from_secs(3 * 60),
+                "按新间隔重排：{wait:?}"
+            );
+        }
+        service.set_auto_fetch_config(true, 999).expect("超限配置");
+        {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).unwrap();
+            let wait = entry.next_fetch_due.unwrap() - Instant::now();
+            assert!(
+                wait <= Duration::from_secs(AUTO_FETCH_MAX_MINUTES * 60)
+                    && wait > Duration::from_secs(30 * 60),
+                "夹取到 60 分钟上限：{wait:?}"
+            );
+        }
+    }
+
+    /// 收割逻辑：未到期只产出最近唤醒时长；到期且单飞空闲则领取并置空 due；
+    /// 到期但单飞被占（手动任务在跑）只置空 due、不重复领取。
+    #[test]
+    fn collect_due_fetches_claims_once_and_reports_earliest_wake() {
+        let service = RepositoryServiceState::detached();
+        let path = "/tmp/branchline-fetch-collect-demo";
+        let key = service_key(path);
+        let _ = service.begin_read(path);
+
+        // 未到期：无任务领取，返回最近唤醒（默认 5 分钟内）。
+        let wake = service.collect_due_fetches();
+        assert!(wake <= Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60));
+        {
+            let inner = service.inner.lock().unwrap();
+            assert!(!inner.fetch_in_flight.contains(&key), "未到期不领取");
+        }
+
+        // 到期 + 单飞空闲：领取成功（真实 fetch 线程会跑但 detached 无 app，不回写状态）。
+        {
+            let mut inner = service.inner.lock().unwrap();
+            inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
+        }
+        let _ = service.collect_due_fetches();
+        {
+            let inner = service.inner.lock().unwrap();
+            assert!(inner.fetch_in_flight.contains(&key), "到期应领取单飞");
+            assert!(
+                inner.opened.get(&key).unwrap().next_fetch_due.is_none(),
+                "领取后置空 due"
+            );
+        }
+
+        // 到期 + 单飞被占：只置空 due，不再领取。
+        //（先完成释放单飞，再预占一次模拟手动任务，然后置 due=now。）
+        service.complete_fetch(path, true, false, Duration::ZERO);
+        assert!(service.try_claim_fetch(path), "预占手动任务");
+        {
+            let mut inner = service.inner.lock().unwrap();
+            inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
+        }
+        let wake = service.collect_due_fetches();
+        assert_eq!(wake, FETCH_TICK_MAX, "无可领取任务时回兜底周期");
+        {
+            let inner = service.inner.lock().unwrap();
+            assert!(
+                inner.opened.get(&key).unwrap().next_fetch_due.is_none(),
+                "被占时置空 due 留待完成回调重排"
+            );
+        }
+        service.complete_fetch(path, true, false, Duration::ZERO);
     }
 }

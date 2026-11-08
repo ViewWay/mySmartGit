@@ -285,6 +285,17 @@ pub async fn fetch_repository(
     service: tauri::State<'_, RepositoryServiceState>,
     repository_path: String,
 ) -> Result<RepositorySnapshot, String> {
+    // 单飞：同仓库已有网络任务（定时 Fetch 或并发手动请求）时不再发起第二次，
+    // 直接回当前快照——与 README「同一仓库只允许一个网络任务」一致。
+    if !service.try_claim_fetch(&repository_path) {
+        if let Some(snapshot) = service.snapshot(&repository_path) {
+            return Ok(snapshot);
+        }
+        let git_path = repository_path.clone();
+        return tauri::async_runtime::spawn_blocking(move || git::read_repository(&git_path))
+            .await
+            .map_err(|error| task_error("Fetch", error))?;
+    }
     let generation = service.begin_read(&repository_path);
     let git_path = repository_path.clone();
     let loaded = tauri::async_runtime::spawn_blocking(move || {
@@ -292,12 +303,31 @@ pub async fn fetch_repository(
         git::read_repository(&git_path)
     })
     .await
-    .map_err(|error| task_error("Fetch", error))?;
+    .map_err(|error| task_error("Fetch", error));
+    // 无论成败都释放单飞并按结果重排定时（手动 Fetch 也计入退避）。
+    let loaded = match loaded {
+        Ok(value) => value,
+        Err(error) => {
+            service.complete_fetch(&repository_path, false, false, std::time::Duration::ZERO);
+            return Err(error);
+        }
+    };
     let snapshot = loaded?;
     // Fetch 期间 refs 已被监听捕获，generation 可能已前进导致本次结果不落缓存——
     // 无妨，下一次 token 轮询会用新代数重读。
     service.finish_snapshot(&repository_path, generation, &snapshot);
+    service.complete_fetch(&repository_path, true, false, std::time::Duration::ZERO);
     Ok(snapshot)
+}
+
+/// 前端设置面板下发定时 Fetch 配置（开关 + 间隔）。纯状态操作，无阻塞工作。
+#[tauri::command]
+pub async fn set_repository_auto_fetch_config(
+    service: tauri::State<'_, RepositoryServiceState>,
+    enabled: bool,
+    interval_minutes: u64,
+) -> Result<(), String> {
+    service.set_auto_fetch_config(enabled, interval_minutes)
 }
 
 #[tauri::command]
