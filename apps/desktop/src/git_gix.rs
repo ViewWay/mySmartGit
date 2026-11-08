@@ -168,6 +168,202 @@ fn path_string(path: &[u8]) -> String {
     String::from_utf8_lossy(path).to_string()
 }
 
+/// 提交图谱批读的 gix 实现（Phase 2 P2c）：进程内 revwalk 替代
+/// `git log --all --date-order` 子进程。
+///
+/// 对拍策略：本函数只产出与 CLI `--pretty` 记录**完全同构**的字段串
+/// （`\x1f` 分隔），后处理（截断/title/stash 状态/avatar、stash 剪枝、分道）
+/// 全部复用 git.rs 的同一套函数——遍历与取数替换后，字段级行为不可能漂移。
+///
+/// 语义对齐清单（均已实测确认）：
+/// - `--all`：全部 refs（含 refs/stash）+ HEAD 作为 tips；
+/// - `--date-order`：`Sorting::ByCommitTime(NewestFirst)`（父在子后，否则提交
+///   时间降序；非 topo-order）；
+/// - `%D` 装饰串：HEAD 优先（detached 为裸 `HEAD`，否则 `HEAD -> <短名>`），
+///   其余引用按**全 refname 降序**渲染；heads/remotes 剥前缀、tags 加 `tag: `、
+///   `refs/stash` 保持全名不缩短（stash 状态判定依赖此字面值）；
+/// - `%aI/%cI`：`gix_date` 的 ISO8601_STRICT（`%Y-%m-%dT%H:%M:%S%:z`），与
+///   `--date=iso-strict` 同格式。
+pub fn parse_commits(
+    path: &std::path::Path,
+    limit: usize,
+) -> Result<Vec<crate::models::RepositoryCommit>, String> {
+    let max_count = limit.clamp(
+        crate::git::COMMIT_GRAPH_LIMIT,
+        crate::git::MAX_COMMIT_GRAPH_LIMIT,
+    );
+    let repo = gix::discover(path).map_err(|error| format!("gix open: {error}"))?;
+
+    // 装饰收集：引用升序遍历，每个 commit 的装饰列表随后反转为降序
+    // （git 的 add_decoration 前插语义），HEAD 再前置。
+    let mut tips: Vec<gix::hash::ObjectId> = Vec::new();
+    let mut decorations: std::collections::HashMap<gix::hash::ObjectId, Vec<String>> =
+        std::collections::HashMap::new();
+    let references_platform = repo
+        .references()
+        .map_err(|error| format!("gix refs: {error}"))?;
+    let references = references_platform
+        .all()
+        .map_err(|error| format!("gix refs iter: {error}"))?;
+    for reference in references {
+        let reference = reference.map_err(|error| format!("gix ref: {error}"))?;
+        let Some(id) = reference.try_id() else {
+            continue;
+        };
+        let name = reference.name().as_bstr().to_string();
+        tips.push(id.detach());
+        decorations
+            .entry(id.detach())
+            .or_default()
+            .push(render_decoration(&name));
+    }
+    for list in decorations.values_mut() {
+        list.reverse();
+    }
+
+    // HEAD 装饰：detached 为裸 HEAD，否则 HEAD -> 分支短名（实测规则）。
+    let head = repo.head().map_err(|error| format!("gix head: {error}"))?;
+    let head_entry = match head.referent_name() {
+        Some(branch) => {
+            let short = branch.as_bstr().to_string();
+            let short = short
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&short)
+                .to_string();
+            format!("HEAD -> {short}")
+        }
+        None => "HEAD".to_string(),
+    };
+    if let Some(id) = head.id() {
+        tips.push(id.detach());
+        decorations
+            .entry(id.detach())
+            .or_default()
+            .insert(0, head_entry);
+    }
+
+    // 遍历：--date-order 等价排序（父在子后，其余按提交时间降序）。
+    // 同秒提交组内的顺序属于 git 实现细节（prio_queue 的 tie 行为跨版本不同，
+    // 新版还引入了 lazy-root），不做逐位复刻——剪枝因此必须顺序无关（见下），
+    // 字段级行为不依赖组内顺序；异常路径仍可回退 CLI。
+    let walk = repo
+        .rev_walk(tips)
+        .sorting(gix::revision::walk::Sorting::ByCommitTime(
+            gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+        ))
+        .selected(|_| true)
+        .map_err(|error| format!("gix walk init: {error}"))?;
+    let mut truncated = false;
+    let mut records: Vec<String> = Vec::new();
+    for info in walk.take(max_count) {
+        let info = info.map_err(|error| format!("gix walk: {error}"))?;
+        let Ok(obj) = repo.find_object(info.id()) else {
+            continue;
+        };
+        let Ok(commit) = obj.try_into_commit() else {
+            continue;
+        };
+        let Ok(decoded) = commit.decode() else {
+            continue;
+        };
+        let decoration = decorations
+            .get(&info.id().detach())
+            .map(|list| list.join(", "))
+            .unwrap_or_default();
+        records.push(commit_record(&decoded, &info.id().to_string(), &decoration));
+    }
+
+    // 后处理复用 git.rs 同一套实现：截断/title/stash 状态 → stash 剪枝 → 分道。
+    // 剪枝前先对全量列表预登记 stash 提交的第二父（index 辅助提交）——gix 的
+    // 同秒组内顺序不保证 WIP 先于 index 出现，顺序无关的预登记保证辅助提交
+    // 在任何组内顺序下都会被剔除（CLI 路径由 git 的拓扑序天然保证，不需要）。
+    let mut commits: Vec<crate::models::RepositoryCommit> = records
+        .iter()
+        .filter_map(|record| crate::git::commit_from_record(record, &mut truncated))
+        .collect();
+    let mut stash_helper_parents: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for commit in &commits {
+        if commit.status.as_deref() == Some("stash") {
+            stash_helper_parents.extend(commit.parents.iter().skip(1).cloned());
+        }
+    }
+    commits.retain(|commit| !crate::git::stash_prune_decision(commit, &mut stash_helper_parents));
+    crate::git::assign_lanes(&mut commits);
+    Ok(commits)
+}
+
+/// 引用全名 → %D 渲染名。`refs/stash` 保持全名（stash 判定的字面依据），
+/// 其余按 git 装饰命名：heads/remotes 剥前缀、tags 加 `tag: `、未知命名空间
+/// 保持全名（与 git 对罕见命名空间的行为一致）。
+fn render_decoration(name: &str) -> String {
+    if let Some(short) = name.strip_prefix("refs/heads/") {
+        short.to_string()
+    } else if let Some(short) = name.strip_prefix("refs/remotes/") {
+        short.to_string()
+    } else if let Some(short) = name.strip_prefix("refs/tags/") {
+        format!("tag: {short}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// 单条提交 → 与 CLI `HISTORY_GRAPH_FORMAT` 记录同构的字段串
+/// （hash/parents/author/email/committer/email/aI/cI/D/B，`\x1f` 分隔）。
+fn commit_record(commit: &gix::objs::CommitRef<'_>, hash: &str, decoration: &str) -> String {
+    let parents = commit
+        .parents
+        .iter()
+        .map(|parent| String::from_utf8_lossy(parent).to_string())
+        .collect::<Vec<String>>()
+        .join(" ");
+    let Ok(author) = commit.author() else {
+        return String::new();
+    };
+    let Ok(committer) = commit.committer() else {
+        return String::new();
+    };
+    let author_time = signature_time_iso(&author);
+    let commit_time = signature_time_iso(&committer);
+    [
+        hash.to_string(),
+        parents,
+        signature_part(&author),
+        signature_part(&committer),
+        author_time,
+        commit_time,
+        decoration.to_string(),
+        String::from_utf8_lossy(commit.message).to_string(),
+    ]
+    .join("\u{1f}")
+}
+
+/// 签名 → "name\x1femail" 段（author/committer 共用，UTF-8 lossy 与 CLI 侧一致）。
+fn signature_part(signature: &gix::actor::SignatureRef<'_>) -> String {
+    format!(
+        "{}\u{1f}{}",
+        String::from_utf8_lossy(&signature.name),
+        String::from_utf8_lossy(&signature.email)
+    )
+}
+
+/// 签名时间 → ISO8601 strict（`--date=iso-strict` 同格式）；解析失败回退空串。
+fn signature_time_iso(signature: &gix::actor::SignatureRef<'_>) -> String {
+    signature
+        .time()
+        .ok()
+        .and_then(|time| time.format(gix::date::time::format::ISO8601_STRICT).ok())
+        .map(|formatted| {
+            // git --date=iso-strict 只对 UTC 渲染 `Z`，gix 的 ISO8601_STRICT
+            // 同一时刻给 `+00:00`——对齐 git 的字面形式。
+            formatted
+                .strip_suffix("+00:00")
+                .map(|rest| format!("{rest}Z"))
+                .unwrap_or(formatted)
+        })
+        .unwrap_or_default()
+}
+
 /// 快照 refs 线程的 gix 读结果：与 CLI 版同语义的分支/标签名枚举。
 /// ahead/behind（`parse_branch_tracking`）仍走 CLI rev-list，本轮不含。
 #[derive(Debug, Clone)]
@@ -353,7 +549,10 @@ mod tests {
         sandbox.git(&["init", "-q", "-b", "main"]);
         sandbox.write("a.txt", "hello\n");
         sandbox.git(&["add", "."]);
-        sandbox.git(&["commit", "-q", "-m", "init"]);
+        sandbox.git_env(
+            &["commit", "-q", "-m", "init"],
+            &[("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")],
+        );
         sandbox
     }
 
@@ -499,6 +698,196 @@ mod tests {
         assert_eq!(
             gix_refs.tags.last().map(String::as_str),
             Some("annotated-early")
+        );
+    }
+
+    /// 构造多拓扑仓库：分叉双分支 + merge + 独立分支 + 标签 + stash。
+    /// 每个提交携带互异的 GIT_COMMITTER_DATE——同秒提交的组内顺序是 git
+    /// prio_queue 的实现细节（跨版本不稳定），不属于对拍承诺；互异时间戳让
+    /// 两侧行为完全确定，同秒场景另由 tie 测试覆盖结构性断言。
+    fn rich_topology_repo() -> Sandbox {
+        let sandbox = seeded_repo();
+        // 分叉：feature 与 main 各自前进后合并（产生真实 merge 提交）。
+        sandbox.git(&["checkout", "-q", "-b", "feature"]);
+        sandbox.write("feature.txt", "from feature\n");
+        sandbox.git(&["add", "."]);
+        sandbox.git_env(
+            &["commit", "-q", "-m", "feat: branch work"],
+            &[("GIT_COMMITTER_DATE", "2026-01-01T00:00:01Z")],
+        );
+        sandbox.git(&["checkout", "-q", "main"]);
+        sandbox.write("main.txt", "from main\n");
+        sandbox.git(&["add", "."]);
+        sandbox.git_env(
+            &["commit", "-q", "-m", "main: parallel work"],
+            &[("GIT_COMMITTER_DATE", "2026-01-01T00:00:02Z")],
+        );
+        sandbox.git_env(
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "-m",
+                "merge feature into main",
+                "feature",
+            ],
+            &[("GIT_COMMITTER_DATE", "2026-01-01T00:00:03Z")],
+        );
+        // 独立分支与标签。
+        sandbox.git(&["branch", "standalone"]);
+        sandbox.git(&["tag", "rel-1"]);
+        // stash：产生 stash 提交 + index 辅助提交（剪枝路径的真实素材）。
+        sandbox.write("dirty.txt", "uncommitted\n");
+        sandbox.git(&["add", "dirty.txt"]);
+        sandbox.git_env(
+            &["stash"],
+            &[("GIT_COMMITTER_DATE", "2026-01-01T00:00:04Z")],
+        );
+        sandbox
+    }
+
+    /// RepositoryCommit 无 PartialEq：serde JSON 逐值对拍（覆盖全部字段）。
+    fn commits_json(commits: &[crate::models::RepositoryCommit]) -> Vec<serde_json::Value> {
+        commits
+            .iter()
+            .map(|commit| serde_json::to_value(commit).expect("序列化"))
+            .collect()
+    }
+
+    /// 同秒提交组内的排序属 git 实现细节（prio_queue 跨版本行为不同），不承诺
+    /// 逐位一致；但结构性行为必须稳定：stash 辅助提交被剪枝、stash/merge/
+    /// 装饰都在列。顺序无关剪枝（预登记第二父）保证 index 提交无论组内顺序
+    /// 如何都不会泄漏进输出。
+    #[test]
+    fn parse_commits_same_second_ties_keep_structure() {
+        let sandbox = rich_topology_repo_same_second();
+        let via_gix = crate::git::parse_commits(&sandbox.0, crate::git::COMMIT_GRAPH_LIMIT);
+        // 无论 tie 顺序如何，这四条必须都在列且辅助提交被剔除。
+        assert!(
+            via_gix
+                .iter()
+                .any(|commit| commit.title == "merge feature into main"),
+            "merge 提交应存在"
+        );
+        assert!(
+            via_gix
+                .iter()
+                .any(|commit| commit.status.as_deref() == Some("stash")),
+            "stash 提交应存在"
+        );
+        assert!(
+            !via_gix
+                .iter()
+                .any(|commit| commit.title.starts_with("index on")),
+            "stash index 辅助提交必须被剪枝（WIP 提交本身按设计保留，status=stash）"
+        );
+        assert!(
+            via_gix
+                .iter()
+                .any(|commit| commit.branches.iter().any(|b| b == "rel-1")),
+            "tag 装饰应存在"
+        );
+        // 条数自洽：init/feat/main/merge/stash 共 5 条（index 辅助被剪枝）。
+        assert_eq!(via_gix.len(), 5, "剪枝后应恰为 5 条");
+    }
+
+    /// 全部提交同一秒的多拓扑仓库：gix tie 顺序与 CLI 可能不同，用于验证
+    /// 顺序无关剪枝的结构稳定性（不做字段级 JSON 对拍）。
+    fn rich_topology_repo_same_second() -> Sandbox {
+        let sandbox = seeded_repo_same_second();
+        sandbox.git(&["checkout", "-q", "-b", "feature"]);
+        sandbox.write("feature.txt", "from feature\n");
+        sandbox.git(&["add", "."]);
+        sandbox.git(&["commit", "-q", "-m", "feat: branch work"]);
+        sandbox.git(&["checkout", "-q", "main"]);
+        sandbox.write("main.txt", "from main\n");
+        sandbox.git(&["add", "."]);
+        sandbox.git(&["commit", "-q", "-m", "main: parallel work"]);
+        sandbox.git(&[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "merge feature into main",
+            "feature",
+        ]);
+        sandbox.git(&["branch", "standalone"]);
+        sandbox.git(&["tag", "rel-1"]);
+        sandbox.write("dirty.txt", "uncommitted\n");
+        sandbox.git(&["add", "dirty.txt"]);
+        sandbox.git(&["stash"]);
+        sandbox
+    }
+
+    /// init 提交不带固定时间戳（自然落在当前秒）的种子仓库。
+    fn seeded_repo_same_second() -> Sandbox {
+        let sandbox = Sandbox::new();
+        sandbox.git(&["init", "-q", "-b", "main"]);
+        sandbox.write("a.txt", "hello\n");
+        sandbox.git(&["add", "."]);
+        sandbox.git(&["commit", "-q", "-m", "init"]);
+        sandbox
+    }
+
+    #[test]
+    fn parse_commits_ab_matches_cli_on_rich_topology() {
+        let sandbox = rich_topology_repo();
+        let via_gix = crate::git::parse_commits(&sandbox.0, crate::git::COMMIT_GRAPH_LIMIT);
+        let via_cli = crate::git::parse_commits_cli(&sandbox.0, crate::git::COMMIT_GRAPH_LIMIT);
+        assert_eq!(
+            via_gix.len(),
+            via_cli.len(),
+            "条数一致：gix {} vs cli {}",
+            via_gix.len(),
+            via_cli.len()
+        );
+        assert_eq!(commits_json(&via_gix), commits_json(&via_cli), "全字段对拍");
+        // 结构自检：merge 提交在列、stash 提交在列、辅助提交被剪枝。
+        assert!(
+            via_gix
+                .iter()
+                .any(|commit| commit.title == "merge feature into main"),
+            "merge 提交应存在"
+        );
+        assert!(
+            via_gix
+                .iter()
+                .any(|commit| commit.status.as_deref() == Some("stash")),
+            "stash 提交应存在"
+        );
+        assert!(
+            !via_gix
+                .iter()
+                .any(|commit| commit.title.starts_with("index on")),
+            "stash index 辅助提交必须被剪枝（WIP 提交本身按设计保留，status=stash）"
+        );
+        assert!(
+            via_gix
+                .iter()
+                .any(|commit| commit.branches.iter().any(|b| b == "rel-1")),
+            "tag 装饰应存在"
+        );
+    }
+
+    #[test]
+    fn parse_commits_ab_matches_cli_on_this_repo_history() {
+        // 真实历史对拍：本仓库自身（大量同秒提交是排序稳定性的关键压力面）。
+        let Ok(repo_root) = std::path::Path::new(&env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+        else {
+            return; // 非常规布局（发布包等）下跳过
+        };
+        if !repo_root.join(".git").exists() {
+            return;
+        }
+        let via_gix = crate::git::parse_commits(&repo_root, crate::git::COMMIT_GRAPH_LIMIT);
+        let via_cli = crate::git::parse_commits_cli(&repo_root, crate::git::COMMIT_GRAPH_LIMIT);
+        assert_eq!(via_gix.len(), via_cli.len(), "真实历史条数一致");
+        assert_eq!(
+            commits_json(&via_gix),
+            commits_json(&via_cli),
+            "真实历史全字段对拍（重点：同秒提交的排序稳定性）"
         );
     }
 }

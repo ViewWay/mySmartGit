@@ -638,7 +638,7 @@ fn normalize_branch_name(value: &str) -> String {
         .to_string()
 }
 
-fn assign_lanes(commits: &mut [RepositoryCommit]) {
+pub(crate) fn assign_lanes(commits: &mut [RepositoryCommit]) {
     let known: HashSet<String> = commits
         .iter()
         .map(|commit| commit.full_hash.clone())
@@ -677,8 +677,8 @@ fn assign_lanes(commits: &mut [RepositoryCommit]) {
     }
 }
 
-const COMMIT_GRAPH_LIMIT: usize = 2_000;
-const MAX_COMMIT_GRAPH_LIMIT: usize = 20_000;
+pub(crate) const COMMIT_GRAPH_LIMIT: usize = 2_000;
+pub(crate) const MAX_COMMIT_GRAPH_LIMIT: usize = 20_000;
 
 /// 图谱记录的 `--pretty` 字段布局（W3-3：批读与流式分页共用一套格式）。
 const HISTORY_GRAPH_FORMAT: &str =
@@ -686,7 +686,7 @@ const HISTORY_GRAPH_FORMAT: &str =
 
 /// 单条图谱记录 → RepositoryCommit。`truncated` 出参标记 title/正文超出
 /// 字符预算被显式截断（README 红线：不得静默丢内容，超限必须可见）。
-fn commit_from_record(record: &str, truncated: &mut bool) -> Option<RepositoryCommit> {
+pub(crate) fn commit_from_record(record: &str, truncated: &mut bool) -> Option<RepositoryCommit> {
     let record = record.trim_matches(&['\r', '\n'][..]);
     if record.is_empty() {
         return None;
@@ -751,7 +751,7 @@ fn commit_from_record(record: &str, truncated: &mut bool) -> Option<RepositoryCo
 /// 返回 Some(true) 表示该提交应剪枝跳过。`stash_helper_parents` 在遇到
 /// stash 提交时登记其第二父，之后凡命中集合且无分支装饰的提交都被剔除——
 /// 与批读模型「先全量收集再 retain」的语义等价，但可以逐条流式执行。
-fn stash_prune_decision(
+pub(crate) fn stash_prune_decision(
     commit: &RepositoryCommit,
     stash_helper_parents: &mut HashSet<String>,
 ) -> bool {
@@ -799,7 +799,16 @@ fn assign_lane_streaming(active: &mut HashMap<String, usize>, commit: &mut Repos
     }
 }
 
-fn parse_commits(path: &Path, limit: usize) -> Vec<RepositoryCommit> {
+/// 提交图谱批读入口：优先 gix 进程内遍历（Phase 2 P2c），失败回退 Git CLI。
+/// 两侧产出经同一套 `commit_from_record`/stash 剪枝/分道后处理，保证字段级一致。
+pub(crate) fn parse_commits(path: &Path, limit: usize) -> Vec<RepositoryCommit> {
+    if let Ok(commits) = crate::git_gix::parse_commits(path, limit) {
+        return commits;
+    }
+    parse_commits_cli(path, limit)
+}
+
+pub(crate) fn parse_commits_cli(path: &Path, limit: usize) -> Vec<RepositoryCommit> {
     let max_count = format!("--max-count={}", limit.clamp(COMMIT_GRAPH_LIMIT, MAX_COMMIT_GRAPH_LIMIT));
     let output = optional_git_output(
         path,
@@ -8057,7 +8066,10 @@ mod tests {
         assert!(first.has_more, "fixture must be deeper than one page");
         let streamed = drain_graph_stream(first);
         // 基线：单次全量批读（窗口远大于夹具规模），序列必须完全一致。
-        let baseline = parse_commits(&repository.0, MAX_COMMIT_GRAPH_LIMIT);
+        // 基线走 parse_commits_cli：本测试验证的是流式子进程与批读的同一
+        // CLI 数据源一致性（夹具存在同秒提交，gix 与 CLI 的组内 tie 顺序
+        // 不一致属 git 实现细节，字段级对拍由 git_gix 的 A/B 测试承担）。
+        let baseline = parse_commits_cli(&repository.0, MAX_COMMIT_GRAPH_LIMIT);
         let expected: Vec<String> = baseline
             .iter()
             .map(|commit| commit.full_hash.clone())
@@ -8075,7 +8087,8 @@ mod tests {
         let path = repository.0.to_string_lossy().to_string();
         let first = start_repository_history_stream(&path, Some(3)).expect("start graph stream");
         let streamed = drain_graph_stream(first);
-        let baseline = parse_commits(&repository.0, MAX_COMMIT_GRAPH_LIMIT);
+        // 基线走 parse_commits_cli：与流式子进程同源（见上一个测试的注释）。
+        let baseline = parse_commits_cli(&repository.0, MAX_COMMIT_GRAPH_LIMIT);
         let actual: Vec<(String, usize)> = streamed;
         let expected: Vec<(String, usize)> = baseline
             .iter()
