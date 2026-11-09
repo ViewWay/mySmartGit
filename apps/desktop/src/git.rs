@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -4152,6 +4152,103 @@ pub fn fetch_repository(repository_path: &str) -> Result<(), String> {
     git_output(&root, &["fetch", "--all", "--prune"]).map(|_| ())
 }
 
+/// 后台自动任务的 Fetch：非交互 + 超时熔断。
+///
+/// 生产命令路径不带 GIT_TERMINAL_PROMPT=0（交互命令允许 askpass/终端提问），
+/// 自动任务则必须排除一切提问通道——凭据未缓存时 `git fetch` 会挂起等输入，
+/// 占死单飞锁饿死该仓库的后续自动任务。剥离 askpass 环境变量并设
+/// GIT_TERMINAL_PROMPT=0，任何提问都会立刻以「无法读取用户名」失败；再配
+/// 超时兜底，网络停滞等残余挂起也会在超时后被 kill。
+pub fn fetch_repository_for_automation(
+    repository_path: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let root = repository_root(repository_path)?;
+    let args: Vec<String> = ["fetch", "--all", "--prune"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let started = SystemTime::now();
+    let mut command = Command::new("git");
+    command.arg("-C").arg(&root).args(&args);
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command.env_remove("GIT_ASKPASS");
+    command.env_remove("SSH_ASKPASS");
+    command.env_remove("SSH_ASKPASS_REQUIRE");
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let output = run_command_with_timeout(command, timeout)?;
+    record_command(&root, &args, &output, started);
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if message.is_empty() {
+            "Git 命令执行失败".into()
+        } else {
+            message
+        });
+    }
+    Ok(())
+}
+
+/// 带超时的进程执行：管道边读边攒（防子进程写满管道阻塞），主线程轮询
+/// try_wait，到点 kill + wait 回收（不留僵尸）。不引第三方 wait-timeout
+/// 依赖，50ms 轮询对秒级超时场景开销可忽略。
+fn run_command_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动 Git：{error}"))?;
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(pipe) = stdout_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buffer);
+        }
+        buffer
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(pipe) = stderr_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buffer);
+        }
+        buffer
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "后台 Fetch 超时（超过 {} 秒）已被中止",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(format!("等待 Git 进程失败：{error}")),
+        }
+    };
+    // kill 分支已返回；此处进程已退出，读线程随即自然收尾。
+    let stdout = stdout_handle.join().unwrap_or_default();
+    let stderr = stderr_handle.join().unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 fn unresolved_gitlink_paths(root: &Path) -> Result<HashSet<String>, String> {
     let entries = git_output(root, &["ls-files", "-u"])?;
     Ok(entries
@@ -4960,6 +5057,32 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    /// 超时熔断 runner：超时路径 kill 并报错（sleep 挂起 5s，200ms 熔断），
+    /// 快速退出的命令正常返回且 stderr 可读。
+    #[cfg(unix)]
+    #[test]
+    fn run_command_with_timeout_kills_on_deadline_and_collects_output() {
+        let mut hung = Command::new("sleep");
+        hung.arg("5");
+        let error = run_command_with_timeout(hung, Duration::from_millis(200))
+            .expect_err("挂起命令应被超时中止");
+        assert!(error.contains("超时"), "超时报错应可辨识：{error}");
+
+        let mut failing = Command::new("git");
+        failing.arg("--no-such-flag");
+        let output = run_command_with_timeout(failing, Duration::from_secs(5))
+            .expect("快速退出的命令应正常返回");
+        assert!(
+            !output.status.success(),
+            "git --no-such-flag 应以非零退出"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).trim().is_empty(),
+            "stderr 应被完整收集"
+        );
+    }
+
 
     /// .0 = 仓库目录，.1 = 本次用例独占的基目录（内含仓库及其同级派生目录，
     /// 例如 worktree 用例的 repository.linked-worktree），Drop 时整体删除避免堆积。

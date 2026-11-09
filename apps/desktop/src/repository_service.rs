@@ -43,6 +43,9 @@ pub const AUTO_FETCH_MIN_MINUTES: u64 = 1;
 pub const AUTO_FETCH_MAX_MINUTES: u64 = 60;
 /// 失败退避封顶档：interval × 2^2 = 4 倍间隔（连续失败时最长等待可控）。
 pub const AUTO_FETCH_BACKOFF_MAX_STEP: u32 = 2;
+/// 自动 Fetch 超时：凭据提问已被非交互环境拦下，此值为网络停滞等残余挂起
+/// 的熔断线（大仓库慢链路留足余量）。
+pub const AUTO_FETCH_TIMEOUT_SECS: u64 = 120;
 /// 定时线程的兜底唤醒周期：即使漏掉一次事件唤醒，调度最多延迟这么久。
 const FETCH_TICK_MAX: Duration = Duration::from_secs(30);
 
@@ -852,8 +855,16 @@ fn run_fetch_task(
         if offline {
             state.complete_fetch(&display, FetchResult::Offline, auto);
         } else {
-            let outcome =
-                git::fetch_repository(&display).and_then(|()| git::read_repository(&display));
+            // 自动任务走非交互 + 超时熔断的专用路径；手动任务保留交互行为。
+            let fetch_outcome = if auto {
+                git::fetch_repository_for_automation(
+                    &display,
+                    Duration::from_secs(AUTO_FETCH_TIMEOUT_SECS),
+                )
+            } else {
+                git::fetch_repository(&display)
+            };
+            let outcome = fetch_outcome.and_then(|()| git::read_repository(&display));
             if let Ok(snapshot) = &outcome {
                 state.finish_snapshot(&display, generation, snapshot);
             }
