@@ -6,7 +6,17 @@ use crate::{
     },
     repository_service::{FetchResult, NotifyTexts, RepositoryServiceState},
 };
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// 手动 Fetch 的取消标志注册表：键 = 前端展示路径。命令侧发起时登记、收尾
+/// 移除；取消命令置位后由 runner 的轮询循环感知并 kill 子进程。
+fn fetch_cancel_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    static FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn task_error(action: &str, error: impl std::fmt::Display) -> String {
     format!("{action}失败：{error}")
@@ -297,13 +307,24 @@ pub async fn fetch_repository(
             .map_err(|error| task_error("Fetch", error))?;
     }
     let generation = service.begin_read(&repository_path);
+    // 取消标志：发起时登记、收尾移除；cancel_repository_fetch 置位后 runner
+    // 的轮询循环 kill 子进程。
+    let cancel = Arc::new(AtomicBool::new(false));
+    fetch_cancel_flags()
+        .lock()
+        .expect("fetch cancel flags lock")
+        .insert(repository_path.clone(), Arc::clone(&cancel));
     let git_path = repository_path.clone();
     let loaded = tauri::async_runtime::spawn_blocking(move || {
-        git::fetch_repository(&git_path)?;
+        git::fetch_repository_cancellable(&git_path, cancel)?;
         git::read_repository(&git_path)
     })
     .await
     .map_err(|error| task_error("Fetch", error));
+    fetch_cancel_flags()
+        .lock()
+        .expect("fetch cancel flags lock")
+        .remove(&repository_path);
     // 无论成败都释放单飞并按结果重排定时（手动 Fetch 也计入退避）。
     let loaded = match loaded {
         Ok(value) => value,
@@ -318,6 +339,20 @@ pub async fn fetch_repository(
     service.finish_snapshot(&repository_path, generation, &snapshot);
     service.complete_fetch(&repository_path, FetchResult::Success, false, None);
     Ok(snapshot)
+}
+
+/// 取消进行中的手动 Fetch：置位取消标志，runner 在下一个 50ms 轮询点 kill
+/// 子进程；命令随后以「Fetch 已取消」报错返回。无进行中任务时静默成功。
+#[tauri::command]
+pub async fn cancel_repository_fetch(repository_path: String) -> Result<(), String> {
+    if let Some(flag) = fetch_cancel_flags()
+        .lock()
+        .expect("fetch cancel flags lock")
+        .get(&repository_path)
+    {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 /// 前端设置面板下发定时 Fetch 配置（开关 + 间隔 + 系统通知文案，文案随语言

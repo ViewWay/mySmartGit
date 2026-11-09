@@ -75,6 +75,7 @@ export const nav = {
   'shell.fetch': '获取',
   'shell.fetching': '获取中…',
   'shell.fetchTitle': '获取远程更新',
+  'shell.cancelFetchTitle': '正在获取，点击取消',
   'shell.fetchNow': '立即 Fetch',
   'shell.pull': '拉取',
   'shell.pulling': '拉取中…',

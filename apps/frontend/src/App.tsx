@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { abortRepositoryOperation, applyRepositoryStash, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, continueRepositoryOperation, createRepositoryBranch, createRepositoryStash, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, isTauriRuntime, loadFileCommitDiff, loadImageFileDiff, loadGitUserConfig, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, skipRepositoryOperation, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
+import { abortRepositoryOperation, applyRepositoryStash, cancelRepositoryFetch, cancelRepositoryHistoryStream, cherryPickRepositoryCommit, continueRepositoryOperation, createRepositoryBranch, createRepositoryStash, createRepositoryTag, deleteBranchPrefix, deleteRepositoryBranch, dropRepositoryStash, isTauriRuntime, loadFileCommitDiff, loadImageFileDiff, loadGitUserConfig, loadRepository, loadRepositoryHistoryNextPage, loadRepositoryCommitFiles, loadRepositoryCommitStats, loadRepositoryFileDiff, loadRepositoryStashFileDiff, loadRepositoryStashFiles, mergeRepositoryReference, openRevisionFileExternally, previewBranchPrefix, pullRepositoryBranch, pushRepository, pushRepositoryWithLease, rebaseRepositoryOnto, resetRepositoryToCommit, revertRepositoryCommit, skipRepositoryOperation, startRepositoryHistoryStream, switchRepositoryBranch, undoLastCommit, type RepositoryCommitStats, type RepositoryFile, type RepositorySnapshot } from './repository'
 import { ContextMenu } from './components/ContextMenu'
 import { Button } from './components/Button'
 import { CompactSelect } from './components/CompactSelect'
@@ -1293,7 +1293,13 @@ export default function App() {
     await executeRepositoryAction((path) => pushRepositoryWithLease(path), t('repository.push.forceDone', { branch: repository?.branch ?? '' }), { key: 'push', label: t('repository.push.forceProgress', { branch: repository?.branch ?? '' }), detail: t('repository.push.forceDetail') })
   }
   const handleFetch = useCallback(async () => {
-    if (!repository || fetching || activeOperation) return
+    if (!repository || activeOperation) return
+    // 获取中再次点击 = 取消：置位后端取消标志，runner 轮询点 kill 子进程，
+    // fetch 命令以「Fetch 已取消」报错经 fetchNow 的 catch 显示为通知。
+    if (fetching) {
+      void cancelRepositoryFetch(repository.path).catch(() => undefined)
+      return
+    }
     setActiveOperation({ key: 'fetch', label: t('repository.fetch.progress'), detail: t('repository.fetch.progressDetail') })
     try {
       await fetchNow()
@@ -1587,7 +1593,7 @@ export default function App() {
     <div className={`workspace ${repository && !repositoryManagerOpen ? '' : 'empty-repository'}`}>
       {repository && !repositoryManagerOpen && <header className="topbar">
         <div className="toolbar-actions">
-          <button className="toolbar-act" onClick={() => void handleFetch()} disabled={!repository || fetching || Boolean(activeOperation)} title={t('shell.fetchTitle')}><RefreshCw size={16} className={fetching ? 'spin' : ''}/><span>{fetching ? t('shell.fetching') : t('shell.fetch')}</span></button>
+          <button className="toolbar-act" onClick={() => void handleFetch()} disabled={!repository || Boolean(activeOperation)} title={fetching ? t('shell.cancelFetchTitle') : t('shell.fetchTitle')}><RefreshCw size={16} className={fetching ? 'spin' : ''}/><span>{fetching ? t('shell.fetching') : t('shell.fetch')}</span></button>
           <button className="toolbar-act" onClick={() => repository && void handlePullBranch(repository.branch)} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={repository?.operation ? t('shell.finishOperationFirstTitle') : repository?.behind ? t('shell.pullTitleBehind', { count: repository.behind }) : t('shell.pullTitle')}>{activeOperation?.key === 'pull' ? <RefreshCw className="spin" size={16}/> : <CloudDownload size={16}/>}<span>{activeOperation?.key === 'pull' ? t('shell.pulling') : t('shell.pull')}</span>{Boolean(repository?.behind) && <small className="sync-count pull-count">{repository!.behind}</small>}</button>
           <button className="toolbar-act" onClick={() => void handlePush()} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={repository?.operation ? t('shell.finishOperationFirstTitle') : repository?.ahead ? t('shell.pushTitleAhead', { count: repository.ahead }) : t('shell.pushTitle')}>{activeOperation?.key === 'push' ? <RefreshCw className="spin" size={16}/> : <CloudUpload size={16}/>}<span>{activeOperation?.key === 'push' ? t('shell.pushing') : t('shell.push')}</span>{Boolean(repository?.ahead) && <small className="sync-count push-count">{repository!.ahead}</small>}</button>
           <button className="toolbar-act" onClick={() => void handleStashAll()} disabled={!repository || Boolean(activeOperation) || Boolean(repository.operation)} title={t('shell.toolbarStashTitle')}><Archive size={16}/><span>{t('shell.toolbarStash')}</span></button>

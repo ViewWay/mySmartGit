@@ -15,8 +15,8 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use std::sync::{Mutex, OnceLock};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -4177,7 +4177,7 @@ pub fn fetch_repository_for_automation(
     command.env_remove("SSH_ASKPASS_REQUIRE");
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000);
-    let output = run_command_with_timeout(command, timeout)?;
+    let output = run_command_with_timeout(command, Some(timeout), None)?;
     record_command(&root, &args, &output, started);
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -4190,12 +4190,42 @@ pub fn fetch_repository_for_automation(
     Ok(())
 }
 
-/// 带超时的进程执行：管道边读边攒（防子进程写满管道阻塞），主线程轮询
-/// try_wait，到点 kill + wait 回收（不留僵尸）。不引第三方 wait-timeout
-/// 依赖，50ms 轮询对秒级超时场景开销可忽略。
+/// 手动 Fetch 的可取消版本：环境保持交互（askpass 可用），超时不设——挂起
+/// 场景交给用户点取消（kill 即退），不引入任何提问抑制。
+pub fn fetch_repository_cancellable(
+    repository_path: &str,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let root = repository_root(repository_path)?;
+    let args: Vec<String> = ["fetch", "--all", "--prune"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let started = SystemTime::now();
+    let mut command = Command::new("git");
+    command.arg("-C").arg(&root).args(&args);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let output = run_command_with_timeout(command, None, Some(cancel))?;
+    record_command(&root, &args, &output, started);
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if message.is_empty() {
+            "Git 命令执行失败".into()
+        } else {
+            message
+        });
+    }
+    Ok(())
+}
+
+/// 带可选超时与可选取消标志的进程执行：管道边读边攒（防子进程写满管道阻
+/// 塞），主线程 50ms 轮询 try_wait，超时或取消即 kill + wait 回收（不留僵
+/// 尸）。不引第三方 wait-timeout 依赖，50ms 轮询对秒级场景开销可忽略。
 fn run_command_with_timeout(
     mut command: Command,
-    timeout: Duration,
+    timeout: Option<Duration>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<std::process::Output, String> {
     use std::io::Read;
     use std::process::Stdio;
@@ -4221,17 +4251,22 @@ fn run_command_with_timeout(
         buffer
     });
 
-    let deadline = Instant::now() + timeout;
+    let deadline = timeout.map(|timeout| Instant::now() + timeout);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
-                if Instant::now() >= deadline {
+                if cancel.as_ref().is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                     let _ = child.kill();
                     let _ = child.wait();
+                    return Err("Fetch 已取消".into());
+                }
+                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let seconds = timeout.map_or(0, |timeout| timeout.as_secs());
                     return Err(format!(
-                        "后台 Fetch 超时（超过 {} 秒）已被中止",
-                        timeout.as_secs()
+                        "后台 Fetch 超时（超过 {seconds} 秒）已被中止"
                     ));
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -5065,13 +5100,13 @@ mod tests {
     fn run_command_with_timeout_kills_on_deadline_and_collects_output() {
         let mut hung = Command::new("sleep");
         hung.arg("5");
-        let error = run_command_with_timeout(hung, Duration::from_millis(200))
+        let error = run_command_with_timeout(hung, Some(Duration::from_millis(200)), None)
             .expect_err("挂起命令应被超时中止");
         assert!(error.contains("超时"), "超时报错应可辨识：{error}");
 
         let mut failing = Command::new("git");
         failing.arg("--no-such-flag");
-        let output = run_command_with_timeout(failing, Duration::from_secs(5))
+        let output = run_command_with_timeout(failing, Some(Duration::from_secs(5)), None)
             .expect("快速退出的命令应正常返回");
         assert!(
             !output.status.success(),
@@ -5081,6 +5116,19 @@ mod tests {
             !String::from_utf8_lossy(&output.stderr).trim().is_empty(),
             "stderr 应被完整收集"
         );
+    }
+
+    /// 取消标志置位后 runner 立即 kill 并报「已取消」；无标志的超长命令不受
+    /// 影响（timeout=None 时仅由取消驱动退出）。
+    #[cfg(unix)]
+    #[test]
+    fn run_command_with_timeout_honours_cancel_flag() {
+        let cancel = Arc::new(AtomicBool::new(true));
+        let mut hung = Command::new("sleep");
+        hung.arg("5");
+        let error = run_command_with_timeout(hung, None, Some(Arc::clone(&cancel)))
+            .expect_err("已取消的命令应立即中止");
+        assert!(error.contains("已取消"), "取消报错应可辨识：{error}");
     }
 
 

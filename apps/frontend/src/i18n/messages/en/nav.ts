@@ -75,6 +75,7 @@ export const nav = {
   'shell.fetch': 'Fetch',
   'shell.fetching': 'Fetching…',
   'shell.fetchTitle': 'Fetch remote updates',
+  'shell.cancelFetchTitle': 'Fetching — click to cancel',
   'shell.fetchNow': 'Fetch now',
   'shell.pull': 'Pull',
   'shell.pulling': 'Pulling…',

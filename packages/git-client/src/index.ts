@@ -205,6 +205,12 @@ export async function fetchRepository(repositoryPath: string) {
   return invoke<RepositorySnapshot>('fetch_repository', { repositoryPath })
 }
 
+// 取消进行中的手动 Fetch：后端置位取消标志，runner 轮询点 kill 子进程，
+// fetch 命令以「Fetch 已取消」报错返回。无进行中任务时静默成功。
+export async function cancelRepositoryFetch(repositoryPath: string) {
+  return invoke<void>('cancel_repository_fetch', { repositoryPath })
+}
+
 export async function stageRepositoryFiles(repositoryPath: string, filePaths: string[], force = false) {
   return invoke<RepositoryFile[]>('stage_files', { repositoryPath, filePaths, force })
 }
