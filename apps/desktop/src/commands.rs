@@ -4,7 +4,7 @@ use crate::{
         BlameLine, DiffLine, FileHistoryEntry, GitUserConfig, MergeQueueSnapshot,
         RepositoryCommitStats, RepositoryComparison, RepositoryFile, RepositorySnapshot,
     },
-    repository_service::{NotifyTexts, RepositoryServiceState},
+    repository_service::{FetchResult, NotifyTexts, RepositoryServiceState},
 };
 use std::path::Path;
 
@@ -308,7 +308,7 @@ pub async fn fetch_repository(
     let loaded = match loaded {
         Ok(value) => value,
         Err(error) => {
-            service.complete_fetch(&repository_path, false, false, std::time::Duration::ZERO);
+            service.complete_fetch(&repository_path, FetchResult::Failed, false);
             return Err(error);
         }
     };
@@ -316,7 +316,7 @@ pub async fn fetch_repository(
     // Fetch 期间 refs 已被监听捕获，generation 可能已前进导致本次结果不落缓存——
     // 无妨，下一次 token 轮询会用新代数重读。
     service.finish_snapshot(&repository_path, generation, &snapshot);
-    service.complete_fetch(&repository_path, true, false, std::time::Duration::ZERO);
+    service.complete_fetch(&repository_path, FetchResult::Success, false);
     Ok(snapshot)
 }
 

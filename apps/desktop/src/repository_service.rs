@@ -99,6 +99,47 @@ fn fetch_notify_transition(prev: Option<bool>, ok: bool) -> Option<bool> {
     }
 }
 
+/// 网络任务结果：决定收尾策略（退避只针对仓库侧故障；离线走环境重试）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FetchResult {
+    /// fetch + 快照重读成功。
+    Success,
+    /// fetch 或重读失败（网络错误、凭据拒绝等仓库侧原因）。
+    Failed,
+    /// 自动任务前置探测判定当前离线（未发起 git fetch）。
+    Offline,
+}
+
+/// 连通性探测目标：任一可 TCP 连通即视为在线。探测只证明「有网」，不挑托管
+/// 平台；防火墙特殊环境最坏情况是本轮拉取被延迟到下一周期，不会破坏拉取。
+const NETWORK_PROBE_TARGETS: [(&str, u16); 2] = [("github.com", 443), ("gitee.com", 443)];
+const NETWORK_PROBE_TIMEOUT_MS: u64 = 1500;
+
+/// TCP 连通性探测（可注入目标与超时，便于单测）：逐地址短超时连接，
+/// 任一成功即为在线。
+fn probe_tcp_targets(targets: &[(&str, u16)], timeout: Duration) -> bool {
+    use std::net::ToSocketAddrs;
+    for (host, port) in targets {
+        let Ok(addrs) = (*host, *port).to_socket_addrs() else {
+            continue;
+        };
+        for addr in addrs {
+            if std::net::TcpStream::connect_timeout(&addr, timeout).is_ok() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 自动任务前置门控：判定当前是否在线。
+fn probe_network_reachable() -> bool {
+    probe_tcp_targets(
+        &NETWORK_PROBE_TARGETS,
+        Duration::from_millis(NETWORK_PROBE_TIMEOUT_MS),
+    )
+}
+
 /// 展示路径 → 通知标题（取末段目录名；与快照 name 同源口径）。
 fn notify_title(display: &str) -> String {
     display
@@ -599,24 +640,36 @@ impl RepositoryServiceState {
         earliest.unwrap_or(FETCH_TICK_MAX)
     }
 
-    /// 网络任务收尾：释放单飞、按结果重排到期（成功 = 间隔；失败 = 退避倍增）、
+    /// 网络任务收尾：释放单飞、按结果重排到期（成功/离线 = 基础间隔；失败 =
+    /// 退避倍增——离线是环境状态而非仓库故障，恢复在线后立即以基础间隔重试）、
     /// 推送 repository-auto-fetched 事件（仅定时任务，手动路径前端已知结果）、
     /// 状态转换时发系统通知（稳态静默——连续失败不重复打扰）。
-    pub fn complete_fetch(&self, path: &str, ok: bool, auto: bool, _elapsed: Duration) {
+    pub fn complete_fetch(&self, path: &str, result: FetchResult, auto: bool) {
         let key = service_key(path);
         let mut inner = self.inner.lock().expect("repository service lock");
         inner.fetch_in_flight.remove(&key);
         let interval = inner.fetch_config.interval;
-        let backoff = if ok {
-            0
-        } else {
-            inner
+        let ok = result == FetchResult::Success;
+        let backoff = match result {
+            FetchResult::Success => 0,
+            FetchResult::Failed => inner
                 .opened
                 .get(&key)
                 .map(|entry| (entry.fetch_backoff_step + 1).min(AUTO_FETCH_BACKOFF_MAX_STEP))
-                .unwrap_or(0)
+                .unwrap_or(0),
+            // 离线不升级退避：保持当前档位，到点即以基础间隔重试。
+            FetchResult::Offline => inner
+                .opened
+                .get(&key)
+                .map(|entry| entry.fetch_backoff_step)
+                .unwrap_or(0),
         };
-        let delay = interval * 2u32.saturating_pow(backoff);
+        // 退避倍增只作用于仓库侧故障；成功与离线均按基础间隔重排（离线的档位
+        // 仅保留给下一次失败使用）。
+        let delay = match result {
+            FetchResult::Failed => interval * 2u32.saturating_pow(backoff),
+            _ => interval,
+        };
         let next_due = inner.fetch_config.enabled.then(|| Instant::now() + delay);
         let mut notify_failure: Option<bool> = None;
         if let Some(entry) = inner.opened.get_mut(&key) {
@@ -667,8 +720,9 @@ impl RepositoryServiceState {
     }
 }
 
-/// 定时 Fetch 任务体：fetch + 重读快照 → 按 generation 协议落缓存 → 收尾。
-/// 单飞领取已在 collect_due_fetches（定时）或命令侧 try_claim_fetch（手动）完成。
+/// 定时 Fetch 任务体：自动任务先做连通性探测（离线则不发起 git fetch），
+/// 之后 fetch + 重读快照 → 按 generation 协议落缓存 → 收尾。单飞领取已在
+/// collect_due_fetches（定时）或命令侧 try_claim_fetch（手动）完成。
 fn run_fetch_task(
     app: Option<AppHandle>,
     wake: mpsc::Sender<()>,
@@ -676,17 +730,27 @@ fn run_fetch_task(
     generation: u64,
     auto: bool,
 ) {
-    let started = Instant::now();
-    let outcome = git::fetch_repository(&display).and_then(|()| git::read_repository(&display));
-    let elapsed = started.elapsed();
+    // 手动任务不设门控：用户显式操作就该尝试，离线由 git 报错直达前端。
+    let offline = auto && !probe_network_reachable();
     if let Some(state) = app
         .as_ref()
         .and_then(|app| app.try_state::<RepositoryServiceState>())
     {
-        if let Ok(snapshot) = &outcome {
-            state.finish_snapshot(&display, generation, snapshot);
+        if offline {
+            state.complete_fetch(&display, FetchResult::Offline, auto);
+        } else {
+            let outcome =
+                git::fetch_repository(&display).and_then(|()| git::read_repository(&display));
+            if let Ok(snapshot) = &outcome {
+                state.finish_snapshot(&display, generation, snapshot);
+            }
+            let result = if outcome.is_ok() {
+                FetchResult::Success
+            } else {
+                FetchResult::Failed
+            };
+            state.complete_fetch(&display, result, auto);
         }
-        state.complete_fetch(&display, outcome.is_ok(), auto, elapsed);
     }
     let _ = wake.send(());
 }
@@ -994,7 +1058,7 @@ mod tests {
         assert!(!service.try_claim_fetch(path), "重复领取应被拒");
 
         // 手动任务失败收尾：退避升档，due ≈ now + 2×间隔。
-        service.complete_fetch(path, false, false, Duration::ZERO);
+        service.complete_fetch(path, FetchResult::Failed, false);
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).expect("驻留条目");
@@ -1005,7 +1069,7 @@ mod tests {
 
         // 再失败一次到封顶档 2（×4），随后成功清零退避。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, false, false, Duration::ZERO);
+        service.complete_fetch(path, FetchResult::Failed, false);
         {
             let inner = service.inner.lock().unwrap();
             assert_eq!(
@@ -1015,7 +1079,7 @@ mod tests {
             );
         }
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, true, false, Duration::ZERO);
+        service.complete_fetch(path, FetchResult::Success, false);
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).unwrap();
@@ -1094,7 +1158,7 @@ mod tests {
 
         // 到期 + 单飞被占：只置空 due，不再领取。
         //（先完成释放单飞，再预占一次模拟手动任务，然后置 due=now。）
-        service.complete_fetch(path, true, false, Duration::ZERO);
+        service.complete_fetch(path, FetchResult::Success, false);
         assert!(service.try_claim_fetch(path), "预占手动任务");
         {
             let mut inner = service.inner.lock().unwrap();
@@ -1109,7 +1173,7 @@ mod tests {
                 "被占时置空 due 留待完成回调重排"
             );
         }
-        service.complete_fetch(path, true, false, Duration::ZERO);
+        service.complete_fetch(path, FetchResult::Success, false);
     }
 
     /// 通知转换判定：首结果（None 起始）不通知；稳态（连续同结果）不通知；
@@ -1151,7 +1215,7 @@ mod tests {
 
         // 手动成功 → prev 更新但不通知（auto=false 路径同样登记基线）。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, true, false, Duration::ZERO);
+        service.complete_fetch(path, FetchResult::Success, false);
         assert_eq!(
             service.inner.lock().unwrap().opened[&key].prev_fetch_ok,
             Some(true),
@@ -1183,5 +1247,67 @@ mod tests {
             "branchline-notify-demo"
         );
         assert_eq!(notify_title("/tmp/rt/"), "rt");
+    }
+
+    /// TCP 探测：监听中的端口判在线；拒绝连接的端口判离线（连接被拒 = 无监听，
+    /// 立即返回，不耗时）。
+    #[test]
+    fn probe_tcp_targets_discriminates_open_and_closed_ports() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("绑定随机端口");
+        let addr = listener.local_addr().unwrap();
+        assert!(probe_tcp_targets(
+            &[(addr.ip().to_string().as_str(), addr.port())],
+            Duration::from_millis(500)
+        ));
+        assert!(
+            !probe_tcp_targets(&[("127.0.0.1", 1)], Duration::from_millis(500)),
+            "端口 1 无监听，连接被拒应判离线"
+        );
+    }
+
+    /// 离线收尾策略：不升级退避档（环境状态而非仓库故障），重排仍按基础间隔
+    /// ——恢复在线后下一周期立即重试；prev_fetch_ok 照常登记（离线计为失败，
+    /// 转换通知语义不变）。
+    #[test]
+    fn complete_fetch_offline_keeps_backoff_and_reschedules_at_base_interval() {
+        let service = RepositoryServiceState::detached();
+        let path = "/tmp/branchline-offline-demo";
+        let key = service_key(path);
+        let _ = service.begin_read(path);
+
+        // 先制造一次失败，退避升到 1（due ≈ 2×间隔）。
+        assert!(service.try_claim_fetch(path));
+        service.complete_fetch(path, FetchResult::Failed, false);
+        assert_eq!(
+            service.inner.lock().unwrap().opened[&key].fetch_backoff_step,
+            1,
+            "失败升档"
+        );
+
+        // 随后一轮判定为离线：档位保持，due 回到基础间隔附近。
+        assert!(service.try_claim_fetch(path));
+        service.complete_fetch(path, FetchResult::Offline, false);
+        {
+            let inner = service.inner.lock().unwrap();
+            let entry = inner.opened.get(&key).unwrap();
+            assert_eq!(entry.fetch_backoff_step, 1, "离线不升级退避（保持当前档）");
+            let wait = entry.next_fetch_due.unwrap() - Instant::now();
+            let interval = Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60);
+            assert!(
+                wait <= interval,
+                "离线后按基础间隔重排（非 2×间隔）：{wait:?}"
+            );
+            assert!(
+                wait >= interval - Duration::from_secs(10),
+                "重排无额外延迟：{wait:?}"
+            );
+            assert_eq!(entry.prev_fetch_ok, Some(false), "离线计为未成功");
+        }
+
+        // 在线成功后清零退避，回到稳态。
+        assert!(service.try_claim_fetch(path));
+        service.complete_fetch(path, FetchResult::Success, false);
+        let inner = service.inner.lock().unwrap();
+        assert_eq!(inner.opened[&key].fetch_backoff_step, 0, "成功清零退避");
     }
 }
