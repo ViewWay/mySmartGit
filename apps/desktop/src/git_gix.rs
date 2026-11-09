@@ -881,6 +881,18 @@ mod tests {
         if !repo_root.join(".git").exists() {
             return;
         }
+        // 浅克隆（CI depth-1 checkout）下 git CLI 把边界提交渲染为无父 + `grafted`
+        // 装饰，gix 读提交对象里的真实 parent 哈希——对拍在浅仓库必然发散。
+        // 该测试校验的是排序稳定性而非浅仓库语义，只在完整历史上做。
+        let is_shallow = std::process::Command::new("git")
+            .args(["rev-parse", "--is-shallow-repository"])
+            .current_dir(&repo_root)
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "true")
+            .unwrap_or(false);
+        if is_shallow {
+            return;
+        }
         let via_gix = crate::git::parse_commits(&repo_root, crate::git::COMMIT_GRAPH_LIMIT);
         let via_cli = crate::git::parse_commits_cli(&repo_root, crate::git::COMMIT_GRAPH_LIMIT);
         assert_eq!(via_gix.len(), via_cli.len(), "真实历史条数一致");
