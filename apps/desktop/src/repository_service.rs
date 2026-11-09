@@ -140,6 +140,91 @@ fn probe_network_reachable() -> bool {
     )
 }
 
+/// 电池降频参数：基础间隔 × 3，封顶 30 分钟（间隔 30 分钟时不放大）。
+const AUTO_FETCH_BATTERY_MULTIPLIER: u32 = 3;
+const AUTO_FETCH_BATTERY_MAX_MINUTES: u64 = 30;
+
+/// 电池供电推迟间隔（纯函数，便于单测）。
+fn battery_delay(base: Duration) -> Duration {
+    (base * AUTO_FETCH_BATTERY_MULTIPLIER)
+        .min(Duration::from_secs(AUTO_FETCH_BATTERY_MAX_MINUTES * 60))
+}
+
+/// 电池供电探测：Some(true)=电池供电（自动 Fetch 降频），Some(false)=接电，
+/// None=未知（台式机/探测失败——策略不介入）。探测可能起子进程/读 sysfs，
+/// 只允许在后台调度线程调用，不进锁。
+fn probe_on_battery() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("pmset")
+            .arg("-g")
+            .arg("batt")
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        parse_pmset_battery(&text)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        parse_linux_power_supply(Path::new("/sys/class/power_supply"))
+    }
+    // Windows 需 GetSystemPowerStatus FFI；本机无法编译验证，暂不盲写 unsafe，
+    // 返回 None 表示策略不介入（待有 Windows 构建反馈后再接）。
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+/// 解析 `pmset -g batt` 输出（纯函数，便于单测）：电源来源行含
+/// 'Battery Power' → 电池，'AC Power' → 接电，其余未知。
+#[cfg(target_os = "macos")]
+fn parse_pmset_battery(output: &str) -> Option<bool> {
+    let lowercase = output.to_lowercase();
+    if lowercase.contains("battery power") {
+        Some(true)
+    } else if lowercase.contains("ac power") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// 解析 Linux 电源供应 sysfs 目录（纯函数，便于单测）：任一 AC 适配器在线 →
+/// 接电；否则任一电池 Discharging → 电池；无电源供应信息 → 未知。
+#[cfg(target_os = "linux")]
+fn parse_linux_power_supply(dir: &Path) -> Option<bool> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return None;
+    };
+    let mut discharging = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy().to_string();
+        if name.starts_with('A') {
+            if let Ok(online) = fs::read_to_string(entry.path().join("online")) {
+                if online.trim() == "1" {
+                    return Some(false);
+                }
+            }
+        }
+        if let Ok(status) = fs::read_to_string(entry.path().join("status")) {
+            if status.trim() == "Discharging" {
+                discharging = true;
+            }
+        }
+    }
+    if discharging {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 /// 展示路径 → 通知标题（取末段目录名；与快照 name 同源口径）。
 fn notify_title(display: &str) -> String {
     display
@@ -590,7 +675,13 @@ impl RepositoryServiceState {
     /// 收割到期任务：单飞领取、置空 due（完成回调重排）、后台线程执行。
     /// 返回下一次应唤醒的等待时长（已封顶到兜底周期）。
     fn collect_due_fetches(&self) -> Duration {
-        let mut tasks: Vec<(String, u64)> = Vec::new();
+        self.collect_due_fetches_inner(probe_on_battery())
+    }
+
+    /// 可注入电池状态的收割入口（便于单测）。电池探测只在确有到期任务时执行
+    ///（子进程开销不进空转周期），且不在锁内做。
+    fn collect_due_fetches_inner(&self, on_battery: Option<bool>) -> Duration {
+        let mut tasks: Vec<(String, String, u64)> = Vec::new();
         let mut earliest: Option<Duration> = None;
         {
             let mut inner = self.inner.lock().expect("repository service lock");
@@ -624,20 +715,42 @@ impl RepositoryServiceState {
                 if inner.fetch_in_flight.insert(key.clone()) {
                     if let Some(entry) = inner.opened.get_mut(&key) {
                         entry.next_fetch_due = None;
-                        tasks.push((display, generation));
+                        tasks.push((key, display, generation));
                     }
                 } else if let Some(entry) = inner.opened.get_mut(&key) {
                     entry.next_fetch_due = None;
                 }
             }
         }
-        for (display, generation) in tasks {
+        // 电池供电降频：已领取的任务整体推迟到电池间隔，不发起 fetch、不发事件、
+        // 不动 prev_fetch_ok（电池跳过不是失败）。探测放在锁外、仅在有任务时。
+        if !tasks.is_empty() && on_battery == Some(true) {
+            let delay = self.battery_deferred_delay();
+            {
+                let mut inner = self.inner.lock().expect("repository service lock");
+                let now = Instant::now();
+                for (key, _, _) in &tasks {
+                    inner.fetch_in_flight.remove(key);
+                    if let Some(entry) = inner.opened.get_mut(key) {
+                        entry.next_fetch_due = Some(now + delay);
+                    }
+                }
+            }
+            return delay.min(FETCH_TICK_MAX);
+        }
+        for (_, display, generation) in tasks {
             let app = self.app.clone();
             let wake = self.fetch_wake.clone();
             // 低优先级：后台独立线程执行；CLI 子进程本就不占 UI 线程。
             std::thread::spawn(move || run_fetch_task(app, wake, display, generation, true));
         }
         earliest.unwrap_or(FETCH_TICK_MAX)
+    }
+
+    /// 电池供电下的推迟间隔：基础间隔 × 3，封顶 30 分钟。
+    fn battery_deferred_delay(&self) -> Duration {
+        let inner = self.inner.lock().expect("repository service lock");
+        battery_delay(inner.fetch_config.interval)
     }
 
     /// 网络任务收尾：释放单飞、按结果重排到期（成功/离线 = 基础间隔；失败 =
@@ -1125,7 +1238,8 @@ mod tests {
     }
 
     /// 收割逻辑：未到期只产出最近唤醒时长；到期且单飞空闲则领取并置空 due；
-    /// 到期但单飞被占（手动任务在跑）只置空 due、不重复领取。
+    /// 到期但单飞被占（手动任务在跑）只置空 due、不重复领取。注入接电状态
+    /// 保证确定性（真实探测随宿主机电池状态翻转）。
     #[test]
     fn collect_due_fetches_claims_once_and_reports_earliest_wake() {
         let service = RepositoryServiceState::detached();
@@ -1134,7 +1248,7 @@ mod tests {
         let _ = service.begin_read(path);
 
         // 未到期：无任务领取，返回最近唤醒（默认 5 分钟内）。
-        let wake = service.collect_due_fetches();
+        let wake = service.collect_due_fetches_inner(Some(false));
         assert!(wake <= Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60));
         {
             let inner = service.inner.lock().unwrap();
@@ -1146,7 +1260,7 @@ mod tests {
             let mut inner = service.inner.lock().unwrap();
             inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
         }
-        let _ = service.collect_due_fetches();
+        let _ = service.collect_due_fetches_inner(Some(false));
         {
             let inner = service.inner.lock().unwrap();
             assert!(inner.fetch_in_flight.contains(&key), "到期应领取单飞");
@@ -1164,7 +1278,7 @@ mod tests {
             let mut inner = service.inner.lock().unwrap();
             inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
         }
-        let wake = service.collect_due_fetches();
+        let wake = service.collect_due_fetches_inner(Some(false));
         assert_eq!(wake, FETCH_TICK_MAX, "无可领取任务时回兜底周期");
         {
             let inner = service.inner.lock().unwrap();
@@ -1174,6 +1288,114 @@ mod tests {
             );
         }
         service.complete_fetch(path, FetchResult::Success, false);
+    }
+
+    /// 电池降频：到期任务整体推迟到电池间隔（×3 封顶 30 分钟），不发事件、
+    /// 不动 prev_fetch_ok、不占用单飞；接电状态不推迟。
+    #[test]
+    fn collect_due_fetches_defers_on_battery() {
+        let service = RepositoryServiceState::detached();
+        let path = "/tmp/branchline-battery-demo";
+        let key = service_key(path);
+        let _ = service.begin_read(path);
+        let interval = Duration::from_secs(AUTO_FETCH_DEFAULT_MINUTES * 60);
+
+        // 纯函数：降频公式（×3 封顶 30 分钟）。
+        assert_eq!(battery_delay(interval), interval * 3);
+        assert_eq!(
+            battery_delay(Duration::from_secs(60 * 20)),
+            Duration::from_secs(60 * 30)
+        );
+        assert_eq!(
+            battery_delay(Duration::from_secs(60 * 30)),
+            Duration::from_secs(60 * 30),
+            "间隔 30 分钟时不放大"
+        );
+
+        // 到期 + 电池供电：不领取、due 推迟到电池间隔。
+        {
+            let mut inner = service.inner.lock().unwrap();
+            inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
+        }
+        let delay = service.collect_due_fetches_inner(Some(true));
+        assert_eq!(
+            delay,
+            battery_delay(interval).min(FETCH_TICK_MAX),
+            "返回电池推迟等待时长"
+        );
+        {
+            let inner = service.inner.lock().unwrap();
+            assert!(!inner.fetch_in_flight.contains(&key), "电池推迟不占用单飞");
+            let entry = inner.opened.get(&key).unwrap();
+            let wait = entry.next_fetch_due.expect("推迟后应重排 due") - Instant::now();
+            assert!(wait > interval, "推迟后等待超过基础间隔：{wait:?}");
+            assert_eq!(
+                entry.prev_fetch_ok, None,
+                "电池跳过不动转换基线（不算失败）"
+            );
+        }
+
+        // 电池未知（台式机等）：策略不介入，照常领取。
+        service.complete_fetch(path, FetchResult::Success, false);
+        {
+            let mut inner = service.inner.lock().unwrap();
+            inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
+        }
+        let _ = service.collect_due_fetches_inner(None);
+        let inner = service.inner.lock().unwrap();
+        assert!(inner.fetch_in_flight.contains(&key), "未知状态照常领取");
+    }
+
+    /// pmset 输出解析（macOS）：电源来源行区分电池/接电/未知。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_pmset_battery_distinguishes_sources() {
+        let battery = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=123)\t100%; discharging; 5:00 remaining present: true\n";
+        assert_eq!(parse_pmset_battery(battery), Some(true));
+        let ac = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=123)\t98%; charging; 0:10 remaining present: true\n";
+        assert_eq!(parse_pmset_battery(ac), Some(false));
+        assert_eq!(parse_pmset_battery(""), None, "空输出未知");
+        assert_eq!(parse_pmset_battery("garbage"), None, "无法解析未知");
+    }
+
+    /// Linux sysfs 解析：AC 在线优先判接电；无 AC 且电池 Discharging 判电池；
+    /// 目录缺失未知。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_linux_power_supply_reads_sysfs_fixture() {
+        let base = std::env::temp_dir().join(format!("branchline-psu-{}", std::process::id()));
+        let ac = base.join("AC");
+        let bat = base.join("BAT0");
+        fs::create_dir_all(&ac).unwrap();
+        fs::create_dir_all(&bat).unwrap();
+        fs::write(ac.join("online"), "1").unwrap();
+        fs::write(bat.join("status"), "Discharging").unwrap();
+        assert_eq!(
+            parse_linux_power_supply(&base),
+            Some(false),
+            "AC 在线优先判接电"
+        );
+
+        fs::write(ac.join("online"), "0").unwrap();
+        assert_eq!(
+            parse_linux_power_supply(&base),
+            Some(true),
+            "电池放电判电池"
+        );
+
+        fs::write(bat.join("status"), "Charging").unwrap();
+        assert_eq!(
+            parse_linux_power_supply(&base),
+            None,
+            "有电池但充电且 AC 离线 → 未知（保守不介入）"
+        );
+
+        assert_eq!(
+            parse_linux_power_supply(&base.join("nonexistent")),
+            None,
+            "目录缺失未知"
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 
     /// 通知转换判定：首结果（None 起始）不通知；稳态（连续同结果）不通知；
