@@ -418,6 +418,7 @@ export const repository = {
   'repository.workspace.returnedToParent': 'Returned to parent repository: {{name}}',
   'repository.workspace.reopenFailed': 'Could not reopen the last repository: {{message}}',
   'repository.workspace.fetchDone': 'Fetch finished; remote refs updated',
+  'repository.workspace.autoFetchAuthHint': 'Background fetch failed: credentials may be invalid or missing — check Tools → SSH & credentials',
   'repository.compare.local': 'Local',
   'repository.compare.remote': 'Remote',
   'repository.compare.commit': 'Commit',

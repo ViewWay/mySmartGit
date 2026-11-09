@@ -374,6 +374,10 @@ export function useRepositoryWorkspace() {
       const current = currentRepositoryPathRef.current
       if (!current || repositoryCacheKey(event.repositoryPath) !== repositoryCacheKey(current)) return
       setLastFetchAt(Date.now())
+      // 凭据类失败给可操作引导（超时/其他原因静默——退避调度自己会重试）。
+      if (!event.ok && event.reason === 'auth') {
+        setRepositoryNotice(translate(getLanguage(), 'repository.workspace.autoFetchAuthHint'))
+      }
     }).then((stop) => {
       if (subscriptionDisposed) stop()
       else unlisten = stop

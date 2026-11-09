@@ -161,18 +161,22 @@ export async function requestNotificationPermission(): Promise<string> {
   return requestPermission()
 }
 
-/** 订阅后台定时 Fetch 完成事件；返回取消订阅函数。 */
+/** 订阅后台定时 Fetch 完成事件；返回取消订阅函数。reason 仅失败时有值（"auth"/"timeout"/"other"）。 */
 export async function onRepositoryAutoFetched(
-  handler: (event: { repositoryPath: string; ok: boolean }) => void,
+  handler: (event: { repositoryPath: string; ok: boolean; reason?: string | null }) => void,
 ): Promise<() => void> {
   if (!isTauriRuntime()) return () => {}
   const { listen } = await import('@tauri-apps/api/event')
-  return listen<{ repository_path: string; ok: boolean }>('repository-auto-fetched', (event) => {
-    handler({
-      repositoryPath: event.payload.repository_path,
-      ok: event.payload.ok,
-    })
-  })
+  return listen<{ repository_path: string; ok: boolean; reason?: string | null }>(
+    'repository-auto-fetched',
+    (event) => {
+      handler({
+        repositoryPath: event.payload.repository_path,
+        ok: event.payload.ok,
+        reason: event.payload.reason,
+      })
+    },
+  )
 }
 
 export async function pickAndLoadRepository(): Promise<RepositorySnapshot | null> {

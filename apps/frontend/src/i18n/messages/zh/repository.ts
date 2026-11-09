@@ -418,6 +418,7 @@ export const repository = {
   'repository.workspace.returnedToParent': '已返回父仓库：{{name}}',
   'repository.workspace.reopenFailed': '无法重新打开上次仓库：{{message}}',
   'repository.workspace.fetchDone': 'Fetch 完成，远程引用已更新',
+  'repository.workspace.autoFetchAuthHint': '后台 Fetch 失败：凭据可能无效或缺失，可在「工具 → SSH 与凭据」中检查',
   'repository.compare.local': '本地',
   'repository.compare.remote': '远程',
   'repository.compare.commit': '提交',

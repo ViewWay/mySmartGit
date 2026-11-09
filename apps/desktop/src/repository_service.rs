@@ -51,11 +51,13 @@ const FETCH_TICK_MAX: Duration = Duration::from_secs(30);
 
 /// `repository-auto-fetched` 事件载荷：后台定时 Fetch 完成（含结果）。
 /// 前端据此更新「上次获取」时间戳；快照刷新仍走 repository-changed 推送。
+/// `reason` 仅在失败时有值（"auth" / "timeout" / "other"），驱动凭据引导。
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct RepositoryAutoFetchedEvent {
     repository_path: String,
     ok: bool,
+    reason: Option<String>,
 }
 
 /// 定时 Fetch 配置：默认开启、5 分钟——与历史前端行为一致。
@@ -236,6 +238,35 @@ fn notify_title(display: &str) -> String {
         .next()
         .unwrap_or(display)
         .to_string()
+}
+
+/// 自动 Fetch 失败原因分类（纯函数，便于单测）：凭据类 → "auth"（前端给
+/// 「检查 SSH 与凭据」引导）；超时熔断 → "timeout"；其余 → "other"。
+/// 凭据关键词覆盖 https（Authentication failed / could not read Username /
+/// terminal prompts disabled / HTTP 40x）与 ssh（Permission denied
+/// (publickey)）两类传输。
+fn classify_fetch_failure(error: &str) -> &'static str {
+    let lowercase = error.to_lowercase();
+    let auth_marker = [
+        "authentication failed",
+        "could not read username",
+        "terminal prompts disabled",
+        "permission denied",
+        "http 401",
+        "http 403",
+        "403 forbidden",
+        "http basic: access denied",
+    ];
+    if auth_marker.iter().any(|marker| lowercase.contains(marker)) {
+        "auth"
+    } else if lowercase.contains("超时")
+        || lowercase.contains("timed out")
+        || lowercase.contains("timeout")
+    {
+        "timeout"
+    } else {
+        "other"
+    }
 }
 
 /// `repository-changed` 事件载荷。`repository_path` 是前端持有的展示路径
@@ -760,7 +791,13 @@ impl RepositoryServiceState {
     /// 退避倍增——离线是环境状态而非仓库故障，恢复在线后立即以基础间隔重试）、
     /// 推送 repository-auto-fetched 事件（仅定时任务，手动路径前端已知结果）、
     /// 状态转换时发系统通知（稳态静默——连续失败不重复打扰）。
-    pub fn complete_fetch(&self, path: &str, result: FetchResult, auto: bool) {
+    pub fn complete_fetch(
+        &self,
+        path: &str,
+        result: FetchResult,
+        auto: bool,
+        reason: Option<&str>,
+    ) {
         let key = service_key(path);
         let mut inner = self.inner.lock().expect("repository service lock");
         inner.fetch_in_flight.remove(&key);
@@ -801,6 +838,7 @@ impl RepositoryServiceState {
                     RepositoryAutoFetchedEvent {
                         repository_path: path.to_string(),
                         ok,
+                        reason: reason.map(String::from),
                     },
                 );
                 if let Some(failure) = notify_failure {
@@ -853,7 +891,7 @@ fn run_fetch_task(
         .and_then(|app| app.try_state::<RepositoryServiceState>())
     {
         if offline {
-            state.complete_fetch(&display, FetchResult::Offline, auto);
+            state.complete_fetch(&display, FetchResult::Offline, auto, None);
         } else {
             // 自动任务走非交互 + 超时熔断的专用路径；手动任务保留交互行为。
             let fetch_outcome = if auto {
@@ -868,12 +906,16 @@ fn run_fetch_task(
             if let Ok(snapshot) = &outcome {
                 state.finish_snapshot(&display, generation, snapshot);
             }
+            let reason = outcome
+                .as_ref()
+                .err()
+                .map(|error| classify_fetch_failure(error));
             let result = if outcome.is_ok() {
                 FetchResult::Success
             } else {
                 FetchResult::Failed
             };
-            state.complete_fetch(&display, result, auto);
+            state.complete_fetch(&display, result, auto, reason);
         }
     }
     let _ = wake.send(());
@@ -1182,7 +1224,7 @@ mod tests {
         assert!(!service.try_claim_fetch(path), "重复领取应被拒");
 
         // 手动任务失败收尾：退避升档，due ≈ now + 2×间隔。
-        service.complete_fetch(path, FetchResult::Failed, false);
+        service.complete_fetch(path, FetchResult::Failed, false, None);
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).expect("驻留条目");
@@ -1193,7 +1235,7 @@ mod tests {
 
         // 再失败一次到封顶档 2（×4），随后成功清零退避。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, FetchResult::Failed, false);
+        service.complete_fetch(path, FetchResult::Failed, false, None);
         {
             let inner = service.inner.lock().unwrap();
             assert_eq!(
@@ -1203,7 +1245,7 @@ mod tests {
             );
         }
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, FetchResult::Success, false);
+        service.complete_fetch(path, FetchResult::Success, false, None);
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).unwrap();
@@ -1283,7 +1325,7 @@ mod tests {
 
         // 到期 + 单飞被占：只置空 due，不再领取。
         //（先完成释放单飞，再预占一次模拟手动任务，然后置 due=now。）
-        service.complete_fetch(path, FetchResult::Success, false);
+        service.complete_fetch(path, FetchResult::Success, false, None);
         assert!(service.try_claim_fetch(path), "预占手动任务");
         {
             let mut inner = service.inner.lock().unwrap();
@@ -1298,7 +1340,7 @@ mod tests {
                 "被占时置空 due 留待完成回调重排"
             );
         }
-        service.complete_fetch(path, FetchResult::Success, false);
+        service.complete_fetch(path, FetchResult::Success, false, None);
     }
 
     /// 电池降频：到期任务整体推迟到电池间隔（×3 封顶 30 分钟），不发事件、
@@ -1347,7 +1389,7 @@ mod tests {
         }
 
         // 电池未知（台式机等）：策略不介入，照常领取。
-        service.complete_fetch(path, FetchResult::Success, false);
+        service.complete_fetch(path, FetchResult::Success, false, None);
         {
             let mut inner = service.inner.lock().unwrap();
             inner.opened.get_mut(&key).unwrap().next_fetch_due = Some(Instant::now());
@@ -1355,6 +1397,47 @@ mod tests {
         let _ = service.collect_due_fetches_inner(None);
         let inner = service.inner.lock().unwrap();
         assert!(inner.fetch_in_flight.contains(&key), "未知状态照常领取");
+    }
+
+    /// 失败原因分类：https 与 ssh 两类凭据关键词 → "auth"；超时熔断报错 →
+    /// "timeout"；其余 → "other"。
+    #[test]
+    fn classify_fetch_failure_buckets_reasons() {
+        assert_eq!(
+            classify_fetch_failure("fatal: could not read Username for 'https://github.com': terminal prompts disabled"),
+            "auth",
+            "终端提问被禁（凭据缺失）→ auth"
+        );
+        assert_eq!(
+            classify_fetch_failure(
+                "fatal: Authentication failed for 'https://example.com/repo.git'"
+            ),
+            "auth",
+            "https 认证失败 → auth"
+        );
+        assert_eq!(
+            classify_fetch_failure("git@github.com: Permission denied (publickey)."),
+            "auth",
+            "ssh 公钥被拒 → auth"
+        );
+        assert_eq!(
+            classify_fetch_failure("error: http 403 forbidden"),
+            "auth",
+            "http 403 → auth"
+        );
+        assert_eq!(
+            classify_fetch_failure("后台 Fetch 超时（超过 120 秒）已被中止"),
+            "timeout",
+            "超时熔断 → timeout"
+        );
+        assert_eq!(
+            classify_fetch_failure(
+                "fatal: unable to access 'https://example.com': Failed to connect"
+            ),
+            "other",
+            "普通网络错误 → other"
+        );
+        assert_eq!(classify_fetch_failure(""), "other", "空错误归 other");
     }
 
     /// pmset 输出解析（macOS）：电源来源行区分电池/接电/未知。
@@ -1448,7 +1531,7 @@ mod tests {
 
         // 手动成功 → prev 更新但不通知（auto=false 路径同样登记基线）。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, FetchResult::Success, false);
+        service.complete_fetch(path, FetchResult::Success, false, None);
         assert_eq!(
             service.inner.lock().unwrap().opened[&key].prev_fetch_ok,
             Some(true),
@@ -1510,7 +1593,7 @@ mod tests {
 
         // 先制造一次失败，退避升到 1（due ≈ 2×间隔）。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, FetchResult::Failed, false);
+        service.complete_fetch(path, FetchResult::Failed, false, None);
         assert_eq!(
             service.inner.lock().unwrap().opened[&key].fetch_backoff_step,
             1,
@@ -1519,7 +1602,7 @@ mod tests {
 
         // 随后一轮判定为离线：档位保持，due 回到基础间隔附近。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, FetchResult::Offline, false);
+        service.complete_fetch(path, FetchResult::Offline, false, None);
         {
             let inner = service.inner.lock().unwrap();
             let entry = inner.opened.get(&key).unwrap();
@@ -1539,7 +1622,7 @@ mod tests {
 
         // 在线成功后清零退避，回到稳态。
         assert!(service.try_claim_fetch(path));
-        service.complete_fetch(path, FetchResult::Success, false);
+        service.complete_fetch(path, FetchResult::Success, false, None);
         let inner = service.inner.lock().unwrap();
         assert_eq!(inner.opened[&key].fetch_backoff_step, 0, "成功清零退避");
     }
