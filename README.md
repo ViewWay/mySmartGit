@@ -134,16 +134,18 @@ cargo test --manifest-path apps/desktop/Cargo.toml
 - 在同一仓库切换器中快速进入 Worktree 与 Submodule
 - 900px 以上桌面窗口响应式布局
 
-## 后续实现路线
+## 实现路线（已全部落地）
 
-当前使用 Tauri 2 + Rust 后端，通过受控的 Git CLI 读取仓库。后续可将高频只读操作迁移到 `gix` 或 `git2`，复杂写操作继续使用 Git CLI 保持行为兼容。
+当前使用 Tauri 2 + Rust 后端，通过受控的 Git CLI 读取仓库；高频只读操作已迁移到 `gix` 进程内直读，复杂写操作继续使用 Git CLI 保持行为兼容。原路线六层均落地：
 
-1. 仓库层：统一 `RepositoryService`（已落地：打开仓库生命周期管理、状态 token/快照/Diff 三缓存、全部 Diff 形态命令接入缓存、文件监听推送 `repository-changed`、仓库发现 `scan` 并入服务；最近仓库持久化仍归前端；其余写操作命令按需渐进接入）。
-2. 提交层：流式解析提交、拓扑和 refs，分页送入前端并做可见区域渲染。
-3. 操作层：stage、commit、branch、merge、rebase、cherry-pick、stash、tag、remote、worktree 和 submodule。
-4. 历史层：继续增加任意文件选择、指定行范围和提交跳转。
-5. 自动化层：定时 Fetch 已移入 Rust `RepositoryService`（已落地：单后台线程调度全部已开仓库、可暂停开关由前端设置下发、失败退避封顶 4×、每仓库单飞且手动 Fetch 共用同一单飞、完成推 `repository-auto-fetched` 事件；系统通知已接入——仅在成功↔失败状态转换时提示，稳态静默，文案由前端按语言下发；网络门控已接入——自动任务前置连通性探测，离线跳过本轮且不升级退避；电池供电降频已接入——×3 封顶 30 分钟，接电即恢复，Windows 侧探测待接；凭据侧已落地后台非交互执行（GIT_TERMINAL_PROMPT=0、剥离 askpass）与 120 秒超时熔断，凭据缺失不再挂起后台任务）；剩余：凭据交互流程的前端引导。
-6. 冲突层：检测 mode `160000` 的 gitlink 冲突，默认执行本地优先策略，同时保留确认和撤销记录。
+1. 仓库层 ✅：统一 `RepositoryService`——打开仓库生命周期管理、状态 token/快照/Diff 三缓存、全部 Diff 形态命令接入缓存、文件监听推送 `repository-changed`、仓库发现 `scan` 并入服务；最近仓库持久化归前端。
+2. 提交层 ✅：流式解析提交、拓扑和 refs（`HistoryStream` 分页 + 前端 `historyDepth` 状态机与虚拟滚动）；提交图谱 revwalk 与 refs 枚举已迁 gix（输出与 CLI 逐项对拍）。
+3. 操作层 ✅：stage、commit、branch、merge、rebase、cherry-pick（含批量重排）、revert、stash、tag、remote、worktree（create/remove/lock/prune）、submodule（add/init/update/sync/deinit）。
+4. 历史层 ✅：任意文件选择、逐行 Blame、指定行范围（行范围审查评论）、提交跳转（提交信息/Hash/提交人搜索）。
+5. 自动化层 ✅：定时 Fetch 移入 Rust `RepositoryService`——单后台线程调度全部已开仓库、开关与间隔由前端设置下发、失败退避封顶 4×、每仓库单飞且手动 Fetch 共用同一单飞、完成推 `repository-auto-fetched` 事件；系统通知（成功↔失败转换时提示，文案由前端按语言下发）；网络门控（前置连通性探测，离线跳过且不升级退避）；电池供电降频（×3 封顶 30 分钟，接电即恢复；Windows 侧探测待接）；后台 Fetch 非交互执行 + 120 秒超时熔断。
+6. 冲突层 ✅：gitlink（mode `160000`）冲突本地优先解析；分支前缀批量删除带预览、二次校验和并发变更校验。
+
+遗留可选增强（不阻塞使用）：凭据失败的前端交互引导、手动 Fetch 的取消入口、Windows 电池探测 FFI、其余写操作命令渐进接入 service。
 
 分支前缀批量删除会先展示受影响的本地分支，并在后端再次校验删除范围；“删除前缀”实际是删除其下所有实际 refs，Git 本身不存在目录型分支。
 
